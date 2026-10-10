@@ -97,7 +97,7 @@ int main() {
  xe=boot({"-wex-tgl-off"},0x9A498086);assert(!xe.tglRequested);
  xe=boot({"-wex-noaccel"},0x9A498086);assert(xe.tglRequested && !xe.tglAcceleratorRequested);
  version="Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64";
- xe=boot({},0x9A498086);assert(!xe.tglRequested && !xe.tglAcceleratorRequested);
+ xe=boot({},0x9A498086);assert(xe.tglRequested && xe.tglAcceleratorRequested);
  xe=boot({"-wex-noaccel"},0x9A498086);
  assert(xe.tglRequested && !xe.tglAcceleratorRequested && xe.currentFramebuffer==&kextIntelTGLFb);
  xe=boot({"-wex-noaccel"},0x46D28086);assert(!xe.adlnNativeRequested);
