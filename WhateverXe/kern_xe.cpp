@@ -9489,6 +9489,25 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  tglRecordStartOrder(4,that,9,0,0,result);
 	tglFBIRQPublish();
 	IORegistryEntry::getRegistryRoot()->setProperty("TGLFramebufferStartResult", result);
+ // Inspect the actual donor BAR map after framebuffer startup. This does
+ // not change mapping attributes, page tables, registers or accelerator state.
+ if (result && !strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64")) {
+  uint64_t q[25] {1};q[1]=tglVM.enabled;q[2]=tglVM.pciBAR;
+  auto map=OSDynamicCast(IOMemoryMap,*reinterpret_cast<OSObject **>(reinterpret_cast<uint8_t *>(that)+0xC70));
+  q[3]=map ? map->getVirtualAddress() : 0;q[4]=map ? map->getLength() : 0;
+  const bool readable=tglVM.enabled && q[3] && q[4]==0x1000000 && tglVMRead(tglVM.kernelPmap+0x50,q[5]);
+  const uint32_t offsets[] {0x2510,0x190030,0xFFF000};
+  for(unsigned i=0;i<3;++i) {
+   auto m=q+6+i*6;m[0]=offsets[i];m[1]=UINT64_MAX;
+   if(readable) {
+    const auto r=TGLVM::inspect(q[5],tglVM.directBase,tglVM.directEnd,q[3]+offsets[i],tglVMRead);
+    m[1]=r.status;m[2]=r.physical;m[3]=r.shift;m[4]=r.patIndex;m[5]=r.entry[3];
+   }
+  }
+  uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
+  q[24]=static_cast<uint64_t>(hi)<<32|lo;
+  IORegistryEntry::getRegistryRoot()->setProperty("TGLMontereyMMIOInspection",q,sizeof(q));
+ }
  if(result) if(auto power=OSSerializer::forTarget(that,tglPowerSerialize)) {
   that->setProperty("TGLPowerSample",power);power->release();
  }
