@@ -1074,6 +1074,110 @@ extern "C" __attribute__((naked,used)) void tglPmapUpdateBridge() {
   "jmpq *_tglPmapUpdateResume(%rip)\n"
  );
 }
+// Exact 21H1320 pmap templates. RCX is overwritten by the displaced sequence.
+// Correct only native 4K UC- mappings of the admitted BAR; retain native stores/TLB.
+extern "C" __attribute__((naked,used)) void tglMontereyPmapNewBridge() {
+ asm volatile(
+  "cmpl $0x4010000, -0x90(%rbp)\n"
+  "jb 9f\n"
+  "cmpl $0x4011000, -0x90(%rbp)\n"
+  "jae 9f\n"
+  "movq $1, %rcx\n"
+  "lock xaddq %rcx, _tglPmapNewEvidence(%rip)\n"
+  "testq %rcx, %rcx\n"
+  "jnz 2f\n"
+  "movl -0x90(%rbp), %ecx\n"
+  "movq %rcx, _tglPmapNewEvidence+48(%rip)\n"
+  "movl -0x78(%rbp), %ecx\n"
+  "movq %rcx, _tglPmapNewEvidence+56(%rip)\n"
+  "movq -0x70(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+64(%rip)\n"
+  "movq %rdx, _tglPmapNewEvidence+72(%rip)\n"
+  "movq %r14, %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+80(%rip)\n"
+  "movq 8(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+88(%rip)\n"
+  "movq $1, _tglPmapNewEvidence+96(%rip)\n"
+  "2:\n"
+  "cmpq $0, -0x70(%rbp)\n"
+  "je 3f\n"
+  "testl $0x100, -0x78(%rbp)\n"
+  "jnz 4f\n"
+  "movq %rdx, %rcx\n"
+  "andl $0x98, %ecx\n"
+  "cmpl $0x10, %ecx\n"
+  "jne 5f\n"
+  "orq $8, %rdx\n"
+  "lock incq _tglPmapNewEvidence+8(%rip)\n"
+  "jmp 9f\n"
+  "3:\n"
+  "lock incq _tglPmapNewEvidence+16(%rip)\n"
+  "jmp 9f\n"
+  "4:\n"
+  "lock incq _tglPmapNewEvidence+24(%rip)\n"
+  "jmp 9f\n"
+  "5:\n"
+  "lock incq _tglPmapNewEvidence+32(%rip)\n"
+  "9:\n"
+  "movl -0x74(%rbp), %ecx\n"
+  "movl %ecx, %ebx\n"
+  "andl $1, %ebx\n"
+  "orq %rdx, %rbx\n"
+  "testb $2, %cl\n"
+  "jmpq *_tglPmapNewResume(%rip)\n"
+ );
+}
+extern "C" __attribute__((naked,used)) void tglMontereyPmapUpdateBridge() {
+ asm volatile(
+  "cmpl $0x4010000, -0x90(%rbp)\n"
+  "jb 9f\n"
+  "cmpl $0x4011000, -0x90(%rbp)\n"
+  "jae 9f\n"
+  "movq $1, %rcx\n"
+  "lock xaddq %rcx, _tglPmapUpdateEvidence(%rip)\n"
+  "testq %rcx, %rcx\n"
+  "jnz 2f\n"
+  "movl -0x90(%rbp), %ecx\n"
+  "movq %rcx, _tglPmapUpdateEvidence+48(%rip)\n"
+  "movl -0x78(%rbp), %ecx\n"
+  "movq %rcx, _tglPmapUpdateEvidence+56(%rip)\n"
+  "movq -0x70(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapUpdateEvidence+64(%rip)\n"
+  "movq %rax, _tglPmapUpdateEvidence+72(%rip)\n"
+  "movq -0x68(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapUpdateEvidence+80(%rip)\n"
+  "movq 8(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapUpdateEvidence+88(%rip)\n"
+  "movq $1, _tglPmapUpdateEvidence+96(%rip)\n"
+  "2:\n"
+  "cmpq $0, -0x70(%rbp)\n"
+  "je 3f\n"
+  "testl $0x100, -0x78(%rbp)\n"
+  "jnz 4f\n"
+  "movq %rax, %rcx\n"
+  "andl $0x98, %ecx\n"
+  "cmpl $0x10, %ecx\n"
+  "jne 5f\n"
+  "orq $8, %rax\n"
+  "lock incq _tglPmapUpdateEvidence+8(%rip)\n"
+  "jmp 9f\n"
+  "3:\n"
+  "lock incq _tglPmapUpdateEvidence+16(%rip)\n"
+  "jmp 9f\n"
+  "4:\n"
+  "lock incq _tglPmapUpdateEvidence+24(%rip)\n"
+  "jmp 9f\n"
+  "5:\n"
+  "lock incq _tglPmapUpdateEvidence+32(%rip)\n"
+  "9:\n"
+  "movl -0x74(%rbp), %ecx\n"
+  "movl %ecx, %r14d\n"
+  "andl $1, %r14d\n"
+  "orq %rax, %r14\n"
+  "testb $2, %cl\n"
+  "jmpq *_tglPmapUpdateResume(%rip)\n"
+ );
+}
 bool tglMMIOEvidenceSerialize(void *,void *,OSSerialize *serializer) {
  uint64_t out[1+39+24] {114};
  memcpy(out+1,tglPmapEntryEvidence,sizeof(tglPmapEntryEvidence));
@@ -1121,7 +1225,55 @@ static void tglUpdateMMIOMap(IOMemoryMap *mapping) {
  q[5]=tglMMIOMapEvidence[7];q[6]=tglMMIOUCReady;q[7]=tglPmapUpdateEvidence[0];
  IORegistryEntry::getRegistryRoot()->setProperty("TGLMMIOCacheUpdate",q,sizeof(tglMMIOCacheUpdate));
 }
+static void tglPrepareMontereyMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
+ tglMMIOUCReady=false;
+ auto bar=pci->getDeviceMemoryWithRegister(0x10);
+ auto fn=patcher.solveSymbol(KernelPatcher::KernelID,"_pmap_enter_options");
+ auto protect=patcher.solveSymbol(KernelPatcher::KernelID,"_IOProtectCacheMode");
+ auto kernelMap=patcher.solveSymbol(KernelPatcher::KernelID,"_kernel_map");
+ const uint8_t frame[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xEC,0x08,0x01,0,0};
+ const uint8_t args[] {0x44,0x89,0x4D,0x88,0x89,0x95,0x70,0xFF,0xFF,0xFF,0x89,0xD7,0x49,0x8B,0x77,0x40};
+ const uint8_t nonEPT[] {0x48,0x89,0x75,0x90};
+ const uint8_t protection[] {0x89,0x4D,0x8C};
+ const uint8_t create[] {0x8B,0x4D,0x8C,0x89,0xCB,0x83,0xE3,1,0x48,0x09,0xD3,0xF6,0xC1,2};
+ const uint8_t update[] {0x8B,0x4D,0x8C,0x41,0x89,0xCE,0x41,0x83,0xE6,1,0x49,0x09,0xC6,0xF6,0xC1,2};
+ const uint8_t protectFrame[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x28};
+ const uint8_t protectCall[] {0xE8,0x1A,0x99,0x02,0};
+ uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
+ const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
+ bool ok=tglVM.enabled && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+  pat==0x1040600070406ULL && fn && protect && kernelMap &&
+  !memcmp(reinterpret_cast<void *>(fn),frame,sizeof(frame)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x51),args,sizeof(args)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x78),protection,sizeof(protection)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x116),nonEPT,sizeof(nonEPT)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x15F9),create,sizeof(create)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x12CE),update,sizeof(update)) &&
+  !memcmp(reinterpret_cast<void *>(protect),protectFrame,sizeof(protectFrame)) &&
+  !memcmp(reinterpret_cast<void *>(protect+0xC1),protectCall,sizeof(protectCall)) &&
+  tglVMRead(kernelMap,tglKernelMap) && (tglKernelMap>>47)==0x1FFFF;
+ if(ok) {
+  tglProtectCacheMode=reinterpret_cast<decltype(tglProtectCacheMode)>(protect);
+  tglPmapNewResume=fn+0x1607;tglPmapUpdateResume=fn+0x12DE;
+  const uintptr_t targets[] {reinterpret_cast<uintptr_t>(tglMontereyPmapNewBridge),reinterpret_cast<uintptr_t>(tglMontereyPmapUpdateBridge)};
+  const uintptr_t sites[] {fn+0x15F9,fn+0x12CE};
+  const size_t lengths[] {sizeof(create),sizeof(update)};
+  for(unsigned i=0;i<2 && ok;++i) {
+   uint8_t jump[16] {0xFF,0x25,0,0,0,0};jump[14]=jump[15]=0x90;
+   memcpy(jump+6,&targets[i],sizeof(targets[i]));
+   patcher.clearError();patcher.routeBlock(sites[i],jump,lengths[i]);
+   ok=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(reinterpret_cast<void *>(sites[i]),jump,lengths[i]);
+  }
+ }
+ tglMMIOUCRouted=ok;patcher.clearError();
+ auto root=IORegistryEntry::getRegistryRoot();root->setProperty("TGLMMIOStrongUCRouted",ok);
+ auto evidence=OSSerializer::forTarget(nullptr,tglMMIOEvidenceSerialize);
+ if(evidence) {root->setProperty("TGLMMIOMappingEvidence",evidence);evidence->release();}
+}
 static void tglPrepareMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
+ if(!strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64")) {
+  tglPrepareMontereyMMIOUC(patcher,pci);return;
+ }
  const bool native20G=!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
  if (!native20G) return;
  tglMMIOUCReady=false;
