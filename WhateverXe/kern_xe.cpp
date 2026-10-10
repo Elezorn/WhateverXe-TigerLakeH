@@ -1181,7 +1181,8 @@ void tglVMPrepare(KernelPatcher &patcher,IOPCIDevice *pci) {
  int32_t displacement;memcpy(&displacement,reinterpret_cast<void *>(verify+0x14),4);
  const auto target=verify+0x18+displacement;
  const bool dp1=!strcmp(version,"Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64");
- if (target!=verify-(dp1 ? 0x3930 : 0x3AB0)) return;
+ const bool monterey=!strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64");
+ if (target!=verify-(dp1 ? 0x3930 : monterey ? 0x4190 : 0x3AB0)) return;
  const uint8_t rootLoad[] {0x48,0x8B,0x47,0x50};
  if (memcmp(reinterpret_cast<void *>(target+0x20),rootLoad,sizeof(rootLoad))) return;
  tglVM.nofault=reinterpret_cast<decltype(tglVM.nofault)>(nf);
@@ -2611,10 +2612,11 @@ void XE::selectProfile(const XELP::Profile &profile) {
     tglNoPanel=checkKernelArgument("-wex-nopanel");
     tglInactivePorts=tglPG1Poll=tglClockOrderRequested=tglTrainingLeaseRequested=tglRequested;
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
-    tglAcceleratorRequested=tglRequested;
+    tglAcceleratorRequested=tglRequested && !checkKernelArgument("-wex-noaccel");
     if(tglRequested) {
         if(strcmp(version,"Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64") &&
-           strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64")) {
+           strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") &&
+           (strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") || tglAcceleratorRequested)) {
             tglRequested=tglAcceleratorRequested=false;return;
         }
         currentGraphics=&kextIntelTGL;currentFramebuffer=&kextIntelTGLFb;
@@ -7788,6 +7790,20 @@ bool XE::processAlderLakeNTaskBoundary(KernelPatcher &patcher, size_t index, mac
 }
 
 bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
+ // Framebuffer-only mode must never enter the donor accelerator probe.
+ // The bring-up payload omits this bundle; also reject it if already present.
+ if (!tglAcceleratorRequested) {
+  const char *symbol="__ZN16IntelAccelerator5probeEP9IOServicePi";
+  static const uint8_t head[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x28};
+  auto probe=patcher.solveSymbol<mach_vm_address_t>(index,symbol,address,size);
+  bool ready=size>0x23C37 && probe==address+0x238E2 &&
+   !memcmp(reinterpret_cast<const void *>(probe),head,sizeof(head));
+  patcher.clearError();
+  KernelPatcher::RouteRequest route(symbol,wrapTGLAcceleratorProbe,orgTGLAcceleratorProbe);
+  if (ready) ready=patcher.routeMultiple(index,&route,1,address,size);
+  IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeNoAccelGuardReady",ready);
+  patcher.clearError();return ready;
+ }
  if(adlnDetected && (checkKernelArgument("-wex-adln-kernel-ctx") || adlnNativeRCSProfileRequested))adlnPrepareRCSProfile(patcher,index,address,size);
    // Serialize only the two direct stores in detectEDRAM. The original
    // forcewake and 1000ms sleep remain outside the shared gate.
@@ -8563,7 +8579,8 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			// two slots when IOPlatformExpert's target/product names moved
 			// into reserved slots. Keep the native call and its ownership.
 			tglPlatformNVRAMReady = true;
-			if (!strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64")) {
+			if (!strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") ||
+                !strcmp(version, "Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64")) {
 				tglPlatformNVRAMReady = false;
 				auto table = patcher.solveSymbol(KernelPatcher::KernelID, "__ZTV18IODTPlatformExpert");
 				auto target = patcher.solveSymbol(KernelPatcher::KernelID,
@@ -9888,6 +9905,7 @@ void XE::tglObserveAccelerator(IOService *that, uint32_t stage, bool done, uint6
 }
 
 IOService *XE::wrapTGLAcceleratorProbe(IOService *that, IOService *provider, SInt32 *score) {
+ if (!callbackXE->tglAcceleratorRequested) return nullptr;
 	auto pci = OSDynamicCast(IOPCIDevice, provider);
 	const uint32_t identity = pci ? pci->configRead32(0) : 0;
 	if (callbackXE->adlnDetected && checkKernelArgument("-wex-adln-load-only")) {

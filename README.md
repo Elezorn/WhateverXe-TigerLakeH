@@ -99,6 +99,7 @@ Alder Lake-N / Twin Lake.
 | `-wexoff` | Disable WhateverXe. |
 | `-wexbeta` | Bypass the plugin's OS-version check. Exact kernel/driver checks still apply. |
 | `-wex-tgl-off` | Disable the Tiger Lake path. |
+| `-wex-noaccel` | Tiger Lake framebuffer-only mode; blocks accelerator probing. |
 
 ## Roadmap
 
