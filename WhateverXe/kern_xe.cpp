@@ -40,6 +40,7 @@
 #include "kern_xelp_queue_memory.hpp"
 #include "kern_tgl_hang_refs.hpp"
 #include "kern_tgl_recovery.hpp"
+#include "kern_tgl_aux_call.hpp"
 
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_cpu.hpp>
@@ -2920,13 +2921,12 @@ void XE::selectProfile(const XELP::Profile &profile) {
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
     tglAcceleratorRequested=tglRequested && !checkKernelArgument("-wex-noaccel");
     if(tglRequested) {
-        // Ventura is admitted only for framebuffer bring-up. Its kernel is
-        // byte-identical in 22H722 KDK and the qualified 22H730 input.
-        const bool venturaFramebuffer=!tglAcceleratorRequested &&
+        // Exact Ventura input has a separately guarded strong-UC path.
+        const bool ventura=
             !strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
         if(strcmp(version,"Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64") &&
            strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") &&
-           strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") && !venturaFramebuffer) {
+           strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") && !ventura) {
             tglRequested=tglAcceleratorRequested=false;return;
         }
         currentGraphics=&kextIntelTGL;currentFramebuffer=&kextIntelTGLFb;
@@ -8597,7 +8597,6 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// Preserve every native initialization/copy packet, including BBE.
 			const char *blitInit="__Z15blit3d_init_ctxP23IGHardwareBlit3DContext";
 			const uint8_t blitEnd[] {0x48,0xC7,0x83,0x60,0x08,0,0,0,0,0,0x05};
-			const uint8_t submitPrologue[] {0x55,0x48,0x89,0xE5,0x41,0x56,0x53,0x48,0x89,0xFB,0x4C,0x8B,0xB7,0x48,0x18,0,0};
 			bool blitInitOK=skuReady && size>0x355D2 &&
 				patcher.solveSymbol<mach_vm_address_t>(index,blitInit,address,size)==address+0x31AFE &&
 				!memcmp(reinterpret_cast<void *>(address+0x3256C),blitEnd,sizeof(blitEnd)) &&
@@ -8605,7 +8604,10 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			if(blitInitOK) {
 				int32_t relative;memcpy(&relative,reinterpret_cast<void *>(address+0x355CE),4);
 				tglBlitPoolSubmit=address+0x355D2+relative;
-				blitInitOK=!memcmp(reinterpret_cast<void *>(tglBlitPoolSubmit),submitPrologue,sizeof(submitPrologue));
+                const bool auxThunk=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
+                uint64_t resolved=0;
+                blitInitOK=TGLAuxCall::resolveSubmit(tglBlitPoolSubmit,auxThunk,tglVMRead,resolved);
+                if(blitInitOK)tglBlitPoolSubmit=resolved;
 			}
 			patcher.clearError();
 			if(blitInitOK) {
