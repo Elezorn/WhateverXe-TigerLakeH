@@ -55,6 +55,10 @@ from firmware VBT where supported; fixed HDMI and fixed DisplayPort layouts
 normally need no manual wiring properties. Advanced `device-id` overrides are
 described in [device selection](docs/device-selection.md).
 
+On supported GPUs, WhateverXe also normalizes the detected Intel Management
+Engine device name to `IMEI`, as WhateverGreen does. A separate ACPI rename
+from `HECI` or `MEI` to `IMEI` is unnecessary.
+
 ### DVMT
 
 Set **DVMT Pre-Allocated to 96MB** in the BIOS/UEFI settings where possible.

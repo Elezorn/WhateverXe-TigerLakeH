@@ -35,6 +35,11 @@ void XeHost::processKernel(KernelPatcher &patcher) {
  }
  if(active) {
   // Xe admission reads physical PCI identity. Do not install WEG's ID spoof hooks.
+  // WEG normalizes the ME device discovered by Lilu for Apple's name matching.
+  if(auto mei=info->managementEngine) {
+   const auto name=mei->getName();
+   if(!name || strcmp(name,"IMEI"))WIOKit::renameDevice(mei,"IMEI");
+  }
   if(info->firmwareVendor!=DeviceInfo::FirmwareVendor::Apple) {
    if(strcmp(gpu->getName(),"IGPU"))WIOKit::renameDevice(gpu,"IGPU");
    if(!gpu->getProperty("built-in")){uint8_t value=0;gpu->setProperty("built-in",&value,1);}
