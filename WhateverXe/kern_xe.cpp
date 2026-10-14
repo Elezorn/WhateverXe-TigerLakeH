@@ -60,7 +60,7 @@
 
 extern "C" const char version[];
 
-// Stock 23J631 IOSurface moved fields used inline by the exact DP1 donor.
+// Stock 23J631/24H32 IOSurface moved fields used inline by the exact DP1 donor.
 // The matrix moved into its attachment storage; preserve all three native
 // branches instead of treating the old byte offset as a zero/default matrix.
 extern "C" {
@@ -80,7 +80,8 @@ extern "C" __attribute__((naked,used)) void tglSonomaMatrixBridge() {
 }
 static bool tglSonomaSurfaceFramebufferReady=true;
 static bool tglInstallSonomaSurfaceABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size,bool framebuffer) {
- if(strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64"))return true;
+ if(strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") && strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64"))return true;
+ if(!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64") && !framebuffer)return false;
  struct Site {size_t offset,length;uint8_t before[6],after[6];};
  const Site fb[] {
   {0x2B5E8,6,{0x8B,0x80,0xA4,0,0,0},{0x8B,0x80,0x80,0,0,0}}, // pixelFormat
@@ -1714,7 +1715,8 @@ void tglVMPrepare(KernelPatcher &patcher,IOPCIDevice *pci) {
  const bool monterey=!strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64");
  const bool ventura=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
  const bool sonoma=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
- if (target!=verify-(dp1 ? 0x3930 : monterey ? 0x4190 : ventura ? 0x3D70 : sonoma ? 0x3EF0 : 0x3AB0)) return;
+ const bool sequoia=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
+ if (target!=verify-(dp1 ? 0x3930 : monterey ? 0x4190 : ventura ? 0x3D70 : sonoma ? 0x3EF0 : sequoia ? 0x3FE0 : 0x3AB0)) return;
  const uint8_t rootLoad[] {0x48,0x8B,0x47,0x50};
  if (memcmp(reinterpret_cast<void *>(target+0x20),rootLoad,sizeof(rootLoad))) return;
  tglVM.nofault=reinterpret_cast<decltype(tglVM.nofault)>(nf);
@@ -3146,6 +3148,9 @@ void XE::selectProfile(const XELP::Profile &profile) {
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
     tglAcceleratorRequested=tglRequested && !checkKernelArgument("-wex-noaccel");
     if(tglRequested) {
+        // Admit the exact Sequoia candidate only for framebuffer bring-up.
+        const bool sequoia=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
+        if(sequoia && tglAcceleratorRequested) {tglRequested=tglAcceleratorRequested=false;return;}
         // Exact Sonoma framebuffer and strong-UC mapping are qualified.
         const bool sonoma=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
         // Exact Ventura input has a separately guarded strong-UC path.
@@ -3153,7 +3158,7 @@ void XE::selectProfile(const XELP::Profile &profile) {
             !strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
         if(strcmp(version,"Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64") &&
            strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") &&
-           strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") && !ventura && !sonoma) {
+           strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") && !ventura && !sonoma && !sequoia) {
             tglRequested=tglAcceleratorRequested=false;return;
         }
         currentGraphics=&kextIntelTGL;currentFramebuffer=&kextIntelTGLFb;
@@ -9127,7 +9132,8 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			if (!strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") ||
                 !strcmp(version, "Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") ||
                 !strcmp(version, "Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64") ||
-                !strcmp(version, "Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64")) {
+                !strcmp(version, "Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") ||
+                !strcmp(version, "Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64")) {
 				tglPlatformNVRAMReady = false;
 				auto table = patcher.solveSymbol(KernelPatcher::KernelID, "__ZTV18IODTPlatformExpert");
 				auto target = patcher.solveSymbol(KernelPatcher::KernelID,
@@ -10048,7 +10054,8 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  // not change mapping attributes, page tables, registers or accelerator state.
  const bool venturaInspection=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
  const bool sonomaInspection=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
- if (result && (sonomaInspection || venturaInspection || !strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64"))) {
+ const bool sequoiaInspection=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
+ if (result && (sequoiaInspection || sonomaInspection || venturaInspection || !strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64"))) {
   uint64_t q[25] {1};q[1]=tglVM.enabled;q[2]=tglVM.pciBAR;
   auto map=OSDynamicCast(IOMemoryMap,*reinterpret_cast<OSObject **>(reinterpret_cast<uint8_t *>(that)+0xC70));
   q[3]=map ? map->getVirtualAddress() : 0;q[4]=map ? map->getLength() : 0;
@@ -10063,7 +10070,7 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
   }
   uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
   q[24]=static_cast<uint64_t>(hi)<<32|lo;
-  IORegistryEntry::getRegistryRoot()->setProperty(sonomaInspection ? "TGLSonomaMMIOInspection" : venturaInspection ? "TGLVenturaMMIOInspection" : "TGLMontereyMMIOInspection",q,sizeof(q));
+  IORegistryEntry::getRegistryRoot()->setProperty(sequoiaInspection ? "TGLSequoiaMMIOInspection" : sonomaInspection ? "TGLSonomaMMIOInspection" : venturaInspection ? "TGLVenturaMMIOInspection" : "TGLMontereyMMIOInspection",q,sizeof(q));
  }
  if(result) if(auto power=OSSerializer::forTarget(that,tglPowerSerialize)) {
   that->setProperty("TGLPowerSample",power);power->release();
