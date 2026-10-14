@@ -3083,11 +3083,8 @@ void XE::selectProfile(const XELP::Profile &profile) {
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
     tglAcceleratorRequested=tglRequested && !checkKernelArgument("-wex-noaccel");
     if(tglRequested) {
-        // Sonoma framebuffer qualification precedes accelerator admission.
+        // Exact Sonoma framebuffer and strong-UC mapping are qualified.
         const bool sonoma=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
-        if (sonoma && tglAcceleratorRequested) {
-            tglRequested=tglAcceleratorRequested=false;return;
-        }
         // Exact Ventura input has a separately guarded strong-UC path.
         const bool ventura=
             !strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
@@ -8771,7 +8768,8 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			if(blitInitOK) {
 				int32_t relative;memcpy(&relative,reinterpret_cast<void *>(address+0x355CE),4);
 				tglBlitPoolSubmit=address+0x355D2+relative;
-                const bool auxThunk=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
+                const bool auxThunk=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64") ||
+                    !strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
                 uint64_t resolved=0;
                 blitInitOK=TGLAuxCall::resolveSubmit(tglBlitPoolSubmit,auxThunk,tglVMRead,resolved);
                 if(blitInitOK)tglBlitPoolSubmit=resolved;

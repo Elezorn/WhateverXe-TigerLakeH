@@ -33,10 +33,10 @@ unsigned cases=0;
 for(unsigned k=0;k<7;++k)for(unsigned n=0;n<2;++n)for(unsigned o=0;o<2;++o)for(unsigned physical=0;physical<2;++physical)for(unsigned family=0;family<2;++family){
 version=versions[k];noaccel=n;off=o;currentGraphics=currentFramebuffer=nullptr;
 select({bool(physical),family?XELP::Family::TigerLake:XELP::Family::Other});
-bool expected=physical&&family&&!o&&(k<4 || (k==4 && n));
+bool expected=physical&&family&&!o&&(k<5);
 assert(tglRequested==expected);assert(tglAcceleratorRequested==(expected&&!n));
 assert((currentFramebuffer==&kextIntelTGLFb)==expected);++cases;
-}printf("PASS: %u actual TGL admission cases, including Sonoma framebuffer-only, Ventura acceleration, noaccel and unknown-kernel rejection\n",cases);
+}printf("PASS: %u actual TGL admission cases, including Sonoma acceleration, Ventura acceleration, noaccel and unknown-kernel rejection\n",cases);
 }
 '''.replace('BODY',body)
 (out/'test-admission.cpp').write_text(code)

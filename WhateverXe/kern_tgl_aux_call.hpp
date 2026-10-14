@@ -3,7 +3,7 @@
 
 namespace TGLAuxCall {
 // The exact submitBuffer prologue is shared by the qualified native families.
-// Ventura AuxKC can insert one RIP-relative indirect jump before that function.
+// Ventura/Sonoma AuxKC can insert one RIP-relative indirect jump before that function.
 template <typename Read>
 bool resolveSubmit(uint64_t call, bool allowThunk, Read read, uint64_t &target) {
  auto kernel=[](uint64_t address) {return (address>>47)==0x1FFFF && address<=UINT64_MAX-24;};
