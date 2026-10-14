@@ -1550,8 +1550,17 @@ static void tglPrepareSonomaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
   !memcmp(reinterpret_cast<void *>(fn+0x12F2),create,sizeof(create)) &&
   !memcmp(reinterpret_cast<void *>(fn+0xFE1),update,sizeof(update)) &&
   !memcmp(reinterpret_cast<void *>(protect),protectFrame,sizeof(protectFrame)) &&
-  !memcmp(reinterpret_cast<void *>(protect+0xCF),protectCall,sizeof(protectCall)) &&
+  !memcmp(reinterpret_cast<void *>(protect+0xBF),protectCall,sizeof(protectCall)) &&
   tglVMRead(kernelMap,tglKernelMap) && (tglKernelMap>>47)==0x1FFFF;
+ uint64_t guard[20] {1,tglVM.enabled,tglVM.pciBAR,bar ? bar->getLength() : 0,pat,bool(fn),bool(protect),bool(kernelMap)};
+ if(fn && protect) {
+  const uintptr_t sites[] {fn,fn+0x14,fn+0x48,fn+0x65,fn+0x103,fn+0x12F2,fn+0xFE1,protect,protect+0xBF};
+  const uint8_t *bytes[] {frame,flags,args,protection,nonEPT,create,update,protectFrame,protectCall};
+  const size_t lengths[] {sizeof(frame),sizeof(flags),sizeof(args),sizeof(protection),sizeof(nonEPT),sizeof(create),sizeof(update),sizeof(protectFrame),sizeof(protectCall)};
+  for(unsigned i=0;i<9;++i)guard[8+i]=!memcmp(reinterpret_cast<void *>(sites[i]),bytes[i],lengths[i]);
+ }
+ guard[17]=kernelMap && tglVMRead(kernelMap,tglKernelMap);guard[18]=tglKernelMap;guard[19]=ok;
+ IORegistryEntry::getRegistryRoot()->setProperty("TGLSonomaMMIOGuard",guard,sizeof(guard));
  if(ok) {
   tglProtectCacheMode=reinterpret_cast<decltype(tglProtectCacheMode)>(protect);
   tglPmapNewResume=fn+0x1301;tglPmapUpdateResume=fn+0xFEF;

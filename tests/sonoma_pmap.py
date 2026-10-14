@@ -23,8 +23,12 @@ if a.kernel:
    if base<=va and va+n<=base+fs:return d[off+va-base:off+va-base+n]
   raise ValueError(hex(va))
  block=s[s.index('static void tglPrepareSonomaMMIOUC'):s.index('static void tglPrepareMMIOUC')]
- sites={'frame':0,'flags':0x14,'args':0x48,'protection':0x65,'nonEPT':0x103,'create':0x12f2,'update':0xfe1}
- sites.update(protectFrame=0xffffff8000446f10-0xffffff800046ffb0,protectCall=0xffffff8000446fcf-0xffffff800046ffb0)
+ # Derive the addresses from the actual runtime guard expressions, so an
+ # incorrect call-site offset cannot be hidden by a separate fixture offset.
+ sites={}
+ for base,offset,name in re.findall(r'!memcmp\(reinterpret_cast<void \*>\((fn|protect)(\+0x[0-9A-Fa-f]+)?\),([A-Za-z]+),sizeof',block):
+  sites[name]=(0 if base=='fn' else 0xffffff8000446f10-0xffffff800046ffb0)+(int(offset[1:],16) if offset else 0)
+ assert len(sites)==9,sites
  for name,offset in sites.items():
   values=re.search(r'const uint8_t '+name+r'\[\] \{([^}]+)\}',block)[1]
   values=bytes(int(v.strip(),0) for v in values.split(','))
