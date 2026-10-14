@@ -1282,6 +1282,108 @@ extern "C" __attribute__((naked,used)) void tglVenturaPmapUpdateBridge() {
   "jmpq *_tglPmapUpdateResume(%rip)\n"
  );
 }
+extern "C" __attribute__((naked,used)) void tglSonomaPmapNewBridge() {
+ asm volatile(
+  "cmpl $0x4010000, -0x64(%rbp)\n"
+  "jb 9f\n"
+  "cmpl $0x4011000, -0x64(%rbp)\n"
+  "jae 9f\n"
+  "movq $1, %rcx\n"
+  "lock xaddq %rcx, _tglPmapNewEvidence(%rip)\n"
+  "testq %rcx, %rcx\n"
+  "jnz 2f\n"
+  "movl -0x64(%rbp), %ecx\n"
+  "movq %rcx, _tglPmapNewEvidence+48(%rip)\n"
+  "movl -0x4C(%rbp), %ecx\n"
+  "movq %rcx, _tglPmapNewEvidence+56(%rip)\n"
+  "movq -0x48(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+64(%rip)\n"
+  "movq %rdx, _tglPmapNewEvidence+72(%rip)\n"
+  "movq %r14, %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+80(%rip)\n"
+  "movq 8(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+88(%rip)\n"
+  "movq $1, _tglPmapNewEvidence+96(%rip)\n"
+  "2:\n"
+  "cmpq $0, -0x48(%rbp)\n"
+  "je 3f\n"
+  "testl $0x100, -0x4C(%rbp)\n"
+  "jnz 4f\n"
+  "movq %rdx, %rcx\n"
+  "andl $0x98, %ecx\n"
+  "cmpl $0x10, %ecx\n"
+  "jne 5f\n"
+  "orq $8, %rdx\n"
+  "lock incq _tglPmapNewEvidence+8(%rip)\n"
+  "jmp 9f\n"
+  "3:\n"
+  "lock incq _tglPmapNewEvidence+16(%rip)\n"
+  "jmp 9f\n"
+  "4:\n"
+  "lock incq _tglPmapNewEvidence+24(%rip)\n"
+  "jmp 9f\n"
+  "5:\n"
+  "lock incq _tglPmapNewEvidence+32(%rip)\n"
+  "9:\n"
+  "movl -0x50(%rbp), %esi\n"
+  "movl %esi, %ecx\n"
+  "andl $1, %ecx\n"
+  "orq %rdx, %rcx\n"
+  "testb $2, %sil\n"
+  "jmpq *_tglPmapNewResume(%rip)\n"
+ );
+}
+extern "C" __attribute__((naked,used)) void tglSonomaPmapUpdateBridge() {
+ asm volatile(
+  "cmpl $0x4010000, -0x64(%rbp)\n"
+  "jb 9f\n"
+  "cmpl $0x4011000, -0x64(%rbp)\n"
+  "jae 9f\n"
+  "movq $1, %rdx\n"
+  "lock xaddq %rdx, _tglPmapUpdateEvidence(%rip)\n"
+  "testq %rdx, %rdx\n"
+  "jnz 2f\n"
+  "movl -0x64(%rbp), %edx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+48(%rip)\n"
+  "movl -0x4C(%rbp), %edx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+56(%rip)\n"
+  "movq -0x48(%rbp), %rdx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+64(%rip)\n"
+  "movq %rcx, _tglPmapUpdateEvidence+72(%rip)\n"
+  "movq %r14, %rdx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+80(%rip)\n"
+  "movq 8(%rbp), %rdx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+88(%rip)\n"
+  "movq $1, _tglPmapUpdateEvidence+96(%rip)\n"
+  "2:\n"
+  "cmpq $0, -0x48(%rbp)\n"
+  "je 3f\n"
+  "testl $0x100, -0x4C(%rbp)\n"
+  "jnz 4f\n"
+  "movq %rcx, %rdx\n"
+  "andl $0x98, %edx\n"
+  "cmpl $0x10, %edx\n"
+  "jne 5f\n"
+  "orq $8, %rcx\n"
+  "lock incq _tglPmapUpdateEvidence+8(%rip)\n"
+  "jmp 9f\n"
+  "3:\n"
+  "lock incq _tglPmapUpdateEvidence+16(%rip)\n"
+  "jmp 9f\n"
+  "4:\n"
+  "lock incq _tglPmapUpdateEvidence+24(%rip)\n"
+  "jmp 9f\n"
+  "5:\n"
+  "lock incq _tglPmapUpdateEvidence+32(%rip)\n"
+  "9:\n"
+  "movl -0x50(%rbp), %edx\n"
+  "movl %edx, %eax\n"
+  "andl $1, %eax\n"
+  "orq %rcx, %rax\n"
+  "testb $2, %dl\n"
+  "jmpq *_tglPmapUpdateResume(%rip)\n"
+ );
+}
 bool tglMMIOEvidenceSerialize(void *,void *,OSSerialize *serializer) {
  uint64_t out[1+39+24] {114};
  memcpy(out+1,tglPmapEntryEvidence,sizeof(tglPmapEntryEvidence));
@@ -1421,7 +1523,57 @@ static void tglPrepareVenturaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  auto evidence=OSSerializer::forTarget(nullptr,tglMMIOEvidenceSerialize);
  if(evidence) {root->setProperty("TGLMMIOMappingEvidence",evidence);evidence->release();}
 }
+static void tglPrepareSonomaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
+ tglMMIOUCReady=false;
+ auto bar=pci->getDeviceMemoryWithRegister(0x10);
+ auto fn=patcher.solveSymbol(KernelPatcher::KernelID,"_pmap_enter_options");
+ auto protect=patcher.solveSymbol(KernelPatcher::KernelID,"_IOProtectCacheMode");
+ auto kernelMap=patcher.solveSymbol(KernelPatcher::KernelID,"_kernel_map");
+ const uint8_t frame[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xEC,0xC8,0x00,0x00,0x00};
+ const uint8_t flags[] {0x44,0x89,0x4D,0xB4};
+ const uint8_t args[] {0x89,0x55,0x9C,0x89,0xD6,0x4C,0x8B,0x6F,0x40};
+ const uint8_t nonEPT[] {0x4C,0x89,0x6D,0xB8};
+ const uint8_t protection[] {0x89,0x4D,0xB0};
+ const uint8_t create[] {0x8B,0x75,0xB0,0x89,0xF1,0x83,0xE1,0x01,0x48,0x09,0xD1,0x40,0xF6,0xC6,0x02};
+ const uint8_t update[] {0x8B,0x55,0xB0,0x89,0xD0,0x83,0xE0,0x01,0x48,0x09,0xC8,0xF6,0xC2,0x02};
+ const uint8_t protectFrame[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x28};
+ const uint8_t protectCall[] {0xE8,0xDC,0x8F,0x02,0x00};
+ uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
+ const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
+ bool ok=tglVM.enabled && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+  pat==0x1040600070406ULL && fn && protect && kernelMap &&
+  !memcmp(reinterpret_cast<void *>(fn),frame,sizeof(frame)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x14),flags,sizeof(flags)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x48),args,sizeof(args)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x65),protection,sizeof(protection)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x103),nonEPT,sizeof(nonEPT)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x12F2),create,sizeof(create)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0xFE1),update,sizeof(update)) &&
+  !memcmp(reinterpret_cast<void *>(protect),protectFrame,sizeof(protectFrame)) &&
+  !memcmp(reinterpret_cast<void *>(protect+0xCF),protectCall,sizeof(protectCall)) &&
+  tglVMRead(kernelMap,tglKernelMap) && (tglKernelMap>>47)==0x1FFFF;
+ if(ok) {
+  tglProtectCacheMode=reinterpret_cast<decltype(tglProtectCacheMode)>(protect);
+  tglPmapNewResume=fn+0x1301;tglPmapUpdateResume=fn+0xFEF;
+  const uintptr_t targets[] {reinterpret_cast<uintptr_t>(tglSonomaPmapNewBridge),reinterpret_cast<uintptr_t>(tglSonomaPmapUpdateBridge)};
+  const uintptr_t sites[] {fn+0x12F2,fn+0xFE1};
+  const size_t lengths[] {sizeof(create),sizeof(update)};
+  for(unsigned i=0;i<2 && ok;++i) {
+   uint8_t jump[16] {0xFF,0x25,0,0,0,0};jump[14]=jump[15]=0x90;
+   memcpy(jump+6,&targets[i],sizeof(targets[i]));
+   patcher.clearError();patcher.routeBlock(sites[i],jump,lengths[i]);
+   ok=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(reinterpret_cast<void *>(sites[i]),jump,lengths[i]);
+  }
+ }
+ tglMMIOUCRouted=ok;patcher.clearError();
+ auto root=IORegistryEntry::getRegistryRoot();root->setProperty("TGLMMIOStrongUCRouted",ok);
+ auto evidence=OSSerializer::forTarget(nullptr,tglMMIOEvidenceSerialize);
+ if(evidence) {root->setProperty("TGLMMIOMappingEvidence",evidence);evidence->release();}
+}
 static void tglPrepareMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
+ if(!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64")) {
+  tglPrepareSonomaMMIOUC(patcher,pci);return;
+ }
  if(!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64")) {
   tglPrepareVenturaMMIOUC(patcher,pci);return;
  }
