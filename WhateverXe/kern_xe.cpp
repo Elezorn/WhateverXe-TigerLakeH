@@ -81,7 +81,6 @@ extern "C" __attribute__((naked,used)) void tglSonomaMatrixBridge() {
 static bool tglSonomaSurfaceFramebufferReady=true;
 static bool tglInstallSonomaSurfaceABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size,bool framebuffer) {
  if(strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") && strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64"))return true;
- if(!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64") && !framebuffer)return false;
  struct Site {size_t offset,length;uint8_t before[6],after[6];};
  const Site fb[] {
   {0x2B5E8,6,{0x8B,0x80,0xA4,0,0,0},{0x8B,0x80,0x80,0,0,0}}, // pixelFormat
@@ -3309,9 +3308,8 @@ void XE::selectProfile(const XELP::Profile &profile) {
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
     tglAcceleratorRequested=tglRequested && !checkKernelArgument("-wex-noaccel");
     if(tglRequested) {
-        // Admit the exact Sequoia candidate only for framebuffer bring-up.
+        // Exact Sequoia framebuffer and strong-UC mapping are qualified.
         const bool sequoia=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
-        if(sequoia && tglAcceleratorRequested) {tglRequested=tglAcceleratorRequested=false;return;}
         // Exact Sonoma framebuffer and strong-UC mapping are qualified.
         const bool sonoma=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
         // Exact Ventura input has a separately guarded strong-UC path.
@@ -9000,7 +8998,8 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				int32_t relative;memcpy(&relative,reinterpret_cast<void *>(address+0x355CE),4);
 				tglBlitPoolSubmit=address+0x355D2+relative;
                 const bool auxThunk=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64") ||
-                    !strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
+                    !strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") ||
+                    !strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
                 uint64_t resolved=0;
                 blitInitOK=TGLAuxCall::resolveSubmit(tglBlitPoolSubmit,auxThunk,tglVMRead,resolved);
                 if(blitInitOK)tglBlitPoolSubmit=resolved;
