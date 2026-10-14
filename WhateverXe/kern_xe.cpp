@@ -60,6 +60,69 @@
 
 extern "C" const char version[];
 
+// Stock 23J631 IOSurface moved fields used inline by the exact DP1 donor.
+// The matrix moved into its attachment storage; preserve all three native
+// branches instead of treating the old byte offset as a zero/default matrix.
+extern "C" {
+uintptr_t tglSonomaMatrixZero, tglSonomaMatrixOne, tglSonomaMatrixOther;
+}
+extern "C" __attribute__((naked,used)) void tglSonomaMatrixBridge() {
+ asm volatile(
+  "movq 0x178(%rax), %rax\n"
+  "movzbl 0x6a(%rax), %eax\n"
+  "testl %eax, %eax\n"
+  "jz 1f\n"
+  "cmpl $1, %eax\n"
+  "jne 2f\n"
+  "jmpq *_tglSonomaMatrixOne(%rip)\n"
+  "1: jmpq *_tglSonomaMatrixZero(%rip)\n"
+  "2: jmpq *_tglSonomaMatrixOther(%rip)\n");
+}
+static bool tglSonomaSurfaceFramebufferReady=true;
+static bool tglInstallSonomaSurfaceABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size,bool framebuffer) {
+ if(strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64"))return true;
+ struct Site {size_t offset,length;uint8_t before[6],after[6];};
+ const Site fb[] {
+  {0x2B5E8,6,{0x8B,0x80,0xA4,0,0,0},{0x8B,0x80,0x80,0,0,0}}, // pixelFormat
+  {0x3A029,3,{0x8B,0x50,0x0C},{0x8B,0x50,0x10}} // surface ID (flip history)
+ };
+ const Site accel[] {
+  {0x7287D,6,{0x8B,0x83,0xB0,0,0,0},{0x8B,0x83,0x98,0,0,0}}, // planeCount
+  {0x81361,6,{0x8B,0x83,0xA4,0,0,0},{0x8B,0x83,0x80,0,0,0}} // pixelFormat
+ };
+ const uint8_t matrix[] {0x8B,0x80,0xB4,0,0,0,0x85,0xC0,0x74,0x0E,0x83,0xF8,1,0x75,0x5C};
+ const char *symbols[] {
+  framebuffer ? "__ZN21AppleIntelFramebuffer19ValidateTransactionEP30IOAccelDisplayPipeTransaction2y" : "__ZN15IGAccelResource38calculateIOSurfaceDeviceCacheVRAMBytesEPyS0_",
+  framebuffer ? "__ZN21AppleIntelFramebuffer10logFBStateEP30IOAccelDisplayPipeTransaction2P19FlipTransactionArgs" : "__ZN18IGAccelDisplayPipe18performTransactionEP30IOAccelDisplayPipeTransaction2"
+ };
+ const size_t methods[] {framebuffer?0x2B4BAU:0x72834U,framebuffer?0x39FBAU:0x80EF0U};
+ const auto sites=framebuffer?fb:accel;
+ bool ready=size>(framebuffer?0x3A02CU:0x81367U);
+ for(unsigned i=0;i<2;++i) {
+  ready=ready && patcher.solveSymbol<mach_vm_address_t>(index,symbols[i],address,size)==address+methods[i];
+  patcher.clearError();
+  ready=ready && !memcmp(reinterpret_cast<void *>(address+sites[i].offset),sites[i].before,sites[i].length);
+ }
+ ready=ready && (framebuffer || !memcmp(reinterpret_cast<void *>(address+0x812F6),matrix,sizeof(matrix)));
+ if(!ready)return false;
+ if(!framebuffer) {
+  tglSonomaMatrixZero=address+0x8130E;tglSonomaMatrixOne=address+0x81305;tglSonomaMatrixOther=address+0x81361;
+  uint8_t jump[15] {0xFF,0x25,0,0,0,0};
+  const auto target=reinterpret_cast<uintptr_t>(tglSonomaMatrixBridge);
+  memcpy(jump+6,&target,sizeof(target));jump[14]=0x90;
+  patcher.routeBlock(address+0x812F6,jump,sizeof(jump));
+  ready=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(reinterpret_cast<void *>(address+0x812F6),jump,sizeof(jump));
+  patcher.clearError();
+ }
+ for(unsigned i=0;ready && i<2;++i) {
+  auto site=reinterpret_cast<uint8_t *>(address+sites[i].offset);
+  KernelPatcher::LookupPatch patch {framebuffer?&kextIntelTGLFb:&kextIntelTGL,sites[i].before,sites[i].after,sites[i].length,1};
+  patcher.applyLookupPatch(&patch,site,sites[i].length+1);
+  ready=!memcmp(site,sites[i].after,sites[i].length);patcher.clearError();
+ }
+ return ready;
+}
+
 XE *XE::callbackXE;
 static IOPCIDevice *xelpSelectedGPU;
 static XELP::Profile xelpSelectedProfile;
@@ -8278,6 +8341,8 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeNoAccelGuardReady",ready);
   patcher.clearError();return ready;
  }
+ const bool surfaceABIReady=tglInstallSonomaSurfaceABI(patcher,index,address,size,false);
+ IORegistryEntry::getRegistryRoot()->setProperty("TGLSonomaSurfaceAcceleratorReady",surfaceABIReady);
  if(adlnDetected && (checkKernelArgument("-wex-adln-kernel-ctx") || adlnNativeRCSProfileRequested))adlnPrepareRCSProfile(patcher,index,address,size);
    // Serialize only the two direct stores in detectEDRAM. The original
    // forcewake and 1000ms sleep remain outside the shared gate.
@@ -8987,7 +9052,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			}
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRecoverySinglePassRequested",recoveryRequested);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRecoverySinglePassReady",recoveryRequested && recoveryOK);
-			tglAcceleratorReady = adlnObserved && skuReady && urbReady && ccsReady && hizReady && ccsPSReady && ggttOK && observed && ok && gucOK && dmaWriteOK && hostOK && scratchOK && blitInitOK && tglMMIOUCReady && copyOK && auxAlignOK && iosCCSOK && ffModeOK && cpsOK && flushOK && tlbPreparserOK && hangOK && recoveryOK;
+			tglAcceleratorReady = surfaceABIReady && adlnObserved && skuReady && urbReady && ccsReady && hizReady && ccsPSReady && ggttOK && observed && ok && gucOK && dmaWriteOK && hostOK && scratchOK && blitInitOK && tglMMIOUCReady && copyOK && auxAlignOK && iosCCSOK && ffModeOK && cpsOK && flushOK && tlbPreparserOK && hangOK && recoveryOK;
 			// r201: resource/copy diagnostics are absent, not admission requirements.
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLResourceDiagnosticsRemoved",true);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLAcceleratorAdmissionReady", tglAcceleratorReady);
@@ -9004,6 +9069,8 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 	if (tglRequested) {
 		if (!tglActive) return false;
 		if (currentFramebuffer->loadIndex == index) {
+			tglSonomaSurfaceFramebufferReady=tglInstallSonomaSurfaceABI(patcher,index,address,size,true);
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLSonomaSurfaceFramebufferReady",tglSonomaSurfaceFramebufferReady);
 			if (modDVMTCalcFix.enabled && modDVMTCalcFix.available)
 				modDVMTCalcFix.processFramebufferKext(patcher, index, address, size);
    // Exact donor transaction entries. Each installed wrapper arbitrates
@@ -9938,7 +10005,7 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  if(!tglLoadHDMIWiring(provider)) {
   that->setProperty("TGLStartBlockedByHDMIWiring",true);return false;
  }
-	if (!callbackXE->tglPlatformNVRAMReady || !callbackXE->tglFBIRQReady || !callbackXE->tglProbeReady || !callbackXE->tglFramebufferInitReady || !callbackXE->tglDekelReady ||
+	if (!tglSonomaSurfaceFramebufferReady || !callbackXE->tglPlatformNVRAMReady || !callbackXE->tglFBIRQReady || !callbackXE->tglProbeReady || !callbackXE->tglFramebufferInitReady || !callbackXE->tglDekelReady ||
 		(callbackXE->tglHDMIB && !callbackXE->tglGMBusReady) ||
 		!callbackXE->tglTopologyReady ||
 		(callbackXE->tglTrainingLeaseRequested && (!callbackXE->tglTrainingLeaseReady ||
