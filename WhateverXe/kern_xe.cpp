@@ -2909,7 +2909,7 @@ TGLAUXRecord tglAUXControl[9][64] {};
 uint32_t tglAUXControlCounts[9] {};
 
 // Independent and nested training calls retain their own suppression scope.
-// DPCD memory records remain enabled; only intrusive diagnostics are skipped.
+// DPCD/AUX memory records remain enabled; intrusive diagnostics are skipped.
 static TGLTrainingScopes tglTrainingScopes;
 static bool tglQuietTraining() {
 	return tglTrainingScopes.active(reinterpret_cast<uintptr_t>(current_thread()));
@@ -2993,7 +2993,6 @@ static bool tglDPCDSerialize(void *, void *, OSSerialize *serializer) {
 
 void tglAUXRecord(void *port, uint32_t event, bool done, uint32_t result,
 	uint32_t a, uint32_t b, uint32_t header = 0, uint32_t packet = 0) {
-	if (tglQuietTraining()) return;
 	if (!tglAUXLock || !port) return;
 	auto bytes = static_cast<uint8_t *>(port);
 	auto config = *reinterpret_cast<uint32_t **>(bytes + 0x548);
@@ -3044,6 +3043,29 @@ static bool tglAUXControlSerialize(void *,void *reference,OSSerialize *serialize
  auto data=OSData::withBytes(copy,size);IOFree(copy,size);
  if(!data)return false;
  const bool result=data->serialize(serializer);data->release();return result;
+}
+
+// Include bulk transport entry/return records during quiet training. Like the
+// control serializer, this copies memory only and allocates outside the lock.
+// Header: schema, DDI, total count, ring capacity; then 128 MEM1 records.
+static bool tglAUXLiveSerialize(void *, void *reference, OSSerialize *serializer) {
+	const auto ddi = reinterpret_cast<uintptr_t>(reference);
+	if (ddi >= 9 || !tglAUXLock) return false;
+	const size_t size = 16 + sizeof(tglAUXLast[0]);
+	auto copy = static_cast<uint8_t *>(IOMalloc(size));
+	if (!copy) return false;
+	auto header = reinterpret_cast<uint32_t *>(copy);
+	header[0] = 1; header[1] = ddi; header[3] = arrsize(tglAUXLast[0]);
+	IOSimpleLockLock(tglAUXLock);
+	header[2] = tglAUXCounts[ddi];
+	memcpy(copy + 16, tglAUXLast[ddi], sizeof(tglAUXLast[0]));
+	IOSimpleLockUnlock(tglAUXLock);
+	auto data = OSData::withBytes(copy, size);
+	IOFree(copy, size);
+	if (!data) return false;
+	const bool result = data->serialize(serializer);
+	data->release();
+	return result;
 }
 
 void tglAUXPublish() {
@@ -10179,6 +10201,10 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDPCDLive",live);live->release();
  }
  for(uintptr_t ddi=3;ddi<=8;++ddi) {
+  if(auto live=OSSerializer::forTarget(nullptr,tglAUXLiveSerialize,reinterpret_cast<void *>(ddi))) {
+   char key[48];snprintf(key,sizeof(key),"WhateverXeAUXLive%u",static_cast<unsigned>(ddi));
+   IORegistryEntry::getRegistryRoot()->setProperty(key,live);live->release();
+  }
   if(auto live=OSSerializer::forTarget(nullptr,tglAUXControlSerialize,reinterpret_cast<void *>(ddi))) {
    char key[48];snprintf(key,sizeof(key),"WhateverXeTCControl%u",static_cast<unsigned>(ddi));
    IORegistryEntry::getRegistryRoot()->setProperty(key,live);live->release();

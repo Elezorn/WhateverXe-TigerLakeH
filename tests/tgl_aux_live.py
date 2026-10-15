@@ -3,7 +3,7 @@
 from pathlib import Path
 import re,subprocess,tempfile
 r=Path(__file__).resolve().parents[1];s=(r/'WhateverXe/kern_xe.cpp').read_text()
-bodies='\n'.join(re.search(p,s,re.S).group() for p in [r'void tglAUXRecord\(.*?\n\}',r'static bool tglAUXControlSerialize\(.*?\n\}',r'void tglDPCDRecord\(.*?\n\}',r'static bool tglDPCDSerialize\(.*?\n\}'])
+bodies='\n'.join(re.search(p,s,re.S).group() for p in [r'void tglAUXRecord\(.*?\n\}',r'static bool tglAUXControlSerialize\(.*?\n\}',r'void tglDPCDRecord\(.*?\n\}',r'static bool tglDPCDSerialize\(.*?\n\}',r'static bool tglAUXLiveSerialize\(.*?\n\}'])
 f=r'''#include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -58,7 +58,17 @@ int main(){
  }
  assert(!tglAUXControlSerialize(nullptr,reinterpret_cast<void*>(9),&s));
  // DPCD remains visible during quiet training without a publish/return.
- quiet=true;assert(tglDPCDSerialize(nullptr,nullptr,&s));
+ quiet=true;
+ tglAUXRecord(port,0,false,0,1,8,0x80010303,0x01010101);
+ tglAUXRecord(port,0,true,0,1,8,0x80010303,0);
+ assert(tglAUXLiveSerialize(nullptr,ref,&s));
+ assert(s.bytes.size()==16+128*128);memcpy(h,s.bytes.data(),16);
+ assert(h[0]==1&&h[1]==4&&h[2]==402&&h[3]==128);
+ for(unsigned i=400;i<402;++i){TGLAUXRecord v;memcpy(&v,s.bytes.data()+16+(i%128)*128,128);
+  assert(v.word[0]==i+1&&v.word[1]==0&&v.word[2]==i-400&&v.word[27]==0x4d454d31);
+ }
+ assert(!tglAUXLiveSerialize(nullptr,reinterpret_cast<void*>(9),&s));
+ assert(tglDPCDSerialize(nullptr,nullptr,&s));
  assert(s.bytes.size()==16+128*80);
  uint8_t payload[32];for(unsigned i=0;i<32;++i)payload[i]=i;
  for(unsigned i=0;i<80;++i){
@@ -80,9 +90,9 @@ int main(){
  tglDPCDRecord(nullptr,0x202,noRead,32,true,false,0,nullptr);
  config[0]=9;tglDPCDRecord(port,0x202,noRead,32,true,false,0,nullptr);
  assert(tglDPCDCount==162);
- failAlloc=true;assert(!tglDPCDSerialize(nullptr,nullptr,&s));failAlloc=false;
- failData=true;assert(!tglDPCDSerialize(nullptr,nullptr,&s));failData=false;
- tglAUXLock=nullptr;assert(!tglDPCDSerialize(nullptr,nullptr,&s));
+ failAlloc=true;assert(!tglAUXLiveSerialize(nullptr,ref,&s));assert(!tglDPCDSerialize(nullptr,nullptr,&s));failAlloc=false;
+ failData=true;assert(!tglAUXLiveSerialize(nullptr,ref,&s));assert(!tglDPCDSerialize(nullptr,nullptr,&s));failData=false;
+ tglAUXLock=nullptr;assert(!tglAUXLiveSerialize(nullptr,ref,&s));assert(!tglDPCDSerialize(nullptr,nullptr,&s));
  assert(!tglAUXControlSerialize(nullptr,ref,&s));
  munmap(noRead,4096);
 }
