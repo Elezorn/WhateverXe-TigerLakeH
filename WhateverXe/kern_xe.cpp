@@ -2908,6 +2908,40 @@ uint32_t tglAUXCounts[9] {};
 TGLAUXRecord tglAUXControl[9][64] {};
 uint32_t tglAUXControlCounts[9] {};
 
+// Bounded lifecycle evidence, separate from bulk AUX. Capture arguments and
+// existing native results only; never perform diagnostic hardware accesses.
+struct TGLTransitionRecord { uint64_t q[16]; };
+static IOSimpleLock *tglTransitionLock;
+static TGLTransitionRecord tglTransitions[256] {};
+static uint32_t tglTransitionCount {};
+static void tglTransitionRecord(uint32_t stage, bool done, void *object,
+ uint64_t a, uint64_t b, uint64_t value, const void *payload=nullptr, size_t bytes=0) {
+ if (!tglTransitionLock || bytes>56 || (bytes && !payload)) return;
+ TGLTransitionRecord r {};
+ uint64_t ticks;clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,r.q);
+ r.q[1]=reinterpret_cast<uintptr_t>(current_thread());r.q[3]=stage;r.q[4]=done;
+ r.q[5]=reinterpret_cast<uintptr_t>(object);r.q[6]=a;r.q[7]=b;r.q[8]=value;
+ if(bytes)memcpy(r.q+9,payload,bytes);
+ const auto irq=IOSimpleLockLockDisableInterrupt(tglTransitionLock);
+ r.q[2]=++tglTransitionCount;
+ tglTransitions[(tglTransitionCount-1)%arrsize(tglTransitions)]=r;
+ IOSimpleLockUnlockEnableInterrupt(tglTransitionLock,irq);
+}
+static bool tglTransitionSerialize(void *,void *,OSSerialize *serializer) {
+ if(!tglTransitionLock)return false;
+ const size_t size=16+sizeof(tglTransitions);
+ auto copy=static_cast<uint8_t *>(IOMalloc(size));if(!copy)return false;
+ auto h=reinterpret_cast<uint32_t *>(copy);h[0]=1;h[2]=arrsize(tglTransitions);h[3]=sizeof(TGLTransitionRecord);
+ const auto irq=IOSimpleLockLockDisableInterrupt(tglTransitionLock);
+ h[1]=tglTransitionCount;memcpy(copy+16,tglTransitions,sizeof(tglTransitions));
+ IOSimpleLockUnlockEnableInterrupt(tglTransitionLock,irq);
+ auto data=OSData::withBytes(copy,size);IOFree(copy,size);if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
+}
+static bool tglTransitionRegister(unsigned long reg) {
+ return reg==0x45400 || reg==0x45404 || reg==0x45408 || reg==0x4540C || reg==0x45450 || reg==0x45454;
+}
+
 // Independent and nested training calls retain their own suppression scope.
 // DPCD/AUX memory records remain enabled; intrusive diagnostics are skipped.
 static TGLTrainingScopes tglTrainingScopes;
@@ -9921,6 +9955,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				patcher.clearError();
 			}
 			tglAUXLock = IOSimpleLockAlloc();
+			tglTransitionLock = IOSimpleLockAlloc();
 			if (tglConnectionLock) {
 				KernelPatcher::RouteRequest link("__ZN14AppleIntelPort15checkLinkStatusEv",
 					wrapTGLCheckLinkStatus, orgTGLCheckLinkStatus);
@@ -10197,6 +10232,9 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
 
 bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  tglRecordStartOrder(3,that);
+ if(auto live=OSSerializer::forTarget(nullptr,tglTransitionSerialize)) {
+  IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeTransitionLive",live);live->release();
+ }
  if(auto live=OSSerializer::forTarget(nullptr,tglDPCDSerialize)) {
   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDPCDLive",live);live->release();
  }
@@ -12949,6 +12987,8 @@ uint32_t XE::wrapTGLFBDDC(void *fb, uint32_t block, uint8_t *data, uint64_t *len
 // Counts are event IDs, not matched call IDs; concurrent entries must be paired
 // by stage, object index and thread, not by the old per-stage count alone.
 void XE::tglTimeEvent(uint32_t stage, uint32_t id, bool done, uint32_t arg, uint32_t result) {
+ if(stage==11 || stage==12 || stage==16 || (stage>=18 && stage<=21))
+  tglTransitionRecord(stage,done,nullptr,id,arg,result);
 	if (tglQuietTraining()) return;
 	if (stage >= 30) return;
 	uint64_t uptime = 0, ns = 0;
@@ -13120,7 +13160,10 @@ uint32_t XE::wrapTGLTopDDC(void *fb, int connection, uint32_t block, uint32_t ty
 }
 
 uint32_t XE::wrapTGLRegisterRead(void *access, unsigned long reg) {
+ const bool trace=tglTransitionRegister(reg);
+ if(trace)tglTransitionRecord(35,false,access,reg,tglConnectionCaller(__builtin_return_address(0)),0);
 	auto value = FunctionCast(wrapTGLRegisterRead, callbackXE->orgTGLRegisterRead)(access, reg);
+ if(trace)tglTransitionRecord(35,true,access,reg,tglConnectionCaller(__builtin_return_address(0)),value);
 	const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
 	auto s = callbackXE;
 	if (reg == 0x42000 && s->tglPG1FuseReadCaller && caller == s->tglPG1FuseReadCaller) {
@@ -13588,6 +13631,7 @@ void XE::tglObserveTrainingLease(const TGLTrainingLease &lease, uint32_t event, 
 	}
 	IORecursiveLockUnlock(s->tglPathPoolLock);
 	char key[64];
+ tglTransitionRecord(34,true,reinterpret_cast<void *>(r[7]),event,(r[29]<<32)|argument,(r[26]<<32)|result,r+10,56);
 	snprintf(key, sizeof(key), "TGLLeaseLast%u", static_cast<uint32_t>(r[2]) % 64);
 	IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
 	if (r[2] <= 64) {
@@ -13737,7 +13781,11 @@ bool XE::tglReleaseTrainingLease(TGLTrainingLease &lease, bool disableLink) {
 		*reinterpret_cast<volatile uint32_t *>(mmio + 0x60540 + 0x1000*pipe) != lease.savedTP) {
 		tglObserveTrainingLease(lease, 4, 2); return false;
 	}
-	if (lease.powerOwned) reinterpret_cast<void (*)(void *, uint32_t)>(s->tglDisablePG)(lease.power, lease.pg);
+	if (lease.powerOwned) {
+  tglTransitionRecord(37,false,lease.power,lease.pg,lease.ddi,0);
+  reinterpret_cast<void (*)(void *, uint32_t)>(s->tglDisablePG)(lease.power, lease.pg);
+  tglTransitionRecord(37,true,lease.power,lease.pg,lease.ddi,0);
+ }
 	lease.powerOwned = false;
 	tglObserveTrainingLease(lease, 5, 0);
 	IORecursiveLockLock(s->tglPathPoolLock);
@@ -14244,6 +14292,7 @@ void *XE::wrapTGLAddPath(void *fb, uint32_t pipe) {
 // Path lifecycle and actual port training share one timestamped schema. Raw
 // register reads are observations only; void API completions have no status.
 void XE::tglObservePath(void *port, void *path, uint32_t event, bool done, uint32_t result, uint64_t arg, void *caller) {
+ if(event<8)tglTransitionRecord(40+event,done,path?path:port,reinterpret_cast<uintptr_t>(port),arg,result);
 	if (tglQuietTraining()) return;
 	if (!port && path) port = *reinterpret_cast<void **>(static_cast<uint8_t *>(path) + 0x3648);
 	if (!port || event >= 8) return;
@@ -14377,6 +14426,7 @@ volatile uint8_t *XE::tglClockOrderTarget(void *controller, void *port, void *pa
 }
 
 void XE::wrapTGLDisableClocks(void *controller, void *port, void *otherPort) {
+ tglTransitionRecord(32,false,port,reinterpret_cast<uintptr_t>(controller),reinterpret_cast<uintptr_t>(otherPort),0);
 	auto s = callbackXE;
 	auto &tx = tglClockOffTransaction;
 	const auto thread = reinterpret_cast<uintptr_t>(current_thread());
@@ -14412,6 +14462,7 @@ void XE::wrapTGLDisableClocks(void *controller, void *port, void *otherPort) {
 	// teardown, including any clock-off request deferred by this transaction.
 	if (owned && tx.pending) { tx.pending = false; wrapTGLRegisterWrite(tx.access, tx.clockReg, tx.value); }
 	FunctionCast(wrapTGLDisableClocks, s->orgTGLDisableClocks)(controller, port, otherPort);
+ tglTransitionRecord(32,true,port,reinterpret_cast<uintptr_t>(controller),reinterpret_cast<uintptr_t>(otherPort),0);
 }
 
 uint32_t XE::wrapTGLLightUpTMDS(void *controller, void *fb, void *path, const void *timing) {
@@ -14677,7 +14728,10 @@ void XE::wrapTGLRegisterWrite(void *access, unsigned long reg, uint32_t value) {
 	tglStreamAck(access, reg, value, 0, __builtin_return_address(0));
 	auto irq=reg==0x190010 ? tglFBIRQBegin(0,callbackXE->tglObservationController,value,
 		reinterpret_cast<uintptr_t>(__builtin_return_address(0))) : nullptr;
+ const bool trace=tglTransitionRegister(reg);
+ if(trace)tglTransitionRecord(36,false,access,reg,tglConnectionCaller(__builtin_return_address(0)),value);
 	FunctionCast(wrapTGLRegisterWrite, callbackXE->orgTGLRegisterWrite)(access, reg, value);
+ if(trace)tglTransitionRecord(36,true,access,reg,tglConnectionCaller(__builtin_return_address(0)),value);
 	tglFBIRQEnd(irq,0);
 	if (reg < 0x4A000 || reg >= 0x4C000) return;
 	const auto thread = reinterpret_cast<uintptr_t>(current_thread());
@@ -15023,9 +15077,12 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 }
 
 void XE::wrapTGLPowerDDIState(void *power, bool enable, uint32_t requested) {
+ auto bytes=static_cast<uint8_t *>(power);
+ tglTransitionRecord(33,false,power,requested,enable,bytes[0x18],bytes+0x20,52);
 	auto controller = *reinterpret_cast<void **>(static_cast<uint8_t *>(power) + 0x10);
 	tglObserveActivation(controller, nullptr, nullptr, 3, false, requested);
 	FunctionCast(wrapTGLPowerDDIState, callbackXE->orgTGLPowerDDIState)(power, enable, requested);
+ tglTransitionRecord(33,true,power,requested,enable,bytes[0x18],bytes+0x20,52);
 	tglObserveActivation(controller, nullptr, nullptr, 3, true, requested);
 }
 

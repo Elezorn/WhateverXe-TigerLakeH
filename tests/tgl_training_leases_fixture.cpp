@@ -1,3 +1,4 @@
+template<class... T>void tglTransitionRecord(T...){ }
 // Native boundaries are mocks; LEASE_FUNCTIONS is extracted unchanged from production.
 #include <algorithm>
 #include <cassert>
