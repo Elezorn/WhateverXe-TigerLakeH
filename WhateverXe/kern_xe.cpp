@@ -2970,6 +2970,27 @@ void tglDPCDPublish() {
 	IOFree(copy, size);
 }
 
+// Read the bounded memory ring even while a native training call is pending.
+// Header: schema, total count, capacity, record size. No native call or MMIO.
+static bool tglDPCDSerialize(void *, void *, OSSerialize *serializer) {
+	if (!tglAUXLock) return false;
+	const size_t size = 16 + sizeof(tglDPCDLast);
+	auto copy = static_cast<uint8_t *>(IOMalloc(size));
+	if (!copy) return false;
+	auto header = reinterpret_cast<uint32_t *>(copy);
+	header[0] = 1; header[2] = arrsize(tglDPCDLast); header[3] = sizeof(TGLDPCDRecord);
+	IOSimpleLockLock(tglAUXLock);
+	header[1] = tglDPCDCount;
+	memcpy(copy + 16, tglDPCDLast, sizeof(tglDPCDLast));
+	IOSimpleLockUnlock(tglAUXLock);
+	auto data = OSData::withBytes(copy, size);
+	IOFree(copy, size);
+	if (!data) return false;
+	const bool result = data->serialize(serializer);
+	data->release();
+	return result;
+}
+
 void tglAUXRecord(void *port, uint32_t event, bool done, uint32_t result,
 	uint32_t a, uint32_t b, uint32_t header = 0, uint32_t packet = 0) {
 	if (tglQuietTraining()) return;
@@ -10154,6 +10175,9 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
 
 bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  tglRecordStartOrder(3,that);
+ if(auto live=OSSerializer::forTarget(nullptr,tglDPCDSerialize)) {
+  IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDPCDLive",live);live->release();
+ }
  for(uintptr_t ddi=3;ddi<=8;++ddi) {
   if(auto live=OSSerializer::forTarget(nullptr,tglAUXControlSerialize,reinterpret_cast<void *>(ddi))) {
    char key[48];snprintf(key,sizeof(key),"WhateverXeTCControl%u",static_cast<unsigned>(ddi));
