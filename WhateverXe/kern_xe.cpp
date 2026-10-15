@@ -15029,27 +15029,16 @@ void XE::wrapTGLPowerDDIState(void *power, bool enable, uint32_t requested) {
 	tglObserveActivation(controller, nullptr, nullptr, 3, true, requested);
 }
 
-// Read-only snapshots at the transmitter enable boundary. Fixed addresses
-// come from the donor DDI4 table and Linux v6.12 TGL/FIA definitions.
+// Software-only transmitter boundary. Owning one port does not authorize
+// reads of every transcoder or diagnostic PHY bank selection. In particular,
+// the previous snapshot read 0x63540 independently of the selected pipe.
 void XE::tglSnapshotTransmitter(void *port, bool done, uint32_t result) {
-	if (tglQuietTraining()) return;
+	if (tglQuietTraining() || !port) return;
 	tglObserveActivation(callbackXE->tglObservationController, port, nullptr, 2, done, result);
 	auto bytes = static_cast<uint8_t *>(port);
 	auto config = *reinterpret_cast<uint32_t **>(bytes + 0x548);
-	TGLTypeCPort mapping;
-	if (!config || !callbackXE->tglLegacyTCEligible(config[0]) || !TGLTypeCPort::resolve(config[0], mapping)) return;
-	auto access = *reinterpret_cast<uint8_t **>(bytes + 0x578);
-	if (!access) return;
-	auto base = *reinterpret_cast<volatile uint8_t **>(access + 0x50);
-	const auto size = *reinterpret_cast<uint32_t *>(access + 0x60);
-	if (!base || size < 0x16A000) return;
-	TGLFiaPort fia;
-	if (!mapping.resolveFia(*reinterpret_cast<volatile uint32_t *>(base + 0x1638A0), fia) ||
-		size < fia.owned + 4 || size < mapping.phyBase + 0x1000) return;
-	const uint32_t offsets[] = {
-		mapping.ddiBuffer, fia.laneSelect, mapping.pllEnable, 0x46110, 0x164280, fia.owned, 0x60400, 0x46140,
-		0x60540, 0x61540, 0x62540, 0x63540
-	};
+	if (!config || !callbackXE->tglLegacyTCEligible(config[0])) return;
+	const auto ddi = config[0];
 	static uint32_t sequence {};
 	uint32_t record[34] {};
 	record[0] = __sync_add_and_fetch(&sequence, 1);
@@ -15062,51 +15051,14 @@ void XE::tglSnapshotTransmitter(void *port, bool done, uint32_t result) {
 	record[7] = *reinterpret_cast<uint32_t *>(bytes + 0x130);
 	record[8] = *reinterpret_cast<uint32_t *>(bytes + 0x590);
 	record[9] = config[2];
-	for (size_t i = 0; i < arrsize(offsets); i++) {
-		record[10 + i * 2] = offsets[i];
-		record[11 + i * 2] = *reinterpret_cast<volatile uint32_t *>(base + offsets[i]);
-	}
-	// Read both lane banks at the same boundary, before any retry cleanup.
-	// No publication/allocation under the HIP lock. Bank selection is the only
-	// write here, and its prior value is restored before unlocking.
-	static const uint32_t phyOffsets[] = {
-		0xA0, 0x10A0, 0xD00, 0x1D00, 0x14, 0x1014,
-		0x2F8, 0x12F8, 0x2C0, 0x12C0, 0x2C4, 0x12C4,
-		0x2C8, 0x12C8, 0x236C
-	};
-	uint32_t phyRecord[33] {};
-	phyRecord[0] = record[0];
-	phyRecord[1] = done;
-	phyRecord[2] = result;
-	if (callbackXE->tglDekelLock) {
-		const auto irq = IOSimpleLockLockDisableInterrupt(callbackXE->tglDekelLock);
-		auto hip = reinterpret_cast<volatile uint32_t *>(base + mapping.hipRegister);
-		const uint32_t saved = *hip;
-		for (size_t i = 0; i < arrsize(phyOffsets); i++) {
-			const auto internal = phyOffsets[i];
-			*hip = mapping.selectBank(saved, internal);
-			(void)*hip;
-			phyRecord[3 + i * 2] = internal;
-			phyRecord[4 + i * 2] = *reinterpret_cast<volatile uint32_t *>(base + mapping.phyRegister(internal));
-		}
-		*hip = saved;
-		(void)*hip;
-		IOSimpleLockUnlockEnableInterrupt(callbackXE->tglDekelLock, irq);
-		char phyKey[48];
-		snprintf(phyKey, sizeof(phyKey), "TGLTransmitterPHY%uLast%u", mapping.ddi, record[0] % 64);
-		IORegistryEntry::getRegistryRoot()->setProperty(phyKey, phyRecord, sizeof(phyRecord));
-		if (record[0] <= 32) {
-			snprintf(phyKey, sizeof(phyKey), "TGLTransmitterPHY%uFirst%u", mapping.ddi, record[0]);
-			IORegistryEntry::getRegistryRoot()->setProperty(phyKey, phyRecord, sizeof(phyRecord));
-		}
-	}
+	record[33] = 0x4D454D31; // MEM1: former MMIO slots are unsampled.
 	char key[48];
-	snprintf(key, sizeof(key), "TGLTransmitter%u%s", mapping.ddi, done ? "Exit" : "Entry");
+	snprintf(key, sizeof(key), "TGLTransmitter%u%s", ddi, done ? "Exit" : "Entry");
 	IORegistryEntry::getRegistryRoot()->setProperty(key, record, sizeof(record));
-	snprintf(key, sizeof(key), "TGLTransmitter%uLast%u", mapping.ddi, record[0] % 64);
+	snprintf(key, sizeof(key), "TGLTransmitter%uLast%u", ddi, record[0] % 64);
 	IORegistryEntry::getRegistryRoot()->setProperty(key, record, sizeof(record));
 	if (record[0] <= 32) {
-		snprintf(key, sizeof(key), "TGLTransmitter%uFirst%u", mapping.ddi, record[0]);
+		snprintf(key, sizeof(key), "TGLTransmitter%uFirst%u", ddi, record[0]);
 		IORegistryEntry::getRegistryRoot()->setProperty(key, record, sizeof(record));
 	}
 }
