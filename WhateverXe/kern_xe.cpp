@@ -2807,29 +2807,19 @@ IOSimpleLock *tglStreamLock;
 uint64_t tglStreamErrors[64][16] {};
 uint32_t tglStreamErrorCount {}, tglStreamAckCounts[8] {};
 
-// Both native write paths are observed BEFORE W1C acknowledgement. Never
-// allocate or publish from the interrupt handler; copy out on shared open.
+// Both native write paths are observed BEFORE W1C acknowledgement. An ACK,
+// including a clear-all write, does not own the pipe/transcoder power domains.
+// Capture arguments only; no MMIO, allocation or publication in the handler.
 void tglStreamAck(void *access, unsigned long reg, uint32_t value, uint32_t fast, void *caller) {
-	if (!tglStreamLock || reg < 0x44408 || reg > 0x44438 || (reg & 0xF) != 8) return;
+	if (!tglStreamLock || fast > 1 || reg < 0x44408 || reg > 0x44438 || (reg & 0xF) != 8) return;
 	const auto pipe = (reg - 0x44408) / 0x10;
-	auto a = static_cast<uint8_t *>(access);
-	auto base = *reinterpret_cast<volatile uint8_t **>(a + 0x50);
-	if (!base || *reinterpret_cast<uint32_t *>(a + 0x60) < 0x74000) return;
 	__sync_add_and_fetch(tglStreamAckCounts + 2*pipe + fast, 1);
 	if (!(value & 0x80000000U)) return;
 	uint64_t r[16] {}, uptime;
 	clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, r);
 	r[1] = reinterpret_cast<uintptr_t>(current_thread()); r[3] = reg; r[4] = value;
-	r[5] = *reinterpret_cast<volatile uint32_t *>(base + reg);
-	r[6] = *reinterpret_cast<volatile uint32_t *>(base + 0x70058 + 0x1000*pipe);
-	r[7] = *reinterpret_cast<volatile uint32_t *>(base + 0x70040 + 0x1000*pipe);
-	r[8] = *reinterpret_cast<volatile uint32_t *>(base + 0x70000 + 0x1000*pipe);
-	r[9] = *reinterpret_cast<volatile uint32_t *>(base + 0x70008 + 0x1000*pipe);
-	r[10] = *reinterpret_cast<volatile uint32_t *>(base + 0x60400 + 0x1000*pipe);
-	r[11] = *reinterpret_cast<volatile uint32_t *>(base + 0x60540 + 0x1000*pipe);
 	r[12] = reinterpret_cast<uintptr_t>(caller); r[13] = fast;
-	r[14] = *reinterpret_cast<volatile uint32_t *>(base + reg - 4);
-	r[15] = *reinterpret_cast<volatile uint32_t *>(base + reg + 4);
+	r[15] = 0x4D454D31; // MEM1: former register slots are unsampled, not HW zeros.
 	const auto state = IOSimpleLockLockDisableInterrupt(tglStreamLock);
 	r[2] = ++tglStreamErrorCount;
 	memcpy(tglStreamErrors[(r[2]-1) % 64], r, sizeof(r));
