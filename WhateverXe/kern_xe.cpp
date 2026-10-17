@@ -43,6 +43,7 @@
 #include "kern_tgl_hang_pending.hpp"
 #include "kern_tgl_hang_detail.hpp"
 #include "kern_tgl_hang_ggtt.hpp"
+#include "kern_tgl_hang_prestop.hpp"
 #include "kern_tgl_hang_select.hpp"
 #include "kern_tgl_recovery.hpp"
 #include "kern_tgl_aux_call.hpp"
@@ -64,6 +65,16 @@
 #include <libkern/c++/OSData.h>
 
 extern "C" const char version[];
+extern "C" void tglHangPreStopWake(void *,bool,unsigned,unsigned,void *);
+extern "C" __attribute__((naked,used)) void tglHangPreStopBridge() {
+ // Exact haltCommandStreamer keeps engine in r14d, scheduler in r15.
+ // Extra argument registers are caller-saved; retain the original return address.
+ asm volatile("movl %r14d, %ecx\nmovq %r15, %r8\njmp _tglHangPreStopWake\n");
+}
+static bool tglHangPreStopReady=false;
+static uint32_t tglHangPreStopState;
+static TGLHangPreStop::Capture tglHangPreStopCapture{};
+
 
 // Stock 23J631/24H32 IOSurface moved fields used inline by the exact DP1 donor.
 // The matrix moved into its attachment storage; preserve all three native
@@ -9504,6 +9515,26 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				hangOK=patcher.routeMultiple(index,hook,arrsize(hook),address,size);
 			}
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLHangBatchCaptureReady",hangOK);
+            // Exact failure-only wake call. Native STOP, wake ownership and all
+            // other callers remain unchanged; no instrumentation in normal submits.
+            if(!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64")) {
+             const uint8_t before[] {0x41,0x89,0xf6,0x49,0x89,0xff,0x48,0x8b,0x7f,0x10,0xbe,1,0,0,0,0xba,7,0,0,0,0xe8,0x8e,0x22,0xfd,0xff};
+             const uint8_t stop[] {0x42,0xc7,0x04,0x20,1,0,1,0};
+             bool ok=hangOK && size>0x569c6 &&
+              patcher.solveSymbol<mach_vm_address_t>(index,"__ZN11IGScheduler19haltCommandStreamerE10IGHwCsType",address,size)==address+0x56978 &&
+              !memcmp(reinterpret_cast<void *>(address+0x56983),before,sizeof(before)) &&
+              !memcmp(reinterpret_cast<void *>(address+0x569be),stop,sizeof(stop));
+             const int64_t delta=reinterpret_cast<int64_t>(tglHangPreStopBridge)-static_cast<int64_t>(address+0x5699c);
+             ok=ok && delta>=INT32_MIN && delta<=INT32_MAX;
+             if(ok) {
+              uint8_t call[5] {0xe8};const auto relative=static_cast<int32_t>(delta);memcpy(call+1,&relative,4);
+              patcher.clearError();patcher.routeBlock(address+0x56997,call,sizeof(call));
+              ok=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(reinterpret_cast<void *>(address+0x56997),call,sizeof(call));
+             }
+             patcher.clearError();tglHangPreStopReady=ok;
+             IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPreStopReady",ok);
+            }
+
 			// r123: the TGL caller loops reset -> extra stamp -> one-second wait
 			// while IOAccel holds its recovery locks. A stopped consumer fills its
 			// 511-slot software queue and submitToRing panics. ICL on this exact
@@ -11832,6 +11863,20 @@ void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *
 }
 }
 
+extern "C" void tglHangPreStopWake(void *owner,bool enable,unsigned domains,unsigned engine,void *scheduler) {
+ // Call the protected, counted native wake exactly once, before observing.
+ tglCSBForceWake[0](owner,enable,domains);
+ if(!tglHangPreStopReady || !enable || domains!=7 || engine || owner!=tglHost.owner || !tglVM.nofault)return;
+ auto base=tglHostBase();if(!base)return;
+ uint32_t empty=0;
+ if(!__atomic_compare_exchange_n(&tglHangPreStopState,&empty,1U,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED))return;
+ auto &c=tglHangPreStopCapture;tglHostClock(c.q+2);c.q[7]=engine;c.q[8]=domains;
+ auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {return tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n);};
+ auto mmio=[&](uint32_t reg)->uint32_t {return *reinterpret_cast<volatile uint32_t *>(base+reg);};
+ TGLHangPreStop::collect(c,reinterpret_cast<uint64_t>(owner),reinterpret_cast<uint64_t>(scheduler),read,mmio);
+ tglHostClock(c.q+3);__atomic_store_n(&tglHangPreStopState,2U,__ATOMIC_RELEASE);
+}
+
 void XE::wrapTGLHangRingDump(void *ring,void *registers) {
  // No new MMIO, remapping, forcewake or submission. Called by native hang
  // reporting before reset/retirement, never by a successful command path.
@@ -11842,7 +11887,11 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
  static uint32_t calls;
  const auto slot=__atomic_fetch_add(&calls,1U,__ATOMIC_RELAXED);
  if (slot<4 && tglVM.nofault) {
-  if (slot==0) tglCaptureCSBFailure();
+  if (slot==0) {
+   if(__atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)==2)
+    IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPreStop0",&tglHangPreStopCapture,sizeof(tglHangPreStopCapture));
+   tglCaptureCSBFailure();
+  }
   auto c=static_cast<Capture *>(IOMalloc(sizeof(Capture)));
   if (c) {
    bzero(c,sizeof(*c));c->q[0]=120;tglHostClock(c->q+1);
