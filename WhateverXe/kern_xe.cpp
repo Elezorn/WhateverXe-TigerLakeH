@@ -78,9 +78,21 @@ extern "C" __attribute__((naked,used)) void tglSonomaMatrixBridge() {
   "1: jmpq *_tglSonomaMatrixZero(%rip)\n"
   "2: jmpq *_tglSonomaMatrixOther(%rip)\n");
 }
+extern "C" __attribute__((naked,used)) void tglTahoeMatrixBridge() {
+ asm volatile(
+  "movq 0x178(%rax), %rax\n"
+  "movzbl 0x6e(%rax), %eax\n"
+  "testl %eax, %eax\n"
+  "jz 1f\n"
+  "cmpl $1, %eax\n"
+  "jne 2f\n"
+  "jmpq *_tglSonomaMatrixOne(%rip)\n"
+  "1: jmpq *_tglSonomaMatrixZero(%rip)\n"
+  "2: jmpq *_tglSonomaMatrixOther(%rip)\n");
+}
 static bool tglSonomaSurfaceFramebufferReady=true;
 static bool tglInstallSonomaSurfaceABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size,bool framebuffer) {
- if(strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") && strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64"))return true;
+ if(strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") && strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64") && strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64"))return true;
  struct Site {size_t offset,length;uint8_t before[6],after[6];};
  const Site fb[] {
   {0x2B5E8,6,{0x8B,0x80,0xA4,0,0,0},{0x8B,0x80,0x80,0,0,0}}, // pixelFormat
@@ -108,7 +120,7 @@ static bool tglInstallSonomaSurfaceABI(KernelPatcher &patcher,size_t index,mach_
  if(!framebuffer) {
   tglSonomaMatrixZero=address+0x8130E;tglSonomaMatrixOne=address+0x81305;tglSonomaMatrixOther=address+0x81361;
   uint8_t jump[15] {0xFF,0x25,0,0,0,0};
-  const auto target=reinterpret_cast<uintptr_t>(tglSonomaMatrixBridge);
+  const auto target=reinterpret_cast<uintptr_t>(!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64") ? tglTahoeMatrixBridge : tglSonomaMatrixBridge);
   memcpy(jump+6,&target,sizeof(target));jump[14]=0x90;
   patcher.routeBlock(address+0x812F6,jump,sizeof(jump));
   ready=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(reinterpret_cast<void *>(address+0x812F6),jump,sizeof(jump));
@@ -1345,6 +1357,108 @@ extern "C" __attribute__((naked,used)) void tglVenturaPmapUpdateBridge() {
   "jmpq *_tglPmapUpdateResume(%rip)\n"
  );
 }
+extern "C" __attribute__((naked,used)) void tglTahoePmapNewBridge() {
+ asm volatile(
+  "cmpl $0x4010000, -0x64(%rbp)\n"
+  "jb 9f\n"
+  "cmpl $0x4011000, -0x64(%rbp)\n"
+  "jae 9f\n"
+  "movq $1, %rcx\n"
+  "lock xaddq %rcx, _tglPmapNewEvidence(%rip)\n"
+  "testq %rcx, %rcx\n"
+  "jnz 2f\n"
+  "movl -0x64(%rbp), %ecx\n"
+  "movq %rcx, _tglPmapNewEvidence+48(%rip)\n"
+  "movl -0x50(%rbp), %ecx\n"
+  "movq %rcx, _tglPmapNewEvidence+56(%rip)\n"
+  "movq -0x40(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+64(%rip)\n"
+  "movq %rdx, _tglPmapNewEvidence+72(%rip)\n"
+  "movq %r14, %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+80(%rip)\n"
+  "movq 8(%rbp), %rcx\n"
+  "movq %rcx, _tglPmapNewEvidence+88(%rip)\n"
+  "movq $1, _tglPmapNewEvidence+96(%rip)\n"
+  "2:\n"
+  "cmpq $0, -0x40(%rbp)\n"
+  "je 3f\n"
+  "testl $0x100, -0x50(%rbp)\n"
+  "jnz 4f\n"
+  "movq %rdx, %rcx\n"
+  "andl $0x98, %ecx\n"
+  "cmpl $0x10, %ecx\n"
+  "jne 5f\n"
+  "orq $8, %rdx\n"
+  "lock incq _tglPmapNewEvidence+8(%rip)\n"
+  "jmp 9f\n"
+  "3:\n"
+  "lock incq _tglPmapNewEvidence+16(%rip)\n"
+  "jmp 9f\n"
+  "4:\n"
+  "lock incq _tglPmapNewEvidence+24(%rip)\n"
+  "jmp 9f\n"
+  "5:\n"
+  "lock incq _tglPmapNewEvidence+32(%rip)\n"
+  "9:\n"
+  "movl -0x4C(%rbp), %esi\n"
+  "movl %esi, %ecx\n"
+  "andl $1, %ecx\n"
+  "orq %rdx, %rcx\n"
+  "testb $2, %sil\n"
+  "jmpq *_tglPmapNewResume(%rip)\n"
+ );
+}
+extern "C" __attribute__((naked,used)) void tglTahoePmapUpdateBridge() {
+ asm volatile(
+  "cmpl $0x4010000, -0x64(%rbp)\n"
+  "jb 9f\n"
+  "cmpl $0x4011000, -0x64(%rbp)\n"
+  "jae 9f\n"
+  "movq $1, %rdx\n"
+  "lock xaddq %rdx, _tglPmapUpdateEvidence(%rip)\n"
+  "testq %rdx, %rdx\n"
+  "jnz 2f\n"
+  "movl -0x64(%rbp), %edx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+48(%rip)\n"
+  "movl -0x50(%rbp), %edx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+56(%rip)\n"
+  "movq -0x40(%rbp), %rdx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+64(%rip)\n"
+  "movq %rcx, _tglPmapUpdateEvidence+72(%rip)\n"
+  "movq %r14, %rdx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+80(%rip)\n"
+  "movq 8(%rbp), %rdx\n"
+  "movq %rdx, _tglPmapUpdateEvidence+88(%rip)\n"
+  "movq $1, _tglPmapUpdateEvidence+96(%rip)\n"
+  "2:\n"
+  "cmpq $0, -0x40(%rbp)\n"
+  "je 3f\n"
+  "testl $0x100, -0x50(%rbp)\n"
+  "jnz 4f\n"
+  "movq %rcx, %rdx\n"
+  "andl $0x98, %edx\n"
+  "cmpl $0x10, %edx\n"
+  "jne 5f\n"
+  "orq $8, %rcx\n"
+  "lock incq _tglPmapUpdateEvidence+8(%rip)\n"
+  "jmp 9f\n"
+  "3:\n"
+  "lock incq _tglPmapUpdateEvidence+16(%rip)\n"
+  "jmp 9f\n"
+  "4:\n"
+  "lock incq _tglPmapUpdateEvidence+24(%rip)\n"
+  "jmp 9f\n"
+  "5:\n"
+  "lock incq _tglPmapUpdateEvidence+32(%rip)\n"
+  "9:\n"
+  "movl -0x4C(%rbp), %edx\n"
+  "movl %edx, %eax\n"
+  "andl $1, %eax\n"
+  "orq %rcx, %rax\n"
+  "testb $2, %dl\n"
+  "jmpq *_tglPmapUpdateResume(%rip)\n"
+ );
+}
 extern "C" __attribute__((naked,used)) void tglSequoiaPmapNewBridge() {
  asm volatile(
   "cmpl $0x4010000, -0x6C(%rbp)\n"
@@ -1688,6 +1802,62 @@ static void tglPrepareVenturaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  auto evidence=OSSerializer::forTarget(nullptr,tglMMIOEvidenceSerialize);
  if(evidence) {root->setProperty("TGLMMIOMappingEvidence",evidence);evidence->release();}
 }
+static void tglPrepareTahoeMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
+ tglMMIOUCReady=false;
+ auto bar=pci->getDeviceMemoryWithRegister(0x10);
+ auto fn=patcher.solveSymbol(KernelPatcher::KernelID,"_pmap_enter_options");
+ auto protect=patcher.solveSymbol(KernelPatcher::KernelID,"_IOProtectCacheMode");
+ auto kernelMap=patcher.solveSymbol(KernelPatcher::KernelID,"_kernel_map");
+ const uint8_t frame[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xEC,0xC8,0x00,0x00,0x00};
+ const uint8_t flags[] {0x44,0x89,0x6D,0xB0};
+ const uint8_t args[] {0x89,0x55,0x9C,0x89,0xD7,0x49,0x8B,0x76,0x40};
+ const uint8_t nonEPT[] {0x48,0x89,0x75,0xC0};
+ const uint8_t protection[] {0x89,0x4D,0xB4};
+ const uint8_t create[] {0x8B,0x75,0xB4,0x89,0xF1,0x83,0xE1,0x01,0x48,0x09,0xD1,0x40,0xF6,0xC6,0x02};
+ const uint8_t update[] {0x8B,0x55,0xB4,0x89,0xD0,0x83,0xE0,0x01,0x48,0x09,0xC8,0xF6,0xC2,0x02};
+ const uint8_t protectFrame[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x28};
+ const uint8_t protectCall[] {0xE8,0x2F,0xF3,0x02,0x00};
+ uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
+ const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
+ bool ok=tglVM.enabled && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+  pat==0x1040600070406ULL && fn && protect && kernelMap &&
+  !memcmp(reinterpret_cast<void *>(fn),frame,sizeof(frame)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x15A),flags,sizeof(flags)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x44),args,sizeof(args)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x61),protection,sizeof(protection)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0xAA),nonEPT,sizeof(nonEPT)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x10C1),create,sizeof(create)) &&
+  !memcmp(reinterpret_cast<void *>(fn+0x1197),update,sizeof(update)) &&
+  !memcmp(reinterpret_cast<void *>(protect),protectFrame,sizeof(protectFrame)) &&
+  !memcmp(reinterpret_cast<void *>(protect+0xCC),protectCall,sizeof(protectCall)) &&
+  tglVMRead(kernelMap,tglKernelMap) && (tglKernelMap>>47)==0x1FFFF;
+ uint64_t guard[20] {1,tglVM.enabled,tglVM.pciBAR,bar ? bar->getLength() : 0,pat,bool(fn),bool(protect),bool(kernelMap)};
+ if(fn && protect) {
+  const uintptr_t sites[] {fn,fn+0x15A,fn+0x44,fn+0x61,fn+0xAA,fn+0x10C1,fn+0x1197,protect,protect+0xCC};
+  const uint8_t *bytes[] {frame,flags,args,protection,nonEPT,create,update,protectFrame,protectCall};
+  const size_t lengths[] {sizeof(frame),sizeof(flags),sizeof(args),sizeof(protection),sizeof(nonEPT),sizeof(create),sizeof(update),sizeof(protectFrame),sizeof(protectCall)};
+  for(unsigned i=0;i<9;++i)guard[8+i]=!memcmp(reinterpret_cast<void *>(sites[i]),bytes[i],lengths[i]);
+ }
+ guard[17]=kernelMap && tglVMRead(kernelMap,tglKernelMap);guard[18]=tglKernelMap;guard[19]=ok;
+ IORegistryEntry::getRegistryRoot()->setProperty("TGLTahoeMMIOGuard",guard,sizeof(guard));
+ if(ok) {
+  tglProtectCacheMode=reinterpret_cast<decltype(tglProtectCacheMode)>(protect);
+  tglPmapNewResume=fn+0x10D0;tglPmapUpdateResume=fn+0x11A5;
+  const uintptr_t targets[] {reinterpret_cast<uintptr_t>(tglTahoePmapNewBridge),reinterpret_cast<uintptr_t>(tglTahoePmapUpdateBridge)};
+  const uintptr_t sites[] {fn+0x10C1,fn+0x1197};
+  const size_t lengths[] {sizeof(create),sizeof(update)};
+  for(unsigned i=0;i<2 && ok;++i) {
+   uint8_t jump[16] {0xFF,0x25,0,0,0,0};jump[14]=jump[15]=0x90;
+   memcpy(jump+6,&targets[i],sizeof(targets[i]));
+   patcher.clearError();patcher.routeBlock(sites[i],jump,lengths[i]);
+   ok=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(reinterpret_cast<void *>(sites[i]),jump,lengths[i]);
+  }
+ }
+ tglMMIOUCRouted=ok;patcher.clearError();
+ auto root=IORegistryEntry::getRegistryRoot();root->setProperty("TGLMMIOStrongUCRouted",ok);
+ auto evidence=OSSerializer::forTarget(nullptr,tglMMIOEvidenceSerialize);
+ if(evidence) {root->setProperty("TGLMMIOMappingEvidence",evidence);evidence->release();}
+}
 static void tglPrepareSequoiaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  tglMMIOUCReady=false;
  auto bar=pci->getDeviceMemoryWithRegister(0x10);
@@ -1801,6 +1971,9 @@ static void tglPrepareSonomaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  if(evidence) {root->setProperty("TGLMMIOMappingEvidence",evidence);evidence->release();}
 }
 static void tglPrepareMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
+ if(!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64")) {
+  tglPrepareTahoeMMIOUC(patcher,pci);return;
+ }
  if(!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64")) {
   tglPrepareSequoiaMMIOUC(patcher,pci);return;
  }
@@ -1876,7 +2049,8 @@ void tglVMPrepare(KernelPatcher &patcher,IOPCIDevice *pci) {
  const bool ventura=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
  const bool sonoma=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
  const bool sequoia=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
- if (target!=verify-(dp1 ? 0x3930 : monterey ? 0x4190 : ventura ? 0x3D70 : sonoma ? 0x3EF0 : sequoia ? 0x3FE0 : 0x3AB0)) return;
+ const bool tahoe=!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+ if (target!=verify-(dp1 ? 0x3930 : monterey ? 0x4190 : ventura ? 0x3D70 : sonoma ? 0x3EF0 : sequoia ? 0x3FE0 : tahoe ? 0x3D40 : 0x3AB0)) return;
  const uint8_t rootLoad[] {0x48,0x8B,0x47,0x50};
  if (memcmp(reinterpret_cast<void *>(target+0x20),rootLoad,sizeof(rootLoad))) return;
  tglVM.nofault=reinterpret_cast<decltype(tglVM.nofault)>(nf);
@@ -3375,6 +3549,8 @@ void XE::selectProfile(const XELP::Profile &profile) {
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
     tglAcceleratorRequested=tglRequested && !checkKernelArgument("-wex-noaccel");
     if(tglRequested) {
+        // Exact Tahoe framebuffer and strong-UC mapping are qualified.
+        const bool tahoe=!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
         // Exact Sequoia framebuffer and strong-UC mapping are qualified.
         const bool sequoia=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
         // Exact Sonoma framebuffer and strong-UC mapping are qualified.
@@ -3384,7 +3560,7 @@ void XE::selectProfile(const XELP::Profile &profile) {
             !strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
         if(strcmp(version,"Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64") &&
            strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") &&
-           strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") && !ventura && !sonoma && !sequoia) {
+           strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") && !ventura && !sonoma && !sequoia && !tahoe) {
             tglRequested=tglAcceleratorRequested=false;return;
         }
         currentGraphics=&kextIntelTGL;currentFramebuffer=&kextIntelTGLFb;
@@ -9066,7 +9242,8 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				tglBlitPoolSubmit=address+0x355D2+relative;
                 const bool auxThunk=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64") ||
                     !strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") ||
-                    !strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
+                    !strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64") ||
+                    !strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
                 uint64_t resolved=0;
                 blitInitOK=TGLAuxCall::resolveSubmit(tglBlitPoolSubmit,auxThunk,tglVMRead,resolved);
                 if(blitInitOK)tglBlitPoolSubmit=resolved;
@@ -9360,7 +9537,8 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
                 !strcmp(version, "Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") ||
                 !strcmp(version, "Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64") ||
                 !strcmp(version, "Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") ||
-                !strcmp(version, "Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64")) {
+                !strcmp(version, "Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64") ||
+                !strcmp(version, "Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64")) {
 				tglPlatformNVRAMReady = false;
 				auto table = patcher.solveSymbol(KernelPatcher::KernelID, "__ZTV18IODTPlatformExpert");
 				auto target = patcher.solveSymbol(KernelPatcher::KernelID,
@@ -10293,7 +10471,8 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  const bool venturaInspection=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
  const bool sonomaInspection=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
  const bool sequoiaInspection=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
- if (result && (sequoiaInspection || sonomaInspection || venturaInspection || !strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64"))) {
+ const bool tahoeInspection=!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+ if (result && (tahoeInspection || sequoiaInspection || sonomaInspection || venturaInspection || !strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64"))) {
   uint64_t q[25] {1};q[1]=tglVM.enabled;q[2]=tglVM.pciBAR;
   auto map=OSDynamicCast(IOMemoryMap,*reinterpret_cast<OSObject **>(reinterpret_cast<uint8_t *>(that)+0xC70));
   q[3]=map ? map->getVirtualAddress() : 0;q[4]=map ? map->getLength() : 0;
@@ -10308,7 +10487,7 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
   }
   uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
   q[24]=static_cast<uint64_t>(hi)<<32|lo;
-  IORegistryEntry::getRegistryRoot()->setProperty(sequoiaInspection ? "TGLSequoiaMMIOInspection" : sonomaInspection ? "TGLSonomaMMIOInspection" : venturaInspection ? "TGLVenturaMMIOInspection" : "TGLMontereyMMIOInspection",q,sizeof(q));
+  IORegistryEntry::getRegistryRoot()->setProperty(tahoeInspection ? "TGLTahoeMMIOInspection" : sequoiaInspection ? "TGLSequoiaMMIOInspection" : sonomaInspection ? "TGLSonomaMMIOInspection" : venturaInspection ? "TGLVenturaMMIOInspection" : "TGLMontereyMMIOInspection",q,sizeof(q));
  }
  if(result) if(auto power=OSSerializer::forTarget(that,tglPowerSerialize)) {
   that->setProperty("TGLPowerSample",power);power->release();

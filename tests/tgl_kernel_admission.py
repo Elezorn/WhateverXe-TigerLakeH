@@ -28,17 +28,19 @@ const char *versions[]={
 "Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64",
 "Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64",
 "Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64",
+"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64",
+"Darwin Kernel Version 25.6.0: unqualified",
 "Darwin Kernel Version 22.6.0: unqualified",
 "Darwin Kernel Version 23.6.0: unqualified",
 "Darwin Kernel Version 24.6.0: unqualified"};
 unsigned cases=0;
-for(unsigned k=0;k<9;++k)for(unsigned n=0;n<2;++n)for(unsigned o=0;o<2;++o)for(unsigned physical=0;physical<2;++physical)for(unsigned family=0;family<2;++family){
+for(unsigned k=0;k<11;++k)for(unsigned n=0;n<2;++n)for(unsigned o=0;o<2;++o)for(unsigned physical=0;physical<2;++physical)for(unsigned family=0;family<2;++family){
 version=versions[k];noaccel=n;off=o;currentGraphics=currentFramebuffer=nullptr;
 select({bool(physical),family?XELP::Family::TigerLake:XELP::Family::Other});
-bool expected=physical&&family&&!o&&(k<6);
+bool expected=physical&&family&&!o&&(k<7);
 assert(tglRequested==expected);assert(tglAcceleratorRequested==(expected&&!n));
 assert((currentFramebuffer==&kextIntelTGLFb)==expected);++cases;
-}printf("PASS: %u actual TGL admission cases, including Sequoia acceleration, Sonoma acceleration, Ventura acceleration, noaccel and unknown-kernel rejection\n",cases);
+}printf("PASS: %u actual TGL admission cases, including Tahoe acceleration, Sequoia acceleration, Sonoma acceleration, Ventura acceleration, noaccel and unknown-kernel rejection\n",cases);
 }
 '''.replace('BODY',body)
 (out/'test-admission.cpp').write_text(code)

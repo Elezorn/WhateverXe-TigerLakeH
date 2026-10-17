@@ -8,7 +8,9 @@ WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィック
 
 ## 対応範囲
 
-現在の対象は **macOS Big Sur build 20G1443** です。
+配布root patchの現在の対象は **macOS Big Sur build 20G1443** です。
+ソースにはTahoe `25G241`までの特定buildを正確なkernel識別で受け付ける互換処理も含まれます。
+それらに対応するuserspace root patchは開発中です。
 
 | GPUファミリー | バックエンド実装があるdevice ID |
 | --- | --- |
@@ -86,7 +88,7 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 
 ### Planned
 
-- OCLPの機能を利用したmacOS Monterey〜Tahoe対応
+- OCLPの機能を利用したmacOS Monterey〜Tahoe向けroot patchの統合
 - Alder Lake／Raptor LakeのS/H/P/U対応
 - USB-C画面出力対応
 - 内蔵ディスプレイ対応

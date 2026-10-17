@@ -8,8 +8,9 @@ from pathlib import Path
 import argparse,re,subprocess,tempfile
 R=Path(__file__).resolve().parents[1]
 s=(R/'WhateverXe/kern_xe.cpp').read_text()
-p=argparse.ArgumentParser();p.add_argument('--accelerator',type=Path);p.add_argument('--framebuffer',type=Path);p.add_argument('--surface',type=Path);a=p.parse_args()
-bridge=re.search(r'extern "C" __attribute__\(\(naked,used\)\) void tglSonomaMatrixBridge\(\) \{.*?\n\}',s,re.S)[0]
+p=argparse.ArgumentParser();p.add_argument('--tahoe',action='store_true');p.add_argument('--accelerator',type=Path);p.add_argument('--framebuffer',type=Path);p.add_argument('--surface',type=Path);a=p.parse_args()
+bridge_name='tglTahoeMatrixBridge' if a.tahoe else 'tglSonomaMatrixBridge'
+bridge=re.search(r'extern "C" __attribute__\(\(naked,used\)\) void '+bridge_name+r'\(\) \{.*?\n\}',s,re.S)[0]
 block=s[s.index('static bool tglInstallSonomaSurfaceABI'):s.index('XE *XE::callbackXE')]
 for name,path in [('accel',a.accelerator),('fb',a.framebuffer)]:
  if not path:continue
@@ -32,7 +33,7 @@ for name,path in [('accel',a.accelerator),('fb',a.framebuffer)]:
 if a.surface:
  # Native exported getters establish the new field meanings, not folder names.
  text=subprocess.check_output(['otool','-tvV',str(a.surface)],text=True)
- for name,instructions in [('getPixelFormat',['0x80(%rdi)']),('getPlaneCount',['0x98(%rdi)']),('getSurfaceID',['0x10(%rdi)']),('getYCbCrMatrix',['0x178(%rdi)','0x6a(%rax)'])]:
+ for name,instructions in [('getPixelFormat',['0x80(%rdi)']),('getPlaneCount',['0x98(%rdi)']),('getSurfaceID',['0x10(%rdi)']),('getYCbCrMatrix',['0x178(%rdi)','0x6e(%rax)' if a.tahoe else '0x6a(%rax)'])]:
   body=text[text.index('IOSurface'+str(len(name))+name+'Ev:'):].split('retq',1)[0]
   assert all(i in body for i in instructions),name
  print('PASS: native IOSurface getters confirm all 4 fields')
@@ -77,6 +78,7 @@ int main() {
 regs=['rax','rbx','rcx','rdx','rsp','rbp','rsi','rdi']+['r'+str(i) for i in range(8,16)]
 capture='\n'.join('"movq %'+r+', _out+'+str(8*i)+'(%rip)\\n"' for i,r in enumerate(regs))
 load='\n'.join('"movq _in+'+str(8*i)+'(%rip), %'+r+'\\n"' for i,r in enumerate(regs) if r!='rsp')
+if a.tahoe:cpp=cpp.replace('jmp _tglSonomaMatrixBridge','jmp _tglTahoeMatrixBridge').replace('attachment[0x6A]','attachment[0x6E]')
 cpp=cpp.replace('BRIDGE',bridge).replace('CAPTURE',capture).replace('LOAD',load)
 with tempfile.TemporaryDirectory(prefix='sonoma-surface-') as t:
  p=Path(t);(p/'test.cpp').write_text(cpp)

@@ -10,7 +10,10 @@ This project is experimental and requires the Xe root patch provided by the
 
 ## Compatibility
 
-The current target is **macOS Big Sur build 20G1443**.
+The packaged root patch currently targets **macOS Big Sur build 20G1443**.
+The source also includes exact-kernel compatibility paths for selected later
+builds through Tahoe `25G241`. Matching userspace root patches for those builds
+remain under development.
 
 | GPU family | Device IDs with an implemented backend |
 | --- | --- |
@@ -109,7 +112,7 @@ Alder Lake-N / Twin Lake.
 
 ### Planned
 
-- macOS Monterey through Tahoe support using OCLP's capabilities
+- Integrated macOS Monterey through Tahoe root patches using OCLP's capabilities
 - Alder Lake and Raptor Lake S/H/P/U support
 - USB-C display output
 - Internal displays
