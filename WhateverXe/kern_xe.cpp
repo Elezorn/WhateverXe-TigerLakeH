@@ -11711,14 +11711,14 @@ void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *
     TGLHangSelect::select(after,selection.q[2],selection.q[3],regs,read);
     if(memcmp(&selection,&after,sizeof(selection)))c->q[1]=7;
    } else {
-    c->q[0]=1;c->q[1]=1;c->q[4]=pending.q[3];c->q[5]=tglPPGTTClass;c->graph.q[0]=1;
+    c->q[0]=TGLHangDetail::Schema;c->q[1]=1;c->q[4]=pending.q[3];c->q[5]=tglPPGTTClass;c->graph.q[0]=1;
     memcpy(c->regs,regs,sizeof(c->regs));memcpy(&c->pending,&pending,sizeof(pending));
    }
    memcpy(c->q+16,selection.q,sizeof(selection.q));
    c->q[30]=cpuRoot;
    if(!tglVMRead(tglVM.kernelPmap+0x50,c->q[31]) || c->q[31]!=cpuRoot)c->q[1]=5;
    status[2]=0;status[3]=c->q[1];
-  } else {c->q[0]=1;c->q[1]=6;status[2]=2;status[3]=6;}
+  } else {c->q[0]=TGLHangDetail::Schema;c->q[1]=6;status[2]=2;status[3]=6;}
   tglHostClock(c->q+3);
   if(!root->setProperty("TGLHangDetail0",c,sizeof(*c)))status[2]=3;
   IOFree(c,sizeof(*c));

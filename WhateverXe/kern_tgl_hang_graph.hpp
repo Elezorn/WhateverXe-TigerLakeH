@@ -5,7 +5,8 @@
 #include "kern_tgl_hang_pending.hpp"
 #include "kern_tgl_ppgtt.hpp"
 namespace TGLHangGraph {
-constexpr unsigned MaxPages=96, MaxDraws=64, MaxCalls=32, MaxTargets=8;
+constexpr unsigned MaxPages=96, MaxDraws=64, MaxCalls=32, MaxTargets=32;
+constexpr unsigned MappedRootBytes=32768;
 enum Kind : uint64_t {Command=1,Table=2,Surface=4,Sampler=8,Constant=16,Shader=32,Vertex=64,Index=128,Pixels=256,Auxiliary=512,ClearValue=1024,Scratch=2048};
 enum Error : uint64_t {ReadHole=1,UnknownCommand=2,Truncated=4,CallLimit=8,Cycle=16,Depth=32,
  MissingState=64,PageLimit=128,DrawLimit=256,NoEnd=512,UnsupportedCall=1024};
@@ -141,7 +142,8 @@ template<class Reader> struct Walker {
  // from POCS. Also admit a genuine second-level call from the first level.
  // Other chaining/nesting modes remain explicit unresolved control flow.
  uint64_t walk(unsigned candidate,uint64_t base,const uint8_t *main,unsigned size,unsigned depth,unsigned &walked) {
-  walked=0;if(!base || base>>47 || (base&3) || size>16384 || size>(1ULL<<47)-base)return Truncated;
+  const unsigned limit=!main && !depth?MappedRootBytes:16384;
+  walked=0;if(!base || base>>47 || (base&3) || size>limit || size>(1ULL<<47)-base)return Truncated;
   c.path[depth]=base;auto p=c.packet[depth];
   for(unsigned o=0;o<size;) {
    if(++c.q[7]>16384)return CallLimit;
@@ -190,7 +192,7 @@ template<class Reader> struct Walker {
  }
  void mappedCandidate(unsigned index,uint64_t gpu) {
   c.q[0]=1;provenance=1;memset(c.state,0,sizeof(c.state));
-  unsigned walked=0;c.q[5]|=walk(index,gpu,nullptr,16384,0,walked);
+  unsigned walked=0;c.q[5]|=walk(index,gpu,nullptr,MappedRootBytes,0,walked);
   c.q[12]=walked;
  }
 };

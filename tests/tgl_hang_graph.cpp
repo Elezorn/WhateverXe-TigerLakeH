@@ -20,9 +20,9 @@ struct Fixture {
  std::map<uint64_t,std::vector<uint8_t>> pages;
  bool partial{},mismatch{};unsigned reads{};
  Fixture(){for(uint64_t a:{Code,Code+4096,Code+8192,Surfaces,Dynamic})pages[a].resize(4096);}
- void external(const Words &v,uint64_t base=External) {
-  for(uint64_t page=base&~4095ULL;page<base+16384;page+=4096)pages[page].resize(4096);
-  assert(v.size()*4<=16384);
+ void external(const Words &v,uint64_t base=External,unsigned limit=16384) {
+  for(uint64_t page=base&~4095ULL;page<base+limit;page+=4096)pages[page].resize(4096);
+  assert(v.size()*4<=limit);
   for(unsigned i=0;i<v.size();++i)memcpy(pages[(base+i*4)&~4095ULL].data()+((base+i*4)&4095),&v[i],4);
  }
  void read(Page &p) {
@@ -35,9 +35,29 @@ struct Fixture {
   e->gpu=Main;e->dwords=main.size();e->copied=main.size()*4;e->stable=1;assert(e->copied<=sizeof(e->bytes));memcpy(e->bytes,main.data(),e->copied);
   auto read=[&](Page &p){this->read(p);};Walker<decltype(read)> w{*c,read};w.candidate(0,*e);return c;
  }
+ std::unique_ptr<Capture> mapped() {
+  auto c=std::make_unique<Capture>();auto read=[&](Page &p){this->read(p);};
+  Walker<decltype(read)> w{*c,read};w.mappedCandidate(4,Main);return c;
+ }
 };
 }
 int main(int argc,char **argv) {
+ {Fixture f;Words root;setup(root);draw(root,3);root.resize(0x6800/4);
+  draw(root,6);add(root,{0x05000000});f.external(root,Main,MappedRootBytes);
+  auto c=f.mapped();assert(!c->q[5] && c->q[2]==2 && c->q[12]==root.size()*4);
+  assert(c->draws[1].q[1]==Main+0x6800 && c->draws[1].raw[2]==6);
+  f.pages.erase(Main+0x4000);c=f.mapped();assert(c->q[5]&ReadHole);assert(c->q[2]==1);
+ }
+ {Fixture f;Words root;
+  for(unsigned i=0;i<33;++i){f.external({0x05000000},External+i*64);add(root,{0x18b00101,uint32_t(External+i*64),0});}
+  add(root,{0x05000000});f.external(root,Main,MappedRootBytes);auto c=f.mapped();
+  assert(c->q[3]==MaxCalls && c->q[4]==MaxTargets && (c->q[5]&CallLimit));
+  root.resize(32*3);add(root,{0x05000000});f.external(root,Main,MappedRootBytes);c=f.mapped();
+  assert(c->q[3]==32 && c->q[4]==32 && !c->q[5]);
+ }
+ {Fixture f;f.external(Words(MappedRootBytes/4),Main,MappedRootBytes);auto c=f.mapped();
+  assert(c->q[5]==NoEnd && c->q[12]==MappedRootBytes && c->q[7]==MappedRootBytes/4);
+ }
  {Fixture f;Words ext;setup(ext);add(ext,{0x05000000});f.external(ext);
   Words main{0x18c00101,uint32_t(External),0};for(unsigned i=0;i<4;++i)draw(main,i+3);add(main,{0x05000000});
   auto c=f.run(main);assert(c->q[2]==4 && c->q[3]==1 && !c->q[5]);

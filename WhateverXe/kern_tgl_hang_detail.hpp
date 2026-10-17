@@ -4,6 +4,7 @@
 #define kern_tgl_hang_detail_hpp
 #include "kern_tgl_hang_graph.hpp"
 namespace TGLHangDetail {
+constexpr uint64_t Schema=2;
 using TGLHangPending::kernelRange;
 enum Field {Context,Owner,Task,Table,TableClass,LRCBuffer,LRCCPU,LRCSize,LRCClass,
  RingBuffer,RingCPU,RingSize,RingLength,Descriptor,ContextID,Stamps,StampGPU,
@@ -124,7 +125,7 @@ void ringRoot(Capture &c,Read &read,Walker &walker) {
 template<class Read,class Physical>
 void collect(Capture &c,const TGLHangPending::Capture &pending,const uint8_t *regs,uint64_t expectedClass,
  uint64_t directBase,uint64_t directEnd,Read read,Physical physical) {
- c.q[0]=1;c.graph.q[0]=1;c.q[1]=1;c.q[4]=pending.q[3];c.q[5]=expectedClass;
+ c.q[0]=Schema;c.graph.q[0]=1;c.q[1]=1;c.q[4]=pending.q[3];c.q[5]=expectedClass;
  memcpy(c.regs,regs,sizeof(c.regs));memcpy(&c.pending,&pending,sizeof(pending));
  if(pending.q[0]!=1 || pending.q[2] || pending.q[11]>4 || regs[0x94])return;
  if(!ownership(c.before,c.q[4],expectedClass,read))return;
