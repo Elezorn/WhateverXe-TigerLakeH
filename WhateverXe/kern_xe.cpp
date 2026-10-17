@@ -44,6 +44,7 @@
 #include "kern_tgl_hang_detail.hpp"
 #include "kern_tgl_hang_ggtt.hpp"
 #include "kern_tgl_hang_prestop.hpp"
+#include "kern_tgl_same_tail.hpp"
 #include "kern_tgl_hang_select.hpp"
 #include "kern_tgl_recovery.hpp"
 #include "kern_tgl_aux_call.hpp"
@@ -74,6 +75,9 @@ extern "C" __attribute__((naked,used)) void tglHangPreStopBridge() {
 static bool tglHangPreStopReady=false;
 static uint32_t tglHangPreStopState;
 static TGLHangPreStop::Capture tglHangPreStopCapture{};
+static bool tglSameTailEnabled;
+static TGLSameTail::State tglSameTailState{},tglSameTailFailure{};
+static bool tglSameTailSerialize(void *,void *,OSSerialize *);
 
 
 // Stock 23J631/24H32 IOSurface moved fields used inline by the exact DP1 donor.
@@ -9370,6 +9374,17 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// notification selection, packet lengths and the preceding CS stall.
 			const bool completionCacheRequested=!adlnDetected && checkKernelArgument("-disablegfxfirmware") &&
 				!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+			// Preserve native submission; use its one-shot force-restore flag only
+			// for a witnessed equal-tail resubmission of the active first item.
+			const uint8_t sameTailFlag[] {0x41,0x80,0xBD,0xC9,0,0,0,0,0x74,0x10,0x41,0xC6,0x85,0xC9,0,0,0,0,0x89,0xC8,0x83,0xC8,0x04,0x89,0x45,0xC0};
+			tglSameTailEnabled=completionCacheRequested && hostOK && size>0x7C5D7 &&
+				patcher.solveSymbol<mach_vm_address_t>(index,"__ZN17IGHardwareContext14updateRingTailEj",address,size)==address+0x7C5B6 &&
+				!memcmp(reinterpret_cast<void *>(address+0x3A7B6),sameTailFlag,sizeof(sameTailFlag));
+			patcher.clearError();
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTailRestoreReady",tglSameTailEnabled);
+			if(tglSameTailEnabled)if(auto live=OSSerializer::forTarget(nullptr,tglSameTailSerialize)) {
+				IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTailLive",live);live->release();
+			}
 			bool completionCacheOK=!completionCacheRequested;
 			if(completionCacheRequested) {
 				const uint32_t completionCacheSites[] {0x84EA4,0x84F95};
@@ -11870,6 +11885,7 @@ extern "C" void tglHangPreStopWake(void *owner,bool enable,unsigned domains,unsi
  auto base=tglHostBase();if(!base)return;
  uint32_t empty=0;
  if(!__atomic_compare_exchange_n(&tglHangPreStopState,&empty,1U,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED))return;
+ tglSameTailFailure=tglSameTailState;
  auto &c=tglHangPreStopCapture;tglHostClock(c.q+2);c.q[7]=engine;c.q[8]=domains;
  auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {return tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n);};
  auto mmio=[&](uint32_t reg)->uint32_t {return *reinterpret_cast<volatile uint32_t *>(base+reg);};
@@ -11890,6 +11906,8 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
   if (slot==0) {
    if(__atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)==2)
     IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPreStop0",&tglHangPreStopCapture,sizeof(tglHangPreStopCapture));
+   if(tglSameTailEnabled && __atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)==2)
+    IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTail0",&tglSameTailFailure,sizeof(tglSameTailFailure));
    tglCaptureCSBFailure();
   }
   auto c=static_cast<Capture *>(IOMalloc(sizeof(Capture)));
@@ -12126,6 +12144,13 @@ void XE::wrapTGLHostCSBIDPanic(const uint32_t *entry) {
  FunctionCast(wrapTGLHostCSBIDPanic,callbackXE->orgTGLHostCSBIDPanic)(entry);
 }
 
+static bool tglSameTailSerialize(void *,void *,OSSerialize *serializer) {
+ // Live counters only; use the pre-STOP copy for a failure-boundary receipt.
+ auto data=OSData::withBytes(tglSameTailState.counts,sizeof(tglSameTailState.counts));
+ if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
+}
+
 void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
  if (callbackXE->adlnDetected) {
   auto owner=*reinterpret_cast<void **>(static_cast<uint8_t *>(streamer)+0x10);
@@ -12230,6 +12255,15 @@ void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
   if(executionSlot!=UINT32_MAX)tglExecutionSample(executionSlot,renderWakeOwner,1,1,
    reinterpret_cast<uintptr_t>(streamer),n,q[5]?q[5]:q[6]);
  }
+ if(tglSameTailEnabled && tglCSB12Enabled && tglVM.nofault && renderWakeOwner &&
+    streamer==tglCSBEngines[0].streamer && renderWakeOwner==tglHost.owner) {
+  auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {
+   return TGLHangPending::kernelRange(p,n) ? tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n) : 0;
+  };
+  auto force=[](uint64_t p){*reinterpret_cast<uint8_t *>(p)=1;};
+  TGLSameTail::prepare(tglSameTailState,reinterpret_cast<uint64_t>(renderWakeOwner),
+   reinterpret_cast<uint64_t>(streamer),tglCSBEngines[0].resets,read,force);
+ } else if(tglSameTailEnabled && streamer==tglCSBEngines[0].streamer)tglSameTailState.previous={};
  FunctionCast(wrapTGLHostSubmit,callbackXE->orgTGLHostSubmit)(streamer,flags);
  adlnQueueTraceSubmitFinish(queueTraceMask,renderWakeOwner);
  if(executionSlot!=UINT32_MAX) {
