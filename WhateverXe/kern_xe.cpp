@@ -35,6 +35,7 @@
 #include "kern_tgl_csb.hpp"
 #include "kern_tgl_context_cache.hpp"
 #include "kern_tgl_gsync.hpp"
+#include "kern_tgl_csr_zero.hpp"
 #include "kern_tgl_vm.hpp"
 #include "kern_tgl_ppgtt.hpp"
 #include "kern_tgl_submit_capture.hpp"
@@ -87,6 +88,9 @@ static bool tglGSYNCReady;
 // pre-STOP value/ACK/valid. Sequential receipt, not an atomic GPU snapshot.
 static uint64_t tglGSYNCState[16] {1},tglGSYNCFailure[16] {};
 static bool tglGSYNCSerialize(void *,void *,OSSerialize *);
+static bool tglCSRZeroReady;
+static TGLCSRZero::State tglCSRZeroState{},tglCSRZeroFailure{};
+static bool tglCSRZeroSerialize(void *,void *,OSSerialize *);
 
 
 // Stock 23J631/24H32 IOSurface moved fields used inline by the exact DP1 donor.
@@ -9397,6 +9401,13 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			tglGSYNCReady=tglSameTailEnabled && tglMMIOUCReady &&
 				xeProfile.identity==0x9A498086 && xeProfile.revision==1 && !xeProfile.overridden();
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLGSYNCDisableReady",tglGSYNCReady);
+			// Finite causal contrast on the same exact Tahoe/physical/donor gate.
+			// Elide only zero-base CSR in an idle, single pending RCS restore.
+			tglCSRZeroReady=tglGSYNCReady;
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLCSRZeroTrialReady",tglCSRZeroReady);
+			if(tglCSRZeroReady)if(auto live=OSSerializer::forTarget(nullptr,tglCSRZeroSerialize)) {
+				IORegistryEntry::getRegistryRoot()->setProperty("TGLCSRZeroLive",live);live->release();
+			}
 			if(tglGSYNCReady)if(auto live=OSSerializer::forTarget(nullptr,tglGSYNCSerialize)) {
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLGSYNCLive",live);live->release();
 			}
@@ -11943,6 +11954,7 @@ extern "C" void tglHangPreStopWake(void *owner,bool enable,unsigned domains,unsi
  uint32_t empty=0;
  if(!__atomic_compare_exchange_n(&tglHangPreStopState,&empty,1U,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED))return;
  tglSameTailFailure=tglSameTailState;
+ tglCSRZeroFailure=tglCSRZeroState;
  if(tglGSYNCReady) {
   for(unsigned i=0;i<16;++i)tglGSYNCFailure[i]=__atomic_load_n(tglGSYNCState+i,__ATOMIC_RELAXED);
   const auto ack=*reinterpret_cast<volatile uint32_t *>(base+0xD84);
@@ -11985,6 +11997,8 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
    if(tglSameTailEnabled)tglSubmitHistoryPublish();
    if(tglGSYNCReady && __atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)==2)
     IORegistryEntry::getRegistryRoot()->setProperty("TGLGSYNC0",tglGSYNCFailure,sizeof(tglGSYNCFailure));
+   if(tglCSRZeroReady && __atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)==2)
+    IORegistryEntry::getRegistryRoot()->setProperty("TGLCSRZero0",&tglCSRZeroFailure,sizeof(tglCSRZeroFailure));
    tglCaptureCSBFailure();
   }
   auto c=static_cast<Capture *>(IOMalloc(sizeof(Capture)));
@@ -12233,6 +12247,10 @@ static bool tglGSYNCSerialize(void *,void *,OSSerialize *serializer) {
  auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
+static bool tglCSRZeroSerialize(void *,void *,OSSerialize *serializer) {
+ auto data=OSData::withBytes(&tglCSRZeroState,sizeof(tglCSRZeroState));if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
+}
 
 void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
  if (callbackXE->adlnDetected) {
@@ -12363,6 +12381,21 @@ void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
   }
   if(executionSlot!=UINT32_MAX)tglExecutionSample(executionSlot,renderWakeOwner,1,1,
    reinterpret_cast<uintptr_t>(streamer),n,q[5]?q[5]:q[6]);
+ }
+ if(tglCSRZeroReady && tglHangPreStopReady && tglVM.nofault && renderWakeOwner && renderWakeOwner==tglHost.owner &&
+    streamer==tglCSBEngines[0].streamer && !__atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)) {
+  if(auto base=tglHostBase()) {
+   auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {
+    return TGLHangPending::kernelRange(p,n) ? tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n) : 0;
+   };
+   auto mmio=[&](uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);};
+   auto write=[](uint64_t p,const void *bytes,unsigned count) {
+    // Same native-writable page as ring TAIL; the idle/pending contract is checked above.
+    memcpy(reinterpret_cast<void *>(p),bytes,count);__asm__ volatile("sfence" ::: "memory");
+   };
+   TGLCSRZero::prepare(tglCSRZeroState,reinterpret_cast<uint64_t>(renderWakeOwner),
+    reinterpret_cast<uint64_t>(streamer),n,read,mmio,write);
+  }
  }
  if(tglSameTailEnabled && tglCSB12Enabled && tglVM.nofault && renderWakeOwner &&
     streamer==tglCSBEngines[0].streamer && renderWakeOwner==tglHost.owner) {
