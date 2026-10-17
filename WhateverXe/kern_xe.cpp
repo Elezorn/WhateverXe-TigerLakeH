@@ -11955,7 +11955,13 @@ extern "C" void tglHangPreStopWake(void *owner,bool enable,unsigned domains,unsi
  auto &c=tglHangPreStopCapture;tglHostClock(c.q+2);c.q[7]=engine;c.q[8]=domains;
  auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {return tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n);};
  auto mmio=[&](uint32_t reg)->uint32_t {return *reinterpret_cast<volatile uint32_t *>(base+reg);};
- TGLHangPreStop::collect(c,reinterpret_cast<uint64_t>(owner),reinterpret_cast<uint64_t>(scheduler),read,mmio);
+ // Qualify the native counted client1 path; its disabled/stub path owns no lease.
+ uint64_t wakeFlags=0;uint32_t gtReferences=0;const auto p=reinterpret_cast<uint64_t>(owner);
+ const bool countedGT=read(p+0x1190,&wakeFlags,sizeof(wakeFlags))==sizeof(wakeFlags) &&
+  XELPForceWakeIRQ::required(wakeFlags,domains) &&
+  read(p+0x1298,&gtReferences,sizeof(gtReferences))==sizeof(gtReferences) && int32_t(gtReferences)>0;
+ // Read Gen12 fault/flush state before STOP/reset without an additional wake.
+ TGLHangPreStop::collect(c,p,reinterpret_cast<uint64_t>(scheduler),read,mmio,countedGT);
  if(!c.q[1])tglSubmitHistoryRecord(owner,reinterpret_cast<void *>(c.q[6]),UINT32_MAX,2);
  uint64_t freezeTime;tglHostClock(&freezeTime);tglSubmitHistory.freeze(freezeTime);
  tglHostClock(c.q+3);__atomic_store_n(&tglHangPreStopState,2U,__ATOMIC_RELEASE);
