@@ -39,6 +39,7 @@
 #include "kern_xelp_queue_trace.hpp"
 #include "kern_xelp_queue_memory.hpp"
 #include "kern_tgl_hang_refs.hpp"
+#include "kern_tgl_hang_pending.hpp"
 #include "kern_tgl_recovery.hpp"
 #include "kern_tgl_aux_call.hpp"
 
@@ -11734,6 +11735,16 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
    }
    char key[32];snprintf(key,sizeof(key),"TGLHangBatch%u",slot);
    IORegistryEntry::getRegistryRoot()->setProperty(key,c,sizeof(*c));
+   if (slot==0 && c->q[3]==sizeof(c->regs) && c->q[4]==sizeof(c->ring)) {
+    auto pending=static_cast<TGLHangPending::Capture *>(IOMalloc(sizeof(TGLHangPending::Capture)));
+    if(pending) {
+     bzero(pending,sizeof(*pending));tglHostClock(pending->q+1);
+     TGLHangPending::collect(*pending,c->q[2],c->regs,c->ring,
+      [&](uint64_t address,void *out,unsigned count)->uint64_t {return read(address,out,count);});
+     IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPending0",pending,sizeof(*pending));
+     IOFree(pending,sizeof(*pending));
+    }
+   }
    if (c->q[3]==sizeof(c->regs) && c->q[4]==sizeof(c->ring))
     tglCaptureHangAddress(slot,c->q[2],c->regs,c->ring);
    IOFree(c,sizeof(*c));
