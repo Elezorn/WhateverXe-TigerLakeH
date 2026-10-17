@@ -188,6 +188,11 @@ template<class Reader> struct Walker {
   if(!entry.stable || entry.dwords>4096 || !entry.dwords || entry.copied!=entry.dwords*4){c.q[5]|=ReadHole;return;}
   unsigned walked=0;c.q[5]|=walk(index,entry.gpu,entry.bytes,entry.copied,0,walked);
  }
+ void mappedCandidate(unsigned index,uint64_t gpu) {
+  c.q[0]=1;provenance=1;memset(c.state,0,sizeof(c.state));
+  unsigned walked=0;c.q[5]|=walk(index,gpu,nullptr,16384,0,walked);
+  c.q[12]=walked;
+ }
 };
 }
 #endif

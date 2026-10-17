@@ -8,7 +8,7 @@
 using namespace TGLHangDetail;
 namespace {
 constexpr uint64_t K=0xffff800000000000ULL,Ring=K+0x200000,Ctx=Ring+0x1000,Task=Ring+0x2000,
- LRCBuf=Ring+0x3000,RingBuf=Ring+0x4000,LRC=Ring+0x5000,RingCPU=Ring+0x8000,Stamps=Ring+0x9000,
+ LRCBuf=Ring+0x3000,RingBuf=Ring+0x4000,LRC=Ring+0x5000,RingStorage=Ring+0x8000,Stamps=Ring+0x9000,
  Cache=Ring+0xa000,TableObject=K+0x20000,Class=K+0xabcdef,Main=0x40000000;
 struct Fixture {
  std::map<uint64_t,std::vector<uint8_t>> blocks;
@@ -18,7 +18,7 @@ struct Fixture {
  template<class T>void put(uint64_t p,T value){auto it=blocks.upper_bound(p);assert(it!=blocks.begin());--it;assert(p-it->first+sizeof(value)<=it->second.size());memcpy(it->second.data()+p-it->first,&value,sizeof(value));}
  void leaf(uint64_t gpu,uint64_t phys){put(K+0x12000+((gpu>>12)&511)*8,phys|3ULL);alloc(K+phys,4096);}
  Fixture() {
-  for(auto p:{Ring,Ctx,Task,LRCBuf,RingBuf,RingCPU,Stamps,Cache,TableObject})alloc(p,4096);alloc(LRC,8192);
+  for(auto p:{Ring,Ctx,Task,LRCBuf,RingBuf,RingStorage,Stamps,Cache,TableObject})alloc(p,4096);alloc(LRC,8192);
   for(auto p:{K+0x1000,K+0x2000,K+0x7000,K+0xc000,K+0x11000,K+0x12000,K+0x14000,K+0x15000})alloc(p,4096);
   for(auto p:{K+0x3000,K+0x8000,K+0xd000})alloc(p,16384);
   put(TableObject,Class);put(TableObject+0x40,K+0x1000);put(TableObject+0x48,K+0x3000);
@@ -34,11 +34,11 @@ struct Fixture {
   put(Ring+0x20,Ctx);put(Ring+0x10,K+0x999000);put(Ctx+0x50,K+0x999000);put(Ctx+0xb0,Ring);
   put(Ctx+0x58,Task);put(Task+0x260,TableObject);put(Ctx+0x98,LRCBuf);put(LRCBuf,Class+1);
   put(LRCBuf+0x38,LRC);put(LRCBuf+0x20,uint64_t(8192));put(Ring+0x18,LRC);
-  put(Ring+0x80,RingBuf);put(RingBuf+0x38,RingCPU);put(RingBuf+0x20,uint64_t(4096));put(Ring+0x8c,uint32_t(4096));
+  put(Ring+0x80,RingBuf);put(RingBuf+0x38,RingStorage);put(RingBuf+0x20,uint64_t(4096));put(Ring+0x8c,uint32_t(4096));
   put(Ctx+0x89,uint64_t(0x1234));put(Ctx+0x7c,uint32_t(8));put(Ring+0x30,Stamps);put(Ring+0x28,Main+0x50000);
   put(Ring+0x38,uint32_t(1));put(Ring+0x8a0,uint32_t(1));put(Stamps+64,uint32_t(10));put(LRC+0x10cc,uint32_t(0x2000));
   uint32_t id=8<<5,head=12;memcpy(regs+0xac,&id,4);memcpy(regs,&head,4);
-  put(RingCPU,uint32_t(0x18900101));put(RingCPU+4,uint32_t(Main));
+  put(RingStorage,uint32_t(0x18900101));put(RingStorage+4,uint32_t(Main));
   auto &e=pending.entries[0];std::vector<uint32_t> v(22);v[0]=0x61010014;v[4]=(Main+0x30000)|1;v[6]=(Main+0x40000)|1;v[10]=(Main+0x20000)|1;
   const uint32_t rest[]={0x78100007,0x240,0,0,0,0,0,0,0,0x7820000a,0x40,0,0,0,0,0,0,0x140,0,0xc0,0,0x782a0000,0x20,0x782f0000,0,0x7b000005,0,3,0,1,0,0,0x05000000};v.insert(v.end(),rest,rest+sizeof(rest)/4);
   e.index=0;e.stamp=11;e.gpu=Main;e.cpu=Cache;e.dwords=v.size();e.copied=v.size()*4;e.stable=1;memcpy(e.bytes,v.data(),e.copied);
@@ -56,6 +56,13 @@ struct Fixture {
   auto c=std::make_unique<Capture>();
   collect(*c,pending,regs,Class,K,K+0x1000000,[&](uint64_t p,void *out,unsigned n){return read(p,out,n);},
    [&](uint64_t cpu,uint64_t &phys){phys=cpu-K;if(badPhysical && cpu==K+0x2000)phys+=4096;return cpu>=K && cpu<K+0x1000000;});return c;
+ }
+ void root() {
+  uint32_t head=40,start=0x40200000;memcpy(regs,&head,4);memcpy(regs+12,&start,4);
+  put(LRC+0x1024,start);put(RingStorage+12,uint32_t(0x7a000004));put(RingStorage+16,uint32_t(1<<14));
+  put(RingStorage+20,Main+0x50000+64);put(RingStorage+28,uint32_t(11));
+  // The cache tail is not the root's CPU alias. A mapped walk must not use it.
+  blocks[Cache][100]^=1;pending.entries[0].bytes[100]^=1;
  }
 };
 }
@@ -89,5 +96,15 @@ int main(int argc,char **argv) {
  {Fixture f;f.put(Ring+0x8c,uint32_t(32769));assert(f.run()->q[1]==1);}
  {Fixture f;f.put(Ring+0x38,uint32_t(64));assert(f.run()->q[1]==1);}
  {Fixture f;f.pending.q[2]=5;assert(f.run()->q[1]==1);}
+ {Fixture f;f.root();auto c=f.run();assert(!c->q[1] && c->q[24]==1 && !c->q[29]);
+  assert(c->q[25]==Main && c->q[26]==0 && c->q[27]==0 && c->q[28]==11);
+  assert(c->candidates[0][7]&8);assert(c->graph.q[2]==1 && c->graph.draws[0].q[0]==TGLHangPending::Count);
+ }
+ {Fixture f;f.root();f.put(RingStorage,uint32_t(0));auto c=f.run();assert(c->q[29]==1 && !c->graph.q[2]);}
+ {Fixture f;f.root();f.put(RingStorage+28,uint32_t(12));auto c=f.run();assert(c->q[29]==3 && !c->graph.q[2]);}
+ {Fixture f;f.root();f.put(RingStorage+20,Main);auto c=f.run();assert(c->q[29]==2 && !c->graph.q[2]);}
+ {Fixture f;f.root();f.put(LRC+0x1024,uint32_t(0));auto c=f.run();assert(c->q[29]==5 && !c->graph.q[2]);}
+ {Fixture f;f.root();f.mutateCache=true;auto c=f.run();assert(c->q[1]==8 && c->q[29]==4);}
+ {Fixture f;f.root();f.partial=true;auto c=f.run();assert(c->graph.q[5]&TGLHangGraph::ReadHole);assert(!c->graph.q[2]);}
  printf("detail bytes=%zu graph offset=%zu pending offset=%zu tests passed\n",sizeof(Capture),offsetof(Capture,graph),offsetof(Capture,pending));
 }

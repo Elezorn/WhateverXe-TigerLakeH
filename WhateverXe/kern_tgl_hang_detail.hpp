@@ -73,6 +73,54 @@ bool cacheMatches(uint64_t ring,const TGLHangPending::Entry &e,Read &read) {
  return TGLHangPending::u32(row)==e.stamp && TGLHangPending::u64(row+8)==e.gpu &&
   TGLHangPending::u64(row+16)==e.cpu && TGLHangPending::u32(row+24)==e.dwords;
 }
+// A coalesced native submission keeps the FIRST GPU address but the LAST
+// segment's CPU pointer/length (execute@51f50/51fdc, replay@2f6ef/2f745).
+// Locate a separate GPU root using the nearest preceding ring BBS, its stamp
+// write and the matching cache record. This is provenance, not proof that the
+// GPU is still executing it. In particular a completed RCS stamp says nothing
+// here about outstanding POCS work. Preserve strict tail-copy checks below.
+template<class Read,class Walker>
+void ringRoot(Capture &c,Read &read,Walker &walker) {
+ auto q=c.q+24;q[0]=1;q[5]=5;
+ const auto b=c.before;const unsigned length=static_cast<unsigned>(b[RingLength]);
+ const unsigned head=TGLHangPending::u32(c.regs)&0x1ffffc;
+ if(head>=length || (c.q[12]&((1ULL<<(length/4096))-1))!=((1ULL<<(length/4096))-1) ||
+    !(c.q[10]&2) || TGLHangPending::u32(c.lrc+0x1024)!=TGLHangPending::u32(c.regs+12))return;
+ auto word=[&](unsigned at){return TGLHangPending::u32(c.ring+(at&(length-1)));};
+ q[5]=1;
+ for(unsigned distance=12;distance<=length;distance+=4) {
+  const unsigned at=(head+length-distance)&(length-1);
+  if(word(at)!=0x18900101)continue;
+  const uint64_t gpu=uint64_t(word(at+4))|(uint64_t(word(at+8))<<32);
+  if(!gpu || gpu>>47 || (gpu&3))continue;
+  q[1]=gpu;q[2]=at;q[5]=2;
+  bool stampFound=false;uint32_t stamp=0;
+  for(unsigned off=12;off+24<=distance && off<=1024;off+=4) {
+   if(word(at+off)==0x7a000004 && (word(at+off+4)&(3U<<14))==(1U<<14) &&
+      (uint64_t(word(at+off+8))|(uint64_t(word(at+off+12))<<32))==b[StampGPU]+b[StampIndex]*64) {
+    stamp=word(at+off+16);stampFound=true;break;
+   }
+  }
+  if(!stampFound)return;
+  q[4]=stamp;q[5]=3;
+  for(unsigned n=0;n<64;++n) {
+   const unsigned index=(static_cast<unsigned>(b[WriteIndex])+63-n)&63;
+   const uint64_t address=c.q[4]+0xa0+index*32;uint8_t row[32],after[32],bbs[12]{};
+   if(read(address,row,32)!=32 || TGLHangPending::u32(row)!=stamp || TGLHangPending::u64(row+8)!=gpu)continue;
+   q[3]=index;q[5]=0;walker.mappedCandidate(TGLHangPending::Count,gpu);
+   // Refuse all dependent pages if provenance changed during the walk.
+   bool same=read(address,after,32)==32 && !memcmp(row,after,32);
+   for(unsigned j=0;j<3;++j) {
+    const unsigned offset=(at+j*4)&(length-1);
+    same=read(b[RingCPU]+offset,bbs+j*4,4)==4 && same;
+    same=TGLHangPending::u32(bbs+j*4)==word(at+j*4) && same;
+   }
+   if(!same){q[5]=4;c.q[1]=8;}
+   return;
+  }
+  return;
+ }
+}
 template<class Read,class Physical>
 void collect(Capture &c,const TGLHangPending::Capture &pending,const uint8_t *regs,uint64_t expectedClass,
  uint64_t directBase,uint64_t directEnd,Read read,Physical physical) {
@@ -97,6 +145,7 @@ void collect(Capture &c,const TGLHangPending::Capture &pending,const uint8_t *re
  }
  auto pageReader=[&](TGLHangGraph::Page &p){mappedPage(p,b,directBase,directEnd,read,physical);};
  TGLHangGraph::Walker<decltype(pageReader)> walker{c.graph,pageReader};
+ ringRoot(c,read,walker);if(c.q[1]==8)return;
  // Prioritize the candidate nearest the saved ring head, then the smallest
  // positive retired delta. Header search is a ranking hint, not an execution claim.
  uint64_t score[4];unsigned order[4];
