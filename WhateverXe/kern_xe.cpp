@@ -33,6 +33,7 @@
 #include "kern_tgl_start_order.hpp"
 #include "kern_donor.hpp"
 #include "kern_tgl_csb.hpp"
+#include "kern_tgl_context_cache.hpp"
 #include "kern_tgl_vm.hpp"
 #include "kern_tgl_ppgtt.hpp"
 #include "kern_tgl_submit_capture.hpp"
@@ -312,6 +313,8 @@ bool tglCCSAlignmentSerialize(void *,void *,OSSerialize *serializer) {
 // r137 one-time MMIO write, this follows the context that will render.
 uintptr_t tglCPSAllocate {},tglCPSCPUAddress {},tglCPSGPUAddress {};
 uintptr_t tglCPSRestoreOriginal {},tglCPSRestoreCaller {};
+static bool tglContextCacheEnabled;
+static uintptr_t tglContextCacheInitOriginal;
 static bool tglAlderLakeNGoldenRestore(void *context);
 static void adlnCaptureOwnedGolden(void *context);
 uint32_t tglCPSCounts[17] {}; // attempts, failures, GGTT, pointer, RCS, samples,
@@ -338,10 +341,12 @@ static bool tglCPSPrepare(void *owner) {
  auto allocate=reinterpret_cast<void *(*)(void *,size_t,unsigned,unsigned)>(tglCPSAllocate);
  auto cpuAddress=reinterpret_cast<void *(*)(void *)>(tglCPSCPUAddress);
  auto gpuAddress=reinterpret_cast<uint64_t (*)(void *)>(tglCPSGPUAddress);
- auto buffer=allocate(task,4096,3,0); // same allocation contract as native HWS
+ // Gen12 INDIRECT_CTX and PER_CTX_BB occupy separate pages (intel_lrc.c).
+ const size_t extent=tglContextCacheEnabled?8192:4096;
+ auto buffer=allocate(task,extent,3,0); // same allocation contract as native HWS
  if(!buffer)return fail();
  auto cpu=static_cast<uint8_t *>(cpuAddress(buffer));const auto gpu=gpuAddress(buffer);
- if(!cpu || (reinterpret_cast<uintptr_t>(cpu)&63) || !gpu || (gpu&4095) || gpu>0xFFFFF000ULL) {
+ if(!cpu || (reinterpret_cast<uintptr_t>(cpu)&63) || !gpu || (gpu&4095) || gpu>0x100000000ULL-extent) {
   reinterpret_cast<OSObject *>(buffer)->release();return fail();
  }
  // r146: FF_MODE2 CPU reads are unreliable (Wa1608008084). Apply the
@@ -349,9 +354,10 @@ static bool tglCPSPrepare(void *owner) {
  // r160: Wa_1606931601, masked EU early-read disable. Existing multicast
  // steering is retained; this adds no CPU MMIO write or synchronization wait.
  const uint32_t batch[] {0,0x11000005,0x7304,0x02000200,0x6604,0xE0040000,0xE4F4,0x40004000,0x05000000};
- bzero(cpu,4096);memcpy(cpu,batch,sizeof(batch));
+ bzero(cpu,extent);memcpy(cpu,batch,sizeof(batch));
+ if(tglContextCacheEnabled)TGLContextCache::batch(cpu);
  // Publish CPU writes before first GPU use, independent of LLC policy.
- for(unsigned i=0;i<4096;i+=64)asm volatile("clflush (%0)"::"r"(cpu+i):"memory");
+ for(unsigned i=0;i<extent;i+=64)asm volatile("clflush (%0)"::"r"(cpu+i):"memory");
  asm volatile("mfence":::"memory");
  __atomic_store_n(&tglCPSCounts[2],static_cast<uint32_t>(gpu),__ATOMIC_RELAXED);
  __atomic_store_n(&tglCPSCounts[3],static_cast<uint32_t>(gpu)|5,__ATOMIC_RELAXED);
@@ -395,6 +401,23 @@ bool tglCPSSerialize(void *,void *,OSSerialize *serializer) {
  for(unsigned i=0;i<17;++i)out[i+1]=__atomic_load_n(&tglCPSCounts[i],__ATOMIC_RELAXED);
  auto data=OSData::withBytes(out,sizeof(out));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
+}
+// Constructor return is before scheduler submission. This covers fresh RCS
+// images and safe-image clones; beginReset later restores the qualified image.
+// Do not change POCS/CCS, native completion, or an already submitted context.
+static bool tglContextCacheInit(void *context,void *task,const void *params,uint8_t priority) {
+ const bool ok=FunctionCast(tglContextCacheInit,tglContextCacheInitOriginal)(context,task,params,priority);
+ if(!ok || !tglContextCacheEnabled)return ok;
+ auto c=static_cast<uint8_t *>(context);if(c[0x6C]!=0)return true;
+ auto owner=*reinterpret_cast<uint8_t **>(c+0x50);
+ auto buffer=*reinterpret_cast<uint8_t **>(c+0x98);
+ if(!owner || !buffer || !*reinterpret_cast<void **>(owner+0x13F8))return false;
+ auto cpu=reinterpret_cast<void *(*)(void *)>(tglCPSCPUAddress)(buffer);
+ const auto size=*reinterpret_cast<uint64_t *>(buffer+0x20);
+ const auto gpu=__atomic_load_n(&tglCPSCounts[2],__ATOMIC_RELAXED);
+ if(!TGLContextCache::install(cpu,size,gpu))return false;
+ asm volatile("clflush (%0)"::"r"(static_cast<uint8_t *>(cpu)+0x1054):"memory");
+ asm volatile("mfence":::"memory");return true;
 }
 // r150: qualify the conditional state-cache/command-cache invalidate contract.
 // Read-only sparse samples during the existing RCS forcewake. These are resident
@@ -9383,6 +9406,24 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			}
 			patcher.clearError();
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLCPSColorPipeReady",cpsOK);
+			// Linux Gen12 Wa_18022495364: an INDIRECT_CTX cache invalidation,
+			// distinct from ring PIPE_CONTROL. Keep the per-context batch intact.
+			bool contextCacheOK=!completionCacheRequested;
+			if(completionCacheRequested) {
+				const char *init="__ZN17IGHardwareContext15initWithOptionsEP11IGAccelTaskRK23IGHardwareContextParamsh";
+				const uint8_t contextCacheHead[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x28};
+				contextCacheOK=cpsOK && hostOK && size>0x7C350 &&
+					patcher.solveSymbol<mach_vm_address_t>(index,init,address,size)==address+0x7B9D4 &&
+					!memcmp(reinterpret_cast<void *>(address+0x7B9D4),contextCacheHead,sizeof(contextCacheHead));
+				patcher.clearError();
+				if(contextCacheOK) {
+					KernelPatcher::RouteRequest route[] {{init,tglContextCacheInit,tglContextCacheInitOriginal}};
+					contextCacheOK=patcher.routeMultiple(index,route,arrsize(route),address,size);
+				}
+				patcher.clearError();
+			}
+			tglContextCacheEnabled=completionCacheRequested && contextCacheOK;
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLContextCacheIndirectReady",tglContextCacheEnabled);
             if(adlnDetected && checkKernelArgument("-wex-adln-golden-source")) {
              adlnOwnedGoldenEnabled=cpsOK && !checkKernelArgument("-wex-adln-kernel-ctx") && !checkKernelArgument("-wex-adln-golden-raw");
              IORegistryEntry::getRegistryRoot()->setProperty("N97OwnedGoldenReady",adlnOwnedGoldenEnabled);
@@ -9499,7 +9540,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			}
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRecoverySinglePassRequested",recoveryRequested);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRecoverySinglePassReady",recoveryRequested && recoveryOK);
-			tglAcceleratorReady = surfaceABIReady && adlnObserved && skuReady && urbReady && ccsReady && hizReady && ccsPSReady && ggttOK && observed && ok && gucOK && dmaWriteOK && hostOK && scratchOK && blitInitOK && tglMMIOUCReady && copyOK && auxAlignOK && iosCCSOK && ffModeOK && cpsOK && flushOK && tlbPreparserOK && hangOK && recoveryOK && completionCacheOK;
+			tglAcceleratorReady = surfaceABIReady && adlnObserved && skuReady && urbReady && ccsReady && hizReady && ccsPSReady && ggttOK && observed && ok && gucOK && dmaWriteOK && hostOK && scratchOK && blitInitOK && tglMMIOUCReady && copyOK && auxAlignOK && iosCCSOK && ffModeOK && cpsOK && flushOK && tlbPreparserOK && hangOK && recoveryOK && completionCacheOK && contextCacheOK;
 			// r201: resource/copy diagnostics are absent, not admission requirements.
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLResourceDiagnosticsRemoved",true);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLAcceleratorAdmissionReady", tglAcceleratorReady);
