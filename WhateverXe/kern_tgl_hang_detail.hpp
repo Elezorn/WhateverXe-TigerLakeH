@@ -97,7 +97,8 @@ void ringRoot(Capture &c,Read &read,Walker &walker) {
   q[1]=gpu;q[2]=at;q[5]=2;
   bool stampFound=false;uint32_t stamp=0;
   for(unsigned off=12;off+24<=distance && off<=1024;off+=4) {
-   if(word(at+off)==0x7a000004 && (word(at+off+4)&(3U<<14))==(1U<<14) &&
+   // HDC Pipeline Flush changes only DW0 bit 9, not the six-DWORD layout.
+   if((word(at+off)&~0x200U)==0x7a000004 && (word(at+off+4)&(3U<<14))==(1U<<14) &&
       (uint64_t(word(at+off+8))|(uint64_t(word(at+off+12))<<32))==b[StampGPU]+b[StampIndex]*64) {
     stamp=word(at+off+16);stampFound=true;break;
    }

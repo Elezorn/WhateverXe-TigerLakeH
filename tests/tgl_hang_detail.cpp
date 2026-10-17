@@ -101,6 +101,16 @@ int main(int argc,char **argv) {
   assert(c->candidates[0][7]&8);assert(c->graph.q[2]==1 && c->graph.draws[0].q[0]==TGLHangPending::Count);
  }
  {Fixture f;f.root();f.put(RingStorage,uint32_t(0));auto c=f.run();assert(c->q[29]==1 && !c->graph.q[2]);}
+ {Fixture f;f.root();f.put(RingStorage+12,uint32_t(0x7a000204));f.put(RingStorage+16,uint32_t(0x20104594));
+  auto c=f.run();assert(!c->q[1] && !c->q[29] && c->q[25]==Main && c->q[28]==11 && c->graph.q[2]==1);
+ }
+ for(uint32_t header:{0x7a000203U,0x7a000205U,0x7a000604U,0x7b000204U}) {
+  Fixture f;f.root();f.put(RingStorage+12,header);auto c=f.run();assert(c->q[29]==2 && !c->graph.q[2]);
+ }
+ for(uint32_t flags:{0x20100594U,0x20108594U,0x2010c594U}) {
+  Fixture f;f.root();f.put(RingStorage+12,uint32_t(0x7a000204));f.put(RingStorage+16,flags);
+  auto c=f.run();assert(c->q[29]==2 && !c->graph.q[2]);
+ }
  {Fixture f;f.root();f.put(RingStorage+28,uint32_t(12));auto c=f.run();assert(c->q[29]==3 && !c->graph.q[2]);}
  {Fixture f;f.root();f.put(RingStorage+20,Main);auto c=f.run();assert(c->q[29]==2 && !c->graph.q[2]);}
  {Fixture f;f.root();f.put(LRC+0x1024,uint32_t(0));auto c=f.run();assert(c->q[29]==5 && !c->graph.q[2]);}
