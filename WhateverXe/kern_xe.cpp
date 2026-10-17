@@ -40,6 +40,7 @@
 #include "kern_xelp_queue_memory.hpp"
 #include "kern_tgl_hang_refs.hpp"
 #include "kern_tgl_hang_pending.hpp"
+#include "kern_tgl_hang_detail.hpp"
 #include "kern_tgl_recovery.hpp"
 #include "kern_tgl_aux_call.hpp"
 
@@ -11681,6 +11682,38 @@ void tglCaptureCSBFailure() {
 }
 }
 
+namespace {
+void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *regs) {
+ // Keep this experiment on the exact admitted Tahoe kernel. No additional
+ // MMIO, native virtual calls, mappings, cache operations or success-path work.
+ if(strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64"))return;
+ uint64_t status[4] {1,sizeof(TGLHangDetail::Capture),1,0};
+ auto root=IORegistryEntry::getRegistryRoot();
+ auto c=static_cast<TGLHangDetail::Capture *>(IOMalloc(sizeof(TGLHangDetail::Capture)));
+ if(c) {
+  bzero(c,sizeof(*c));tglHostClock(c->q+2);
+  uint64_t cpuRoot=0;
+  if(tglVM.enabled && tglVM.nofault && tglVMRead(tglVM.kernelPmap+0x50,cpuRoot)) {
+   auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {
+    return TGLHangPending::kernelRange(p,n) ? tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n) : 0;
+   };
+   auto physical=[&](uint64_t cpu,uint64_t &value)->bool {
+    const auto w=TGLVM::inspect(cpuRoot,tglVM.directBase,tglVM.directEnd,cpu,tglVMRead);
+    value=w.physical;return !w.status;
+   };
+   TGLHangDetail::collect(*c,pending,regs,tglPPGTTClass,tglVM.directBase,tglVM.directEnd,read,physical);
+   c->q[30]=cpuRoot;
+   if(!tglVMRead(tglVM.kernelPmap+0x50,c->q[31]) || c->q[31]!=cpuRoot)c->q[1]=5;
+   status[2]=0;status[3]=c->q[1];
+  } else {c->q[0]=1;c->q[1]=6;status[2]=2;status[3]=6;}
+  tglHostClock(c->q+3);
+  if(!root->setProperty("TGLHangDetail0",c,sizeof(*c)))status[2]=3;
+  IOFree(c,sizeof(*c));
+ }
+ root->setProperty("TGLHangDetailStatus",status,sizeof(status));
+}
+}
+
 void XE::wrapTGLHangRingDump(void *ring,void *registers) {
  // No new MMIO, remapping, forcewake or submission. Called by native hang
  // reporting before reset/retirement, never by a successful command path.
@@ -11742,6 +11775,7 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
      TGLHangPending::collect(*pending,c->q[2],c->regs,c->ring,
       [&](uint64_t address,void *out,unsigned count)->uint64_t {return read(address,out,count);});
      IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPending0",pending,sizeof(*pending));
+     tglCaptureHangDetail(*pending,c->regs);
      IOFree(pending,sizeof(*pending));
     }
    }
