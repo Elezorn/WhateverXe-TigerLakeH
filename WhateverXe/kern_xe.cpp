@@ -42,6 +42,7 @@
 #include "kern_tgl_hang_refs.hpp"
 #include "kern_tgl_hang_pending.hpp"
 #include "kern_tgl_hang_detail.hpp"
+#include "kern_tgl_hang_ggtt.hpp"
 #include "kern_tgl_hang_select.hpp"
 #include "kern_tgl_recovery.hpp"
 #include "kern_tgl_aux_call.hpp"
@@ -11793,6 +11794,34 @@ void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *
    memcpy(c->q+16,selection.q,sizeof(selection.q));
    c->q[30]=cpuRoot;
    if(!tglVMRead(tglVM.kernelPmap+0x50,c->q[31]) || c->q[31]!=cpuRoot)c->q[1]=5;
+   // Diagnose the context-fetch address space at the first native hang only.
+   // GGTT reads use the already qualified BAR; no writes, cache operations,
+   // forcewake, virtual calls or normal-submission instrumentation are added.
+   if(!c->q[1] && !memcmp(c->before,c->after,sizeof(c->before))) {
+    TGLHangGGTT::Capture g{};g.q[0]=1;g.q[1]=1;tglHostClock(g.q+2);
+    const auto b=tglHostBase();const auto o=c->before;
+    using namespace TGLHangDetail;
+    if(b && o[Owner]==reinterpret_cast<uint64_t>(tglHost.owner) && (c->q[10]&2) &&
+       TGLHangPending::u32(c->lrc+0x1024)==TGLHangPending::u32(c->regs+12)) {
+     auto pte=[&](uint64_t gpu)->uint64_t {
+      return *reinterpret_cast<volatile uint64_t *>(b+0x800000+(gpu>>9));
+     };
+     for(unsigned kind=0;kind<2;++kind) {
+      const unsigned count=static_cast<unsigned>((kind?o[RingLength]:o[LRCSize])/4096);
+      const uint64_t gpu=kind?TGLHangPending::u32(c->lrc+0x1024):(o[Descriptor]&0xfffff000ULL);
+      for(unsigned i=0;i<count;++i) {
+       const auto row=c->backing[(kind?20:0)+i];
+       TGLHangGGTT::page(g,kind,i,row[0],gpu+i*4096,row[1],row[2]!=0,physical,pte);
+      }
+     }
+     uint64_t stampPhysical=0;const bool known=physical(o[Stamps],stampPhysical);
+     TGLHangGGTT::page(g,2,0,o[Stamps],o[StampGPU],stampPhysical,known,physical,pte);
+     uint64_t finalOwner[Fields]{};
+     g.q[1]=ownership(finalOwner,c->q[4],tglPPGTTClass,read) &&
+       !memcmp(finalOwner,o,sizeof(finalOwner)) ? 0:2;
+    }
+    tglHostClock(g.q+3);root->setProperty("TGLHangGGTT0",&g,sizeof(g));
+   }
    status[2]=0;status[3]=c->q[1];
   } else {c->q[0]=TGLHangDetail::Schema;c->q[1]=6;status[2]=2;status[3]=6;}
   tglHostClock(c->q+3);
