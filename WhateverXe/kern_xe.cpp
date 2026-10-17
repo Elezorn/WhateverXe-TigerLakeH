@@ -45,6 +45,7 @@
 #include "kern_tgl_hang_ggtt.hpp"
 #include "kern_tgl_hang_prestop.hpp"
 #include "kern_tgl_same_tail.hpp"
+#include "kern_tgl_submit_history.hpp"
 #include "kern_tgl_hang_select.hpp"
 #include "kern_tgl_recovery.hpp"
 #include "kern_tgl_aux_call.hpp"
@@ -77,6 +78,7 @@ static uint32_t tglHangPreStopState;
 static TGLHangPreStop::Capture tglHangPreStopCapture{};
 static bool tglSameTailEnabled;
 static TGLSameTail::State tglSameTailState{},tglSameTailFailure{};
+static TGLSubmitHistory::History<> tglSubmitHistory;
 static bool tglSameTailSerialize(void *,void *,OSSerialize *);
 
 
@@ -9548,6 +9550,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
              }
              patcher.clearError();tglHangPreStopReady=ok;
              IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPreStopReady",ok);
+             IORegistryEntry::getRegistryRoot()->setProperty("TGLSubmitHistoryReady",ok && tglSameTailEnabled);
             }
 
 			// r123: the TGL caller loops reset -> extra stamp -> one-second wait
@@ -11878,6 +11881,44 @@ void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *
 }
 }
 
+static void tglSubmitHistoryRecord(void *owner,void *streamer,uint32_t ordinal,unsigned phase) {
+ if(!tglSameTailEnabled || !tglHangPreStopReady || tglSubmitHistory.stopped() ||
+    !tglVM.nofault || owner!=tglHost.owner || streamer!=tglCSBEngines[0].streamer)return;
+ auto base=tglHostBase();if(!base)return;
+ TGLSubmitHistory::Record r{};r.q[0]=1;tglHostClock(r.q+1);
+ r.q[3]=ordinal;r.q[4]=phase;r.q[5]=reinterpret_cast<uint64_t>(owner);
+ r.q[6]=reinterpret_cast<uint64_t>(streamer);r.q[7]=tglCSBEngines[0].resets;
+ r.q[11]=tglCSBEngines[0].consumed;r.q[12]=tglCSBEngines[0].state.head;
+ r.q[13]=tglCSBEngines[0].lastRaw;r.q[14]=*reinterpret_cast<volatile uint32_t *>(base+0xd84);
+ r.q[15]=reinterpret_cast<uintptr_t>(current_thread());r.q[9]=4;
+ if(r.q[14]&2) {
+  auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {
+   return TGLHangPending::kernelRange(p,n) ? tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n) : 0;
+  };
+  TGLSubmitHistory::contextSlots(r,read);
+  for(unsigned i=0;i<arrsize(TGLSubmitHistory::Registers);++i)
+   r.registers[i]=*reinterpret_cast<volatile uint32_t *>(base+TGLSubmitHistory::Registers[i]);
+ }
+ tglHostClock(r.q+2);tglSubmitHistory.append(r);
+}
+
+static void tglSubmitHistoryPublish() {
+ if(!tglSubmitHistory.stopped())return;
+ const uint64_t header[8] {1,sizeof(TGLSubmitHistory::Record),256,64,
+  __atomic_load_n(&tglSubmitHistory.attempts,__ATOMIC_ACQUIRE),
+  __atomic_load_n(&tglSubmitHistory.drops,__ATOMIC_ACQUIRE),tglSubmitHistory.frozenAt,1};
+ auto data=OSData::withCapacity(sizeof(header)+320*(sizeof(TGLSubmitHistory::Record)+8));
+ if(!data)return;
+ bool ok=data->appendBytes(header,sizeof(header));
+ for(unsigned i=0;i<320 && ok;++i) {
+  TGLSubmitHistory::Record record{};
+  const auto sequence=TGLSubmitHistory::History<>::copy(i<64?tglSubmitHistory.early[i]:tglSubmitHistory.recent[i-64],record);
+  ok=data->appendBytes(&sequence,sizeof(sequence)) && data->appendBytes(&record,sizeof(record));
+ }
+ if(ok)IORegistryEntry::getRegistryRoot()->setProperty("TGLSubmitHistory0",data);
+ data->release();
+}
+
 extern "C" void tglHangPreStopWake(void *owner,bool enable,unsigned domains,unsigned engine,void *scheduler) {
  // Call the protected, counted native wake exactly once, before observing.
  tglCSBForceWake[0](owner,enable,domains);
@@ -11890,6 +11931,8 @@ extern "C" void tglHangPreStopWake(void *owner,bool enable,unsigned domains,unsi
  auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {return tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n);};
  auto mmio=[&](uint32_t reg)->uint32_t {return *reinterpret_cast<volatile uint32_t *>(base+reg);};
  TGLHangPreStop::collect(c,reinterpret_cast<uint64_t>(owner),reinterpret_cast<uint64_t>(scheduler),read,mmio);
+ if(!c.q[1])tglSubmitHistoryRecord(owner,reinterpret_cast<void *>(c.q[6]),UINT32_MAX,2);
+ uint64_t freezeTime;tglHostClock(&freezeTime);tglSubmitHistory.freeze(freezeTime);
  tglHostClock(c.q+3);__atomic_store_n(&tglHangPreStopState,2U,__ATOMIC_RELEASE);
 }
 
@@ -11908,6 +11951,7 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
     IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPreStop0",&tglHangPreStopCapture,sizeof(tglHangPreStopCapture));
    if(tglSameTailEnabled && __atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)==2)
     IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTail0",&tglSameTailFailure,sizeof(tglSameTailFailure));
+   if(tglSameTailEnabled)tglSubmitHistoryPublish();
    tglCaptureCSBFailure();
   }
   auto c=static_cast<Capture *>(IOMalloc(sizeof(Capture)));
@@ -12264,7 +12308,9 @@ void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
   TGLSameTail::prepare(tglSameTailState,reinterpret_cast<uint64_t>(renderWakeOwner),
    reinterpret_cast<uint64_t>(streamer),tglCSBEngines[0].resets,read,force);
  } else if(tglSameTailEnabled && streamer==tglCSBEngines[0].streamer)tglSameTailState.previous={};
+ if(renderWakeOwner)tglSubmitHistoryRecord(renderWakeOwner,streamer,n,0);
  FunctionCast(wrapTGLHostSubmit,callbackXE->orgTGLHostSubmit)(streamer,flags);
+ if(renderWakeOwner)tglSubmitHistoryRecord(renderWakeOwner,streamer,n,1);
  adlnQueueTraceSubmitFinish(queueTraceMask,renderWakeOwner);
  if(executionSlot!=UINT32_MAX) {
   tglExecutionSample(executionSlot+1,renderWakeOwner,1,1,reinterpret_cast<uintptr_t>(streamer),
