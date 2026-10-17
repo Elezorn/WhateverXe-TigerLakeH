@@ -1,4 +1,5 @@
 #include "kern_tgl_hang_detail.hpp"
+#include "kern_tgl_hang_select.hpp"
 #include <cassert>
 #include <map>
 #include <memory>
@@ -59,6 +60,17 @@ struct Fixture {
 };
 }
 int main(int argc,char **argv) {
+ {Fixture f;const uint64_t origin=Ring+0xb000,other=Ring+0xc000,stream=Ring+0xd000,item=Ring+0xe000;
+  for(auto p:{origin,other,stream,item})f.alloc(p,4096);
+  f.put(origin+0x10,K+0x999000);f.put(origin+0x20,other);f.put(origin+0x40,uint8_t(1));
+  f.put(other+0x7c,uint32_t(145));f.put(stream+0x10,K+0x999000);f.put(stream+0x30,item);f.put(stream+0x40,item);f.put(item,Ctx);
+  uint32_t ctrl=1,start=0x40000000;memcpy(f.regs+8,&ctrl,4);memcpy(f.regs+12,&start,4);
+  auto read=[&](uint64_t p,void *out,unsigned n){return f.read(p,out,n);};TGLHangSelect::Selection selected{};
+  TGLHangSelect::select(selected,origin,stream,f.regs,read);assert(!selected.q[1] && selected.q[4]==Ring);
+  uint8_t ring[0x8a8]{};assert(read(selected.q[4],ring,sizeof(ring))==sizeof(ring));
+  f.pending={};TGLHangPending::collect(f.pending,selected.q[4],f.regs,ring,read);
+  assert(!f.pending.q[2] && f.pending.q[11]==1);auto c=f.run();assert(!c->q[1] && c->graph.q[2]==1);
+ }
  {Fixture f;auto c=f.run();assert(c->q[1]==0 && c->candidates[0][7]==0 && c->graph.q[2]==1);assert(c->q[10]==3 && c->q[12]==1 && c->q[13]==4096 && c->q[14]==4096);
   assert(!c->graph.q[5] && !c->graph.q[8]);
   if(argc==2){FILE *file=fopen(argv[1],"wb");assert(file);assert(fwrite(c.get(),1,sizeof(*c),file)==sizeof(*c));fclose(file);}

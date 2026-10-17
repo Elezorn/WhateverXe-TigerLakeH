@@ -41,6 +41,7 @@
 #include "kern_tgl_hang_refs.hpp"
 #include "kern_tgl_hang_pending.hpp"
 #include "kern_tgl_hang_detail.hpp"
+#include "kern_tgl_hang_select.hpp"
 #include "kern_tgl_recovery.hpp"
 #include "kern_tgl_aux_call.hpp"
 
@@ -11683,10 +11684,13 @@ void tglCaptureCSBFailure() {
 }
 
 namespace {
-void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *regs) {
+bool tglHangDetailKernel() {
+ return !strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+}
+void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *regs,const TGLHangSelect::Selection &selection) {
  // Keep this experiment on the exact admitted Tahoe kernel. No additional
  // MMIO, native virtual calls, mappings, cache operations or success-path work.
- if(strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64"))return;
+ if(!tglHangDetailKernel())return;
  uint64_t status[4] {1,sizeof(TGLHangDetail::Capture),1,0};
  auto root=IORegistryEntry::getRegistryRoot();
  auto c=static_cast<TGLHangDetail::Capture *>(IOMalloc(sizeof(TGLHangDetail::Capture)));
@@ -11701,7 +11705,16 @@ void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *
     const auto w=TGLVM::inspect(cpuRoot,tglVM.directBase,tglVM.directEnd,cpu,tglVMRead);
     value=w.physical;return !w.status;
    };
-   TGLHangDetail::collect(*c,pending,regs,tglPPGTTClass,tglVM.directBase,tglVM.directEnd,read,physical);
+   if(!selection.q[1]) {
+    TGLHangDetail::collect(*c,pending,regs,tglPPGTTClass,tglVM.directBase,tglVM.directEnd,read,physical);
+    TGLHangSelect::Selection after{};
+    TGLHangSelect::select(after,selection.q[2],selection.q[3],regs,read);
+    if(memcmp(&selection,&after,sizeof(selection)))c->q[1]=7;
+   } else {
+    c->q[0]=1;c->q[1]=1;c->q[4]=pending.q[3];c->q[5]=tglPPGTTClass;c->graph.q[0]=1;
+    memcpy(c->regs,regs,sizeof(c->regs));memcpy(&c->pending,&pending,sizeof(pending));
+   }
+   memcpy(c->q+16,selection.q,sizeof(selection.q));
    c->q[30]=cpuRoot;
    if(!tglVMRead(tglVM.kernelPmap+0x50,c->q[31]) || c->q[31]!=cpuRoot)c->q[1]=5;
    status[2]=0;status[3]=c->q[1];
@@ -11769,14 +11782,23 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
    char key[32];snprintf(key,sizeof(key),"TGLHangBatch%u",slot);
    IORegistryEntry::getRegistryRoot()->setProperty(key,c,sizeof(*c));
    if (slot==0 && c->q[3]==sizeof(c->regs) && c->q[4]==sizeof(c->ring)) {
-    auto pending=static_cast<TGLHangPending::Capture *>(IOMalloc(sizeof(TGLHangPending::Capture)));
-    if(pending) {
-     bzero(pending,sizeof(*pending));tglHostClock(pending->q+1);
-     TGLHangPending::collect(*pending,c->q[2],c->regs,c->ring,
-      [&](uint64_t address,void *out,unsigned count)->uint64_t {return read(address,out,count);});
-     IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPending0",pending,sizeof(*pending));
-     tglCaptureHangDetail(*pending,c->regs);
-     IOFree(pending,sizeof(*pending));
+    struct PendingWork {TGLHangPending::Capture pending;TGLHangSelect::Selection selection;uint8_t ring[0x8a8];};
+    auto work=static_cast<PendingWork *>(IOMalloc(sizeof(PendingWork)));
+    if(work) {
+     bzero(work,sizeof(*work));auto &pending=work->pending;auto &selection=work->selection;
+     tglHostClock(pending.q+1);
+     auto boundedRead=[&](uint64_t address,void *out,unsigned count)->uint64_t {return read(address,out,count);};
+     if(tglHangDetailKernel())TGLHangSelect::select(selection,c->q[2],reinterpret_cast<uint64_t>(tglCSBEngines[0].streamer),c->regs,boundedRead);
+     uint64_t selected=c->q[2];const uint8_t *ringBytes=c->ring;
+     if(selection.q[0] && !selection.q[1] && selection.q[4]!=selected) {
+      if(read(selection.q[4],work->ring,sizeof(work->ring))==sizeof(work->ring)) {
+       selected=selection.q[4];ringBytes=work->ring;
+      } else selection.q[1]=7;
+     }
+     TGLHangPending::collect(pending,selected,c->regs,ringBytes,boundedRead);
+     IORegistryEntry::getRegistryRoot()->setProperty("TGLHangPending0",&pending,sizeof(pending));
+     tglCaptureHangDetail(pending,c->regs,selection);
+     IOFree(work,sizeof(*work));
     }
    }
    if (c->q[3]==sizeof(c->regs) && c->q[4]==sizeof(c->ring))
