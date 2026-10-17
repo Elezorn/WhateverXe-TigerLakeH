@@ -9328,6 +9328,37 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRenderPassFlushReady",flushOK);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRenderPassTileFlushReady",flushOK);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRenderPassConstAlternativeReady",flushOK);
+			// The outer RCS completion emitter is separate from the render-pass
+			// emitter above. Apply the same Vol14 constant-cache alternative to
+			// its stamp and optional notification packets on the qualified Tahoe
+			// host-scheduler target. Preserve native GTT mode, stamp address/value,
+			// notification selection, packet lengths and the preceding CS stall.
+			const bool completionCacheRequested=!adlnDetected && checkKernelArgument("-disablegfxfirmware") &&
+				!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+			bool completionCacheOK=!completionCacheRequested;
+			if(completionCacheRequested) {
+				const uint32_t completionCacheSites[] {0x84EA4,0x84F95};
+				const uint8_t completionCacheFind[][10] {
+					{0x48,0xB8,0x04,0x00,0x00,0x7A,0x98,0x44,0x10,0x01},
+					{0x48,0xB8,0x04,0x00,0x00,0x7A,0x18,0x05,0x00,0x01}};
+				const uint8_t completionCacheReplace[][10] {
+					{0x48,0xB8,0x04,0x02,0x00,0x7A,0x94,0x44,0x10,0x21},
+					{0x48,0xB8,0x04,0x02,0x00,0x7A,0x14,0x05,0x00,0x21}};
+				completionCacheOK=hostOK && flushOK && size>0x84FD5 &&
+					patcher.solveSymbol<mach_vm_address_t>(index,"__ZN24IGHardwareRingBufferMain18commitStampCommandEjb",address,size)==address+0x84DC8;
+				for(size_t n=0;completionCacheOK && n<arrsize(completionCacheSites);++n)
+					completionCacheOK=!memcmp(reinterpret_cast<void *>(address+completionCacheSites[n]),completionCacheFind[n],sizeof(completionCacheFind[n]));
+				patcher.clearError();
+				for(size_t n=0;completionCacheOK && n<arrsize(completionCacheSites);++n) {
+					auto site=reinterpret_cast<uint8_t *>(address+completionCacheSites[n]);
+					KernelPatcher::LookupPatch patch {currentGraphics,completionCacheFind[n],completionCacheReplace[n],sizeof(completionCacheFind[n]),1};
+					patcher.applyLookupPatch(&patch,site,sizeof(completionCacheFind[n])+1);
+					completionCacheOK=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(site,completionCacheReplace[n],sizeof(completionCacheReplace[n]));
+				}
+				patcher.clearError();
+			}
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLCompletionConstAlternativeRequested",completionCacheRequested);
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLCompletionConstAlternativeReady",completionCacheRequested && completionCacheOK);
 			const char *cpsRestore="__ZN17IGHardwareContext20restoreFromSafeImageEv";
 			const uint8_t cpsRestoreHead[] {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x50};
 			const uint8_t cpsRestoreCall[] {0x4c,0x89,0xef,0xe8,0x61,0x2,0x0,0x0};
@@ -9468,7 +9499,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			}
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRecoverySinglePassRequested",recoveryRequested);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLRecoverySinglePassReady",recoveryRequested && recoveryOK);
-			tglAcceleratorReady = surfaceABIReady && adlnObserved && skuReady && urbReady && ccsReady && hizReady && ccsPSReady && ggttOK && observed && ok && gucOK && dmaWriteOK && hostOK && scratchOK && blitInitOK && tglMMIOUCReady && copyOK && auxAlignOK && iosCCSOK && ffModeOK && cpsOK && flushOK && tlbPreparserOK && hangOK && recoveryOK;
+			tglAcceleratorReady = surfaceABIReady && adlnObserved && skuReady && urbReady && ccsReady && hizReady && ccsPSReady && ggttOK && observed && ok && gucOK && dmaWriteOK && hostOK && scratchOK && blitInitOK && tglMMIOUCReady && copyOK && auxAlignOK && iosCCSOK && ffModeOK && cpsOK && flushOK && tlbPreparserOK && hangOK && recoveryOK && completionCacheOK;
 			// r201: resource/copy diagnostics are absent, not admission requirements.
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLResourceDiagnosticsRemoved",true);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLAcceleratorAdmissionReady", tglAcceleratorReady);
