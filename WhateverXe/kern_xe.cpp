@@ -34,6 +34,7 @@
 #include "kern_donor.hpp"
 #include "kern_tgl_csb.hpp"
 #include "kern_tgl_context_cache.hpp"
+#include "kern_tgl_gsync.hpp"
 #include "kern_tgl_vm.hpp"
 #include "kern_tgl_ppgtt.hpp"
 #include "kern_tgl_submit_capture.hpp"
@@ -80,6 +81,12 @@ static bool tglSameTailEnabled;
 static TGLSameTail::State tglSameTailState{},tglSameTailFailure{};
 static TGLSubmitHistory::History<> tglSubmitHistory;
 static bool tglSameTailSerialize(void *,void *,OSSerialize *);
+static bool tglGSYNCReady;
+// schema, attempts, writes, already disabled, guard failures, readback failures,
+// first before/after, last before/after, first/last ordinal, first complete,
+// pre-STOP value/ACK/valid. Sequential receipt, not an atomic GPU snapshot.
+static uint64_t tglGSYNCState[16] {1},tglGSYNCFailure[16] {};
+static bool tglGSYNCSerialize(void *,void *,OSSerialize *);
 
 
 // Stock 23J631/24H32 IOSurface moved fields used inline by the exact DP1 donor.
@@ -9384,6 +9391,15 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				!memcmp(reinterpret_cast<void *>(address+0x3A7B6),sameTailFlag,sizeof(sameTailFlag));
 			patcher.clearError();
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTailRestoreReady",tglSameTailEnabled);
+			// The public TGL register definition identifies colored GSYNC at
+			// B0A0[2]. Restrict this repair trial to the physical TGL B0 target,
+			// exact Tahoe kernel/donor and the qualified strong-UC mapping.
+			tglGSYNCReady=tglSameTailEnabled && tglMMIOUCReady &&
+				xeProfile.identity==0x9A498086 && xeProfile.revision==1 && !xeProfile.overridden();
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLGSYNCDisableReady",tglGSYNCReady);
+			if(tglGSYNCReady)if(auto live=OSSerializer::forTarget(nullptr,tglGSYNCSerialize)) {
+				IORegistryEntry::getRegistryRoot()->setProperty("TGLGSYNCLive",live);live->release();
+			}
 			if(tglSameTailEnabled)if(auto live=OSSerializer::forTarget(nullptr,tglSameTailSerialize)) {
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTailLive",live);live->release();
 			}
@@ -11927,6 +11943,15 @@ extern "C" void tglHangPreStopWake(void *owner,bool enable,unsigned domains,unsi
  uint32_t empty=0;
  if(!__atomic_compare_exchange_n(&tglHangPreStopState,&empty,1U,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED))return;
  tglSameTailFailure=tglSameTailState;
+ if(tglGSYNCReady) {
+  for(unsigned i=0;i<16;++i)tglGSYNCFailure[i]=__atomic_load_n(tglGSYNCState+i,__ATOMIC_RELAXED);
+  const auto ack=*reinterpret_cast<volatile uint32_t *>(base+0xD84);
+  tglGSYNCFailure[14]=ack;
+  if(ack!=UINT32_MAX && (ack&2)) {
+   tglGSYNCFailure[13]=*reinterpret_cast<volatile uint32_t *>(base+TGLGSYNC::Register);
+   tglGSYNCFailure[15]=!(tglGSYNCFailure[13]&TGLGSYNC::Reserved);
+  }
+ }
  auto &c=tglHangPreStopCapture;tglHostClock(c.q+2);c.q[7]=engine;c.q[8]=domains;
  auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {return tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n);};
  auto mmio=[&](uint32_t reg)->uint32_t {return *reinterpret_cast<volatile uint32_t *>(base+reg);};
@@ -11952,6 +11977,8 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
    if(tglSameTailEnabled && __atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)==2)
     IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTail0",&tglSameTailFailure,sizeof(tglSameTailFailure));
    if(tglSameTailEnabled)tglSubmitHistoryPublish();
+   if(tglGSYNCReady && __atomic_load_n(&tglHangPreStopState,__ATOMIC_ACQUIRE)==2)
+    IORegistryEntry::getRegistryRoot()->setProperty("TGLGSYNC0",tglGSYNCFailure,sizeof(tglGSYNCFailure));
    tglCaptureCSBFailure();
   }
   auto c=static_cast<Capture *>(IOMalloc(sizeof(Capture)));
@@ -12195,6 +12222,12 @@ static bool tglSameTailSerialize(void *,void *,OSSerialize *serializer) {
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
 
+static bool tglGSYNCSerialize(void *,void *,OSSerialize *serializer) {
+ uint64_t q[16];for(unsigned i=0;i<16;++i)q[i]=__atomic_load_n(tglGSYNCState+i,__ATOMIC_RELAXED);
+ auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
+}
+
 void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
  if (callbackXE->adlnDetected) {
   auto owner=*reinterpret_cast<void **>(static_cast<uint8_t *>(streamer)+0x10);
@@ -12223,6 +12256,32 @@ void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
    q[49]=q[50]=q[114]=UINT64_MAX;
   }
   tglCSBForceWake[0](renderWakeOwner,true,1);
+  if(tglGSYNCReady && renderWakeOwner==tglHost.owner && streamer==tglCSBEngines[0].streamer) {
+   if(auto base=tglHostBase()) {
+    const auto ack=*reinterpret_cast<volatile uint32_t *>(base+0xD84);
+    auto read=[&](uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);};
+    auto write=[&](uint32_t reg,uint32_t v){*reinterpret_cast<volatile uint32_t *>(base+reg)=v;};
+    // Initialize before the first native request, within serialized startup.
+    // Later brackets only verify retention; never change a live GSYNC domain.
+    const bool initialize=n==0 && tglHost.startingOwner==renderWakeOwner;
+    const auto r=TGLGSYNC::apply(true,ack!=UINT32_MAX && (ack&2),initialize,read,write);
+    const auto ordinal=__atomic_fetch_add(tglGSYNCState+1,1ULL,__ATOMIC_RELAXED);
+    if(r.wrote)__atomic_fetch_add(tglGSYNCState+2,1ULL,__ATOMIC_RELAXED);
+    if(r.status==TGLGSYNC::AlreadyDisabled)__atomic_fetch_add(tglGSYNCState+3,1ULL,__ATOMIC_RELAXED);
+    if(r.status==TGLGSYNC::Rejected || r.status==TGLGSYNC::InvalidRegister || r.status==TGLGSYNC::WriteInhibited)
+     __atomic_fetch_add(tglGSYNCState+4,1ULL,__ATOMIC_RELAXED);
+    if(r.status==TGLGSYNC::ReadbackMismatch)__atomic_fetch_add(tglGSYNCState+5,1ULL,__ATOMIC_RELAXED);
+    __atomic_store_n(tglGSYNCState+8,r.before,__ATOMIC_RELAXED);
+    __atomic_store_n(tglGSYNCState+9,r.after,__ATOMIC_RELAXED);
+    __atomic_store_n(tglGSYNCState+11,n,__ATOMIC_RELAXED);
+    if(!ordinal) {
+     __atomic_store_n(tglGSYNCState+6,r.before,__ATOMIC_RELAXED);
+     __atomic_store_n(tglGSYNCState+7,r.after,__ATOMIC_RELAXED);
+     __atomic_store_n(tglGSYNCState+10,n,__ATOMIC_RELAXED);
+     __atomic_store_n(tglGSYNCState+12,1ULL,__ATOMIC_RELEASE);
+    }
+   }
+  }
   if (n<arrsize(tglHost.submit)) tglHost.submit[n].q[49]=*reinterpret_cast<volatile uint32_t *>(renderWakeOwner+0x1290);
   // Sparse resident-state receipt during existing RCS forcewake; no GPU write.
   // This is not a claim to identify the incoming or currently executing draw.
