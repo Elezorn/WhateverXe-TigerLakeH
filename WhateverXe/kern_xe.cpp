@@ -8,6 +8,7 @@
 //
 
 #include "kern_xe.hpp"
+#include "kern_xelp_os.hpp"
 #include "kern_alderlake_n.hpp"
 #include "kern_xelp_device.hpp"
 #include "kern_xelp_memory_layout.hpp"
@@ -168,6 +169,30 @@ static bool tglInstallSonomaSurfaceABI(KernelPatcher &patcher,size_t index,mach_
   ready=!memcmp(site,sites[i].after,sites[i].length);patcher.clearError();
  }
  return ready;
+}
+
+static bool xelpInstallNVRAMABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+    const auto os=XELP::kernelOS(version);
+    if(os==XELP::OS::Unknown)return false;
+    if(os==XELP::OS::Donor)return true;
+    if(size<=0x51E63)return false;
+	auto platform=patcher.solveSymbol(KernelPatcher::KernelID,"__ZTV18IODTPlatformExpert");
+	auto write=patcher.solveSymbol(KernelPatcher::KernelID,
+		"__ZN18IODTPlatformExpert18writeNVRAMPropertyEP15IORegistryEntryPK8OSSymbolP6OSData");
+	auto save=patcher.solveSymbol<mach_vm_address_t>(index,
+		"__ZN31AppleIntelFramebufferController11hwSaveNVRAMEv",address,size);
+	const uint8_t oldSlot[] {0xFF,0x90,0xF8,0x09,0,0},newSlot[] {0xFF,0x90,0xE8,0x09,0,0};
+	auto site=reinterpret_cast<uint8_t *>(address+0x51E5D);
+	bool nvram=platform && write && *reinterpret_cast<uintptr_t *>(platform+16+0x9E8)==write &&
+		save==address+0x51D4C && !memcmp(site,oldSlot,sizeof(oldSlot));
+	patcher.clearError();
+	if(nvram) {
+		KernelPatcher::LookupPatch patch {&kextIntelTGLFb,oldSlot,newSlot,sizeof(oldSlot),1};
+		patcher.applyLookupPatch(&patch,site,sizeof(oldSlot)+1);
+		nvram=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(site,newSlot,sizeof(newSlot));
+		patcher.clearError();
+	}
+	return nvram;
 }
 
 XE *XE::callbackXE;
@@ -1057,6 +1082,7 @@ static bool adlnOwnedGoldenSerialize(void *,void *,OSSerialize *serializer) {
 static bool tglMMIOUCReady=true, tglMMIOUCRouted;
 extern "C" {
  uintptr_t tglPmapEntryResume, tglPmapNewResume, tglPmapUpdateResume;
+ uint32_t tglPmapBARFirstPage {},tglPmapBAREndPage {};
  // hits, corrected, skipped EPT/large/other-PAT, reserved; first sample:
  // pn, flags, CR3/nonEPT, template (entry: VA), VA, caller, sample ready.
  uint64_t tglPmapEntryEvidence[13] {}, tglPmapNewEvidence[13] {}, tglPmapUpdateEvidence[13] {};
@@ -1067,9 +1093,9 @@ static uint64_t tglKernelMap;
 static int (*tglProtectCacheMode)(void *,uint64_t,uint64_t,uint32_t);
 extern "C" __attribute__((naked,used)) void tglPmapEntryBridge() {
  asm volatile(
-  "cmpl $0x4010000, %edx\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %edx\n"
   "jb 9f\n"
-  "cmpl $0x4011000, %edx\n"
+  "cmpl _tglPmapBAREndPage(%rip), %edx\n"
   "jae 9f\n"
   "pushq %rax\n"
   "movq $1, %rax\n"
@@ -1099,9 +1125,11 @@ extern "C" __attribute__((naked,used)) void tglPmapEntryBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglPmapNewBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x68(%rbp)\n"
+  "pushq %rax\n movl -0x68(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x68(%rbp)\n"
+  "pushq %rax\n movl -0x68(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "pushq %rax\n"
   "movq $1, %rax\n"
@@ -1154,9 +1182,11 @@ extern "C" __attribute__((naked,used)) void tglPmapNewBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglPmapUpdateBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x68(%rbp)\n"
+  "pushq %rax\n movl -0x68(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x68(%rbp)\n"
+  "pushq %rax\n movl -0x68(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "pushq %rax\n"
   "movq $1, %rax\n"
@@ -1211,9 +1241,11 @@ extern "C" __attribute__((naked,used)) void tglPmapUpdateBridge() {
 // Correct only native 4K UC- mappings of the admitted BAR; retain native stores/TLB.
 extern "C" __attribute__((naked,used)) void tglMontereyPmapNewBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x90(%rbp)\n"
+  "pushq %rax\n movl -0x90(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x90(%rbp)\n"
+  "pushq %rax\n movl -0x90(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rcx\n"
   "lock xaddq %rcx, _tglPmapNewEvidence(%rip)\n"
@@ -1262,9 +1294,11 @@ extern "C" __attribute__((naked,used)) void tglMontereyPmapNewBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglMontereyPmapUpdateBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x90(%rbp)\n"
+  "pushq %rax\n movl -0x90(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x90(%rbp)\n"
+  "pushq %rax\n movl -0x90(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rcx\n"
   "lock xaddq %rcx, _tglPmapUpdateEvidence(%rip)\n"
@@ -1314,9 +1348,11 @@ extern "C" __attribute__((naked,used)) void tglMontereyPmapUpdateBridge() {
 // Exact 22H730 templates. Keep native PTE stores, locks and TLB handling.
 extern "C" __attribute__((naked,used)) void tglVenturaPmapNewBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x6C(%rbp)\n"
+  "pushq %rax\n movl -0x6C(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x6C(%rbp)\n"
+  "pushq %rax\n movl -0x6C(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rcx\n"
   "lock xaddq %rcx, _tglPmapNewEvidence(%rip)\n"
@@ -1365,9 +1401,11 @@ extern "C" __attribute__((naked,used)) void tglVenturaPmapNewBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglVenturaPmapUpdateBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x6C(%rbp)\n"
+  "pushq %rax\n movl -0x6C(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x6C(%rbp)\n"
+  "pushq %rax\n movl -0x6C(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rdx\n"
   "lock xaddq %rdx, _tglPmapUpdateEvidence(%rip)\n"
@@ -1416,9 +1454,11 @@ extern "C" __attribute__((naked,used)) void tglVenturaPmapUpdateBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglTahoePmapNewBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x64(%rbp)\n"
+  "pushq %rax\n movl -0x64(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x64(%rbp)\n"
+  "pushq %rax\n movl -0x64(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rcx\n"
   "lock xaddq %rcx, _tglPmapNewEvidence(%rip)\n"
@@ -1467,9 +1507,11 @@ extern "C" __attribute__((naked,used)) void tglTahoePmapNewBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglTahoePmapUpdateBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x64(%rbp)\n"
+  "pushq %rax\n movl -0x64(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x64(%rbp)\n"
+  "pushq %rax\n movl -0x64(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rdx\n"
   "lock xaddq %rdx, _tglPmapUpdateEvidence(%rip)\n"
@@ -1518,9 +1560,11 @@ extern "C" __attribute__((naked,used)) void tglTahoePmapUpdateBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglSequoiaPmapNewBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x6C(%rbp)\n"
+  "pushq %rax\n movl -0x6C(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x6C(%rbp)\n"
+  "pushq %rax\n movl -0x6C(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rcx\n"
   "lock xaddq %rcx, _tglPmapNewEvidence(%rip)\n"
@@ -1569,9 +1613,11 @@ extern "C" __attribute__((naked,used)) void tglSequoiaPmapNewBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglSequoiaPmapUpdateBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x6C(%rbp)\n"
+  "pushq %rax\n movl -0x6C(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x6C(%rbp)\n"
+  "pushq %rax\n movl -0x6C(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rdx\n"
   "lock xaddq %rdx, _tglPmapUpdateEvidence(%rip)\n"
@@ -1620,9 +1666,11 @@ extern "C" __attribute__((naked,used)) void tglSequoiaPmapUpdateBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglSonomaPmapNewBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x64(%rbp)\n"
+  "pushq %rax\n movl -0x64(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x64(%rbp)\n"
+  "pushq %rax\n movl -0x64(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rcx\n"
   "lock xaddq %rcx, _tglPmapNewEvidence(%rip)\n"
@@ -1671,9 +1719,11 @@ extern "C" __attribute__((naked,used)) void tglSonomaPmapNewBridge() {
 }
 extern "C" __attribute__((naked,used)) void tglSonomaPmapUpdateBridge() {
  asm volatile(
-  "cmpl $0x4010000, -0x64(%rbp)\n"
+  "pushq %rax\n movl -0x64(%rbp), %eax\n"
+  "cmpl _tglPmapBARFirstPage(%rip), %eax\n popq %rax\n"
   "jb 9f\n"
-  "cmpl $0x4011000, -0x64(%rbp)\n"
+  "pushq %rax\n movl -0x64(%rbp), %eax\n"
+  "cmpl _tglPmapBAREndPage(%rip), %eax\n popq %rax\n"
   "jae 9f\n"
   "movq $1, %rdx\n"
   "lock xaddq %rdx, _tglPmapUpdateEvidence(%rip)\n"
@@ -1767,6 +1817,16 @@ static void tglUpdateMMIOMap(IOMemoryMap *mapping) {
  q[5]=tglMMIOMapEvidence[7];q[6]=tglMMIOUCReady;q[7]=tglPmapUpdateEvidence[0];
  IORegistryEntry::getRegistryRoot()->setProperty("TGLMMIOCacheUpdate",q,sizeof(tglMMIOCacheUpdate));
 }
+// Bind the pmap interval to this GPU's contiguous PCI BAR, before installing hooks.
+static bool tglPrepareMMIOBAR(IOMemoryDescriptor *bar) {
+ if(!tglVM.enabled || !bar)return false;
+ IOByteCount contiguous=0;
+ const auto physical=bar->getPhysicalSegment(0,&contiguous);
+ uint32_t first=0,end=0;
+ if(!XELPMemory::mmioPages(tglVM.pciBAR,physical,bar->getLength(),contiguous,first,end))return false;
+ tglPmapBARFirstPage=first;tglPmapBAREndPage=end;
+ return true;
+}
 static void tglPrepareMontereyMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  tglMMIOUCReady=false;
  auto bar=pci->getDeviceMemoryWithRegister(0x10);
@@ -1783,7 +1843,7 @@ static void tglPrepareMontereyMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  const uint8_t protectCall[] {0xE8,0x1A,0x99,0x02,0};
  uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
  const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
- bool ok=tglVM.enabled && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+ bool ok=tglVM.enabled && tglPrepareMMIOBAR(bar) &&
   pat==0x1040600070406ULL && fn && protect && kernelMap &&
   !memcmp(reinterpret_cast<void *>(fn),frame,sizeof(frame)) &&
   !memcmp(reinterpret_cast<void *>(fn+0x51),args,sizeof(args)) &&
@@ -1829,7 +1889,7 @@ static void tglPrepareVenturaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  const uint8_t protectCall[] {0xE8,0xBA,0x51,0x02,0x00};
  uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
  const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
- bool ok=tglVM.enabled && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+ bool ok=tglVM.enabled && tglPrepareMMIOBAR(bar) &&
   pat==0x1040600070406ULL && fn && protect && kernelMap &&
   !memcmp(reinterpret_cast<void *>(fn),frame,sizeof(frame)) &&
   !memcmp(reinterpret_cast<void *>(fn+0x14),flags,sizeof(flags)) &&
@@ -1876,7 +1936,7 @@ static void tglPrepareTahoeMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  const uint8_t protectCall[] {0xE8,0x2F,0xF3,0x02,0x00};
  uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
  const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
- bool ok=tglVM.enabled && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+ bool ok=tglVM.enabled && tglPrepareMMIOBAR(bar) &&
   pat==0x1040600070406ULL && fn && protect && kernelMap &&
   !memcmp(reinterpret_cast<void *>(fn),frame,sizeof(frame)) &&
   !memcmp(reinterpret_cast<void *>(fn+0x15A),flags,sizeof(flags)) &&
@@ -1932,7 +1992,7 @@ static void tglPrepareSequoiaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  const uint8_t protectCall[] {0xE8,0x71,0xCB,0x02,0x00};
  uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
  const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
- bool ok=tglVM.enabled && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+ bool ok=tglVM.enabled && tglPrepareMMIOBAR(bar) &&
   pat==0x1040600070406ULL && fn && protect && kernelMap &&
   !memcmp(reinterpret_cast<void *>(fn),frame,sizeof(frame)) &&
   !memcmp(reinterpret_cast<void *>(fn+0x159),flags,sizeof(flags)) &&
@@ -1988,7 +2048,7 @@ static void tglPrepareSonomaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  const uint8_t protectCall[] {0xE8,0xDC,0x8F,0x02,0x00};
  uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
  const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
- bool ok=tglVM.enabled && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+ bool ok=tglVM.enabled && tglPrepareMMIOBAR(bar) &&
   pat==0x1040600070406ULL && fn && protect && kernelMap &&
   !memcmp(reinterpret_cast<void *>(fn),frame,sizeof(frame)) &&
   !memcmp(reinterpret_cast<void *>(fn+0x14),flags,sizeof(flags)) &&
@@ -2058,7 +2118,7 @@ static void tglPrepareMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  const uint8_t update[] {0x8B,0x75,0x9C,0x89,0xF0,0x83,0xE0,1,0x48,0x09,0xD0,0x40,0xF6,0xC6,2};
  uint32_t lo,hi;asm volatile("rdmsr" : "=a"(lo),"=d"(hi) : "c"(0x277));
  const uint64_t pat=static_cast<uint64_t>(hi)<<32|lo;
- bool ok=native20G && tglVM.pciBAR==0x4010000000ULL && bar && bar->getLength()==0x1000000 &&
+ bool ok=native20G && tglPrepareMMIOBAR(bar) &&
   pat==0x1040600070406ULL && fn && protect && kernelMap &&
   !memcmp(reinterpret_cast<void *>(protect),protectFrame,sizeof(protectFrame)) &&
   !memcmp(reinterpret_cast<void *>(protect+0xD2),protectCall,sizeof(protectCall)) &&
@@ -3588,7 +3648,7 @@ void XE::selectProfile(const XELP::Profile &profile) {
     adlnDetected=adlnRequested;
     modDVMTCalcFix.available=profile.admitted();
     if(adlnRequested) {
-        adlnKernelReady=!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
+        adlnKernelReady=XELP::kernelOS(version)!=XELP::OS::Unknown && XELP::kernelOS(version)!=XELP::OS::Donor;
         adlnNativeRequested=adlnKernelReady;
         display13FramebufferRequested=adlnKernelReady;
         adlnNativeRCSProfileRequested=adlnNativeRequested && !checkKernelArgument("-wex-adln-kernel-ctx");
@@ -3606,18 +3666,7 @@ void XE::selectProfile(const XELP::Profile &profile) {
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
     tglAcceleratorRequested=tglRequested && !checkKernelArgument("-wex-noaccel");
     if(tglRequested) {
-        // Exact Tahoe framebuffer and strong-UC mapping are qualified.
-        const bool tahoe=!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
-        // Exact Sequoia framebuffer and strong-UC mapping are qualified.
-        const bool sequoia=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
-        // Exact Sonoma framebuffer and strong-UC mapping are qualified.
-        const bool sonoma=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
-        // Exact Ventura input has a separately guarded strong-UC path.
-        const bool ventura=
-            !strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
-        if(strcmp(version,"Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64") &&
-           strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") &&
-           strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") && !ventura && !sonoma && !sequoia && !tahoe) {
+        if(XELP::kernelOS(version)==XELP::OS::Unknown) {
             tglRequested=tglAcceleratorRequested=false;return;
         }
         currentGraphics=&kextIntelTGL;currentFramebuffer=&kextIntelTGLFb;
@@ -6307,25 +6356,11 @@ bool XE::wrapAlderLakeNComputeLanes(OSObject *port,const void *timing,uint32_t b
 }
 
 bool XE::processDisplay13FramebufferABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
-	// Common donor/20G1443 ABI corrections already used on MI646. Keep them
-	// separate from its Display12 hardware routes and large dispatcher frame.
+	// OS/donor ABI corrections are shared with Display12. Keep hardware
+	// routing and topology in the selected Display13 backend.
 	if(!adlnDetected || !adlnKernelReady || size<=0xCCCD8)return false;
-	auto platform=patcher.solveSymbol(KernelPatcher::KernelID,"__ZTV18IODTPlatformExpert");
-	auto write=patcher.solveSymbol(KernelPatcher::KernelID,
-		"__ZN18IODTPlatformExpert18writeNVRAMPropertyEP15IORegistryEntryPK8OSSymbolP6OSData");
-	auto save=patcher.solveSymbol<mach_vm_address_t>(index,
-		"__ZN31AppleIntelFramebufferController11hwSaveNVRAMEv",address,size);
-	const uint8_t oldSlot[] {0xFF,0x90,0xF8,0x09,0,0},newSlot[] {0xFF,0x90,0xE8,0x09,0,0};
-	auto site=reinterpret_cast<uint8_t *>(address+0x51E5D);
-	bool nvram=platform && write && *reinterpret_cast<uintptr_t *>(platform+16+0x9E8)==write &&
-		save==address+0x51D4C && !memcmp(site,oldSlot,sizeof(oldSlot));
-	patcher.clearError();
-	if(nvram) {
-		KernelPatcher::LookupPatch patch {currentFramebuffer,oldSlot,newSlot,sizeof(oldSlot),1};
-		patcher.applyLookupPatch(&patch,site,sizeof(oldSlot)+1);
-		nvram=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(site,newSlot,sizeof(newSlot));
-		patcher.clearError();
-	}
+	const bool surface=tglInstallSonomaSurfaceABI(patcher,index,address,size,true);
+	const bool nvram=xelpInstallNVRAMABI(patcher,index,address,size);
 	auto table=patcher.solveSymbol<mach_vm_address_t>(index,"__ZTV17AppleIntelPortHAL",address,size);
 	auto pure=patcher.solveSymbol(KernelPatcher::KernelID,"___cxa_pure_virtual");
 	const uint8_t halSize[] {0xB9,0xB0,0x06,0,0};
@@ -6349,9 +6384,9 @@ bool XE::processDisplay13FramebufferABI(KernelPatcher &patcher,size_t index,mach
 	KernelPatcher::RouteRequest binding(initSymbol,wrapDisplay13FramebufferInit,orgDisplay13FramebufferInit);
 	managers=managers && patcher.routeMultiple(index,&binding,1,address,size);
 	patcher.clearError();
-	uint32_t record[] {1,nvram,probe,managers};
+	uint32_t record[] {2,nvram,probe,managers,surface};
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBCommonABIHooks",record,sizeof(record));
-	return nvram && probe && managers;
+	return surface && nvram && probe && managers;
 }
 
 bool XE::wrapDisplay13FramebufferInit(IOService *fb,IOService *controller,uint32_t index) {
@@ -9697,34 +9732,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			tglConnectionImage = address;
 			tglConnectionImageSize = size;
 			tglConnectionLock = IOSimpleLockAlloc();
-			// 20G1443 moved IODTPlatformExpert::writeNVRAMProperty by
-			// two slots when IOPlatformExpert's target/product names moved
-			// into reserved slots. Monterey and Ventura retain that table.
-			// Keep the native call and its ownership.
-			tglPlatformNVRAMReady = true;
-			if (!strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") ||
-                !strcmp(version, "Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") ||
-                !strcmp(version, "Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64") ||
-                !strcmp(version, "Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") ||
-                !strcmp(version, "Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64") ||
-                !strcmp(version, "Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64")) {
-				tglPlatformNVRAMReady = false;
-				auto table = patcher.solveSymbol(KernelPatcher::KernelID, "__ZTV18IODTPlatformExpert");
-				auto target = patcher.solveSymbol(KernelPatcher::KernelID,
-					"__ZN18IODTPlatformExpert18writeNVRAMPropertyEP15IORegistryEntryPK8OSSymbolP6OSData");
-				auto fn = patcher.solveSymbol<mach_vm_address_t>(index,
-					"__ZN31AppleIntelFramebufferController11hwSaveNVRAMEv", address, size);
-				static const uint8_t find[] {0xFF,0x90,0xF8,0x09,0x00,0x00};
-				static const uint8_t replace[] {0xFF,0x90,0xE8,0x09,0x00,0x00};
-				auto site = reinterpret_cast<uint8_t *>(fn + 0x111);
-				if (table && target && *reinterpret_cast<uintptr_t *>(table + 16 + 0x9E8) == target &&
-					fn == address + 0x51D4C && size > 0x51E63 && !memcmp(site, find, sizeof(find))) {
-					KernelPatcher::LookupPatch patch {currentFramebuffer, find, replace, sizeof(find), 1};
-					patcher.applyLookupPatch(&patch, site, sizeof(find) + 1);
-					tglPlatformNVRAMReady = !memcmp(site, replace, sizeof(replace));
-				}
-				patcher.clearError();
-			}
+			tglPlatformNVRAMReady=xelpInstallNVRAMABI(patcher,index,address,size);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLPlatformNVRAMABIReady", tglPlatformNVRAMReady);
 			if (tglHDMIB) {
 				// r319: the donor's combo PLL tables still contain ICL MMIO

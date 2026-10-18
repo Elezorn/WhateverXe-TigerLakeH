@@ -12,6 +12,14 @@ WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィック
 ソースにはTahoe `25G241`までの特定buildを正確なkernel識別で受け付ける互換処理も含まれます。
 それらに対応するuserspace root patchは開発中です。
 
+
+単一のWEXバイナリがOSのABIとGPUバックエンドを独立して選択します。共通のNVRAM・
+IOSurface・MMIOキャッシュ補正は、対象の正確なOS build上でTiger Lakeと
+Alder Lake-N / Twin Lakeの実装済みバックエンドに適用されます。MMIO範囲は選択した
+GPUの検証済みPCI BARから取得します。root payloadはOSごとに分け、GPU世代・コネクタ
+配線への対応はWEXが担います。Alder Lake-Nの後続OSでの実機確認は未実施であり、
+ソースの受付範囲と動作確認済み範囲は区別します。
+
 | GPUファミリー | バックエンド実装があるdevice ID |
 | --- | --- |
 | Tiger Lake | `9A40`、`9A49`、`9A78` |

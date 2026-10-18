@@ -10,6 +10,7 @@ end=s.index('\nvoid XE::deinit()',start)
 body=s[start:end].rstrip()[:-1]
 code=r'''
 #include <cstring>
+#include "kern_xelp_os.hpp"
 #include <cassert>
 #include <cstdio>
 namespace XELP { enum class Family {TigerLake,Other}; }
@@ -44,5 +45,5 @@ assert((currentFramebuffer==&kextIntelTGLFb)==expected);++cases;
 }
 '''.replace('BODY',body)
 (out/'test-admission.cpp').write_text(code)
-subprocess.run(['clang++','-std=c++17','-O2',str(out/'test-admission.cpp'),'-o',str(out/'test-admission')],check=True)
+subprocess.run(['clang++','-std=c++17','-O2','-I'+str(root/'WhateverXe'),str(out/'test-admission.cpp'),'-o',str(out/'test-admission')],check=True)
 subprocess.run([str(out/'test-admission')],check=True)

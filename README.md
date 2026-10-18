@@ -15,6 +15,14 @@ The source also includes exact-kernel compatibility paths for selected later
 builds through Tahoe `25G241`. Matching userspace root patches for those builds
 remain under development.
 
+
+One WEX binary selects the OS ABI and GPU backend independently. Shared NVRAM,
+IOSurface and MMIO cache corrections cover the implemented Tiger Lake and
+Alder Lake-N / Twin Lake backends on the exact supported builds. MMIO bounds
+come from the selected GPU's validated PCI BAR. Root payloads vary by OS, while
+GPU generation and connector routing remain in WEX. Later-OS Alder Lake-N
+runtime validation is pending; source admission does not establish test coverage.
+
 | GPU family | Device IDs with an implemented backend |
 | --- | --- |
 | Tiger Lake | `9A40`, `9A49`, `9A78` |

@@ -35,10 +35,12 @@ if a.kernel:
   assert read(0xffffff80003ca000+offset,len(values))==values,name
  print('PASS: exact kernel SHA and all 9 runtime guards')
 cpp=r'''#include <stdint.h>
+#include <initializer_list>
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
 extern "C" {
+ uint32_t tglPmapBARFirstPage,tglPmapBAREndPage;
  uint64_t tglPmapNewEvidence[13],tglPmapUpdateEvidence[13];
  uintptr_t tglPmapNewResume,tglPmapUpdateResume;
  uint64_t in[16],out[16],outFlags;void *target;
@@ -56,9 +58,12 @@ extern "C" __attribute__((naked)) void run() {asm volatile(
  "jmpq *_target(%rip)\n");}
 int main() {
  tglPmapNewResume=tglPmapUpdateResume=(uintptr_t)done;
- const uint32_t pages[]={0,0x400ffff,0x4010000,0x4010555,0x4010fff,0x4011000,0xffffffff};
+
  const uint32_t flags[]={0,4,0x100,0x104};
  unsigned cases=0;
+ for(auto base:{0x4010000U,0x80000U,0x6000000U}) {
+ tglPmapBARFirstPage=base;tglPmapBAREndPage=base+0x1000;
+ const uint32_t pages[]={0,base-1,base,base+0x555,base+0xfff,base+0x1000,0xffffffff};
  for(unsigned kind=0;kind<2;++kind) for(auto pn:pages) for(auto flag:flags)
  for(unsigned native=0;native<2;++native) for(unsigned pat=0;pat<8;++pat) for(unsigned prot=0;prot<16;++prot) {
   memset(frame,0xA5,sizeof(frame));auto rbp=frame+256;
@@ -70,7 +75,7 @@ int main() {
   const unsigned templateReg=kind?2:3,outputReg=kind?0:2;
   const uint64_t original=0x8000004010000000ULL|((pat&3)<<3)|((pat&4)<<5);
   in[templateReg]=original;
-  const bool hit=pn>=0x4010000 && pn<0x4011000;
+  const bool hit=pn>=base && pn<base+0x1000;
   const bool change=hit && native && !(flag&0x100) && pat==2;
   const auto corrected=original|(change?8:0);
   uint64_t expect[16];memcpy(expect,in,sizeof(in));expect[templateReg]=corrected;
@@ -89,6 +94,7 @@ int main() {
    if(hit){assert(evidence[6]==pn);assert(evidence[7]==flag);assert(evidence[8]==cr3);assert(evidence[9]==original);assert(evidence[12]==1);}
    ++cases;
   }
+ }
  }
  printf("PASS: %u actual bridge executions, all GPRs/defined flags/stack unchanged except displaced outputs and admitted UC correction; hit/skip counters and first-sample path\n",cases);
 }
