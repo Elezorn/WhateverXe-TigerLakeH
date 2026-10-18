@@ -9,7 +9,14 @@ WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィック
 ## 対応範囲
 
 配布root patchの現在の対象は **macOS Big Sur build 20G1443** です。
-ソースにはTahoe `25G241`までの特定buildを正確なkernel識別で受け付ける互換処理も含まれます。
+Sonoma〜Tahoeでは、native Metal compiler serviceから`/Library/GPUBundles`配下の
+固定名`XeCompilerAdapter.bundle`への限定アクセスも実装しています。対象は必要なファイルの
+読取りと実行mapです。OS Cryptex内の実行ファイルを含むWebKit GPU serviceには、
+同配下の固定Xe動画・Metal driverの実行mapも許可します。書込みや共有実行mapは
+許可しません。OS別の署名済み資材とAMFIPassは引き続き必要です。
+Data volumeへの導入対応は開発中です。
+
+Tahoe `25G241`までの特定buildを正確なkernel識別で受け付ける互換処理も含まれます。
 それらに対応するuserspace root patchは開発中です。
 
 

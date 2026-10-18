@@ -23,6 +23,14 @@ come from the selected GPU's validated PCI BAR. Root payloads vary by OS, while
 GPU generation and connector routing remain in WEX. Later-OS Alder Lake-N
 runtime validation is pending; source admission does not establish test coverage.
 
+The source also supports restricted access by the native Metal compiler service
+to the fixed `XeCompilerAdapter.bundle` under `/Library/GPUBundles` on Sonoma
+through Tahoe. The grant covers its required read-only files and executable
+mappings. The WebKit GPU service, including its OS Cryptex executable, can also
+map the fixed Xe video and Metal driver images in that directory. Write access
+and shared executable mappings are not granted. Signed OS-specific payloads and
+AMFIPass remain required. Data-volume installation support is under development.
+
 Tahoe `25G241` requires `CoreMedia / AllowOnePassMetalScaling` to be disabled.
 The optional outer-completion cache, indirect-context cache, same-tail restore,
 GSYNC-disable and full-slice RPCS overrides are disabled by default. The

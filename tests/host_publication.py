@@ -34,6 +34,7 @@ struct DeviceInfo {
 namespace WIOKit {bool awaitPublishing(IOPCIDevice *){events.push_back(1);published=publish;return publish;}void renameDevice(IOPCIDevice *device,const char *name){device->name=name;++device->renames;events.push_back(5);}}
 // DEVICE_ADAPTER
 struct KernelPatcher {static constexpr int KernelID=0;uintptr_t solveSymbol(int,const char *){return 0;}void clearError(){}};
+namespace XeDataAccess {void processKernel(KernelPatcher &){assert(published);events.push_back(7);}}
 struct Graphics {bool off=false;void switchOff(){off=true;}} graphics;
 struct XeHost {
  bool active=false;enum {FB_DETECT,FB_RESET,FB_COPY,FB_ZEROFILL,FB_NONE,FB_TOTAL};uint32_t resetFramebuffer=FB_NONE;
