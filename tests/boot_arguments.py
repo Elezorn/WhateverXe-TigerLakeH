@@ -98,6 +98,8 @@ int main() {
  xe=boot({"-wex-tgl-off"},0x9A498086);assert(!xe.tglRequested);
  xe=boot({"-wex-noaccel"},0x9A498086);assert(xe.tglRequested && !xe.tglAcceleratorRequested);
  const char *allKernels[]={
+ "Darwin Kernel Version 24.6.1: future servicing; root:xnu-future/RELEASE_X86_64",
+ "Darwin Kernel Version 25.7.0: future update; root:xnu-future/RELEASE_X86_64",
  "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64",
  "Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64",
  "Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64",

@@ -5,33 +5,32 @@
 WhateverXe is a Lilu plugin that adapts Apple graphics drivers for selected
 Intel Xe-LP integrated GPUs. It is derived from WhateverGreen.
 
-This project is experimental and requires the Xe root patch provided by the
-[OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher).
+This project is experimental and requires the matching signed Xe graphics stack.
+The Data-volume installer installs that stack under `/Library` and updates AuxKC;
+OpenCore, Lilu and Mod AMFIPass remain separate prerequisites.
 
 ## Compatibility
 
-The packaged root patch currently targets **macOS Big Sur build 20G1443**.
-The source also includes exact-kernel compatibility paths for selected later
-builds through Tahoe `25G241`. Matching userspace root patches for those builds
-remain under development.
+The Data installer targets Big Sur **11.7.11+**, Monterey **12.7.6+**, Ventura
+**13.7.8+**, Sonoma **14.8.9+**, Sequoia **15.8.x**, and Tahoe **26.7+**, within
+each named OS family. WEX 0.2.4 removes build-date pinning for Sequoia/Tahoe;
+its Darwin-family selector still requires the existing runtime instruction and
+ABI checks to pass. Future updates are accepted by policy, not prevalidated.
+Big Sur through Sonoma retain their qualified kernel identities.
 
+On Sonoma through Tahoe, scoped native compiler and WebKit GPU access supports
+signed Data GPU/compiler bundles. File writes and shared executable mappings
+are not enabled. VA image-conversion null-pointer crashes remain a known issue.
 
 One WEX binary selects the OS ABI and GPU backend independently. Shared NVRAM,
 IOSurface and MMIO cache corrections cover the implemented Tiger Lake and
-Alder Lake-N / Twin Lake backends on the exact supported builds. MMIO bounds
+Alder Lake-N / Twin Lake backends on the supported OS paths. MMIO bounds
 come from the selected GPU's validated PCI BAR. Root payloads vary by OS, while
 GPU generation and connector routing remain in WEX. Later-OS Alder Lake-N
 runtime validation is pending; source admission does not establish test coverage.
 
-The source also supports restricted access by the native Metal compiler service
-to the fixed `XeCompilerAdapter.bundle` under `/Library/GPUBundles` on Sonoma
-through Tahoe. The grant covers its required read-only files and executable
-mappings. The WebKit GPU service, including its OS Cryptex executable, can also
-map the fixed Xe video and Metal driver images in that directory. Write access
-and shared executable mappings are not granted. Signed OS-specific payloads and
-AMFIPass remain required. Data-volume installation support is under development.
 
-Tahoe `25G241` requires `CoreMedia / AllowOnePassMetalScaling` to be disabled.
+Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled.
 The optional outer-completion cache, indirect-context cache, same-tail restore,
 GSYNC-disable and full-slice RPCS overrides are disabled by default. The
 render-pass cache and CPS corrections remain enabled on their qualified paths.
@@ -59,11 +58,13 @@ Download the **RELEASE** ZIP from [Releases](https://github.com/b00t0x/WhateverX
 | --- | --- |
 | Lilu | Runtime required by WhateverXe |
 | WhateverXe.kext | Load through OpenCore after Lilu |
-| [OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher) | Apply its Xe root patch to install the graphics stack |
-| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | Install through OpenCore for the modified root-patched graphics stack |
+| One Xe Data graphics package for all supported OSes | Install the signed stack into `/Library` and rebuild AuxKC |
+| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | Install through OpenCore for the modified graphics stack |
 
-Download the OCLP fork from its [Releases page](https://github.com/b00t0x/OpenCore-Legacy-Patcher/releases).
-OCLP installs its root components and updates the kernel collection.
+Boot the target OS with WEX 0.2.4 or newer before running the Data package.
+Restore an older Xe System patch using its own recovery procedure first. The
+Data package does not change EFI, System files, snapshots or SIP settings.
+The earlier OCLP installation method remains separate.
 
 Extract `AMFIPass.kext` from the linked **Mod** archive, place it in
 `EFI/OC/Kexts`, and enable it in `Kernel > Add`. Replace an existing AMFIPass
@@ -133,7 +134,7 @@ Alder Lake-N / Twin Lake.
 
 ### Planned
 
-- Integrated macOS Monterey through Tahoe root patches using OCLP's capabilities
+- Further hardware and OS-update validation
 - Alder Lake and Raptor Lake S/H/P/U support
 - USB-C display output
 - Internal displays

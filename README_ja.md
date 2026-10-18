@@ -4,30 +4,31 @@
 
 WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィックスドライバを適応させるLiluプラグインです。WhateverGreenを基に開発しています。
 
-本プロジェクトは実験段階であり、[OpenCore Legacy Patcherのfork](https://github.com/b00t0x/OpenCore-Legacy-Patcher)が提供するXe root patchを必要とします。
+本プロジェクトは実験段階であり、対応する署名済みXeグラフィックス資材が必要です。
+Data用インストーラーは資材を`/Library`へ配置しAuxKCを更新します。
+OpenCore・Lilu・Mod AMFIPassは引き続き別途必要です。
 
 ## 対応範囲
 
-配布root patchの現在の対象は **macOS Big Sur build 20G1443** です。
-Sonoma〜Tahoeでは、native Metal compiler serviceから`/Library/GPUBundles`配下の
-固定名`XeCompilerAdapter.bundle`への限定アクセスも実装しています。対象は必要なファイルの
-読取りと実行mapです。OS Cryptex内の実行ファイルを含むWebKit GPU serviceには、
-同配下の固定Xe動画・Metal driverの実行mapも許可します。書込みや共有実行mapは
-許可しません。OS別の署名済み資材とAMFIPassは引き続き必要です。
-Data volumeへの導入対応は開発中です。
+Data用インストーラーの対象は、各OS系列内のBig Sur **11.7.11以上**、Monterey
+**12.7.6以上**、Ventura **13.7.8以上**、Sonoma **14.8.9以上**、Sequoia **15.8.x**、
+Tahoe **26.7以上**です。WEX 0.2.4ではSequoia/Tahoeのビルド日時固定を撤去し、
+Darwin系列を選択した後も既存の実行時命令列・ABI検査を維持します。
+将来更新を受付可能にする方針であり、未提供の更新を検証済みとは扱いません。
+Big Sur〜Sonomaは検証済みカーネルの識別を維持します。
 
-Tahoe `25G241`までの特定buildを正確なkernel識別で受け付ける互換処理も含まれます。
-それらに対応するuserspace root patchは開発中です。
-
+Sonoma〜Tahoeではnative compilerとWebKit GPUの限定アクセスにより、署名済みの
+Data側GPU/compiler資材に対応します。書込みや共有実行mapは許可しません。
+VA画像変換のnull参照クラッシュは既知課題として残ります。
 
 単一のWEXバイナリがOSのABIとGPUバックエンドを独立して選択します。共通のNVRAM・
-IOSurface・MMIOキャッシュ補正は、対象の正確なOS build上でTiger Lakeと
+IOSurface・MMIOキャッシュ補正は、対象OSの経路でTiger Lakeと
 Alder Lake-N / Twin Lakeの実装済みバックエンドに適用されます。MMIO範囲は選択した
 GPUの検証済みPCI BARから取得します。root payloadはOSごとに分け、GPU世代・コネクタ
 配線への対応はWEXが担います。Alder Lake-Nの後続OSでの実機確認は未実施であり、
 ソースの受付範囲と動作確認済み範囲は区別します。
 
-Tahoe `25G241`では `CoreMedia / AllowOnePassMetalScaling` の無効化が必要です。
+Tahoeでは `CoreMedia / AllowOnePassMetalScaling` の無効化が必要です。
 追加のouter-completion cache、indirect-context cache、same-tail restore、
 GSYNC disable、full-slice RPCSの補正は既定で無効です。render-pass cacheとCPSの
 補正は、それぞれの適用条件を満たす経路で維持します。
@@ -49,10 +50,12 @@ Tiger LakeとAlder Lake-Nで、外部2画面の1920×1080・60Hz出力、Metal/O
 | --- | --- |
 | Lilu | WhateverXeの動作に必要なランタイム |
 | WhateverXe.kext | OpenCoreでLiluより後に読み込む |
-| [OpenCore Legacy Patcherのfork](https://github.com/b00t0x/OpenCore-Legacy-Patcher) | Xe root patchを適用してグラフィックス構成を導入する |
-| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | 改変されたroot patchのグラフィックス構成に必要。OpenCoreで導入する |
+| 全対応OS共通のXe Dataグラフィックスpkg | 署名済み資材を`/Library`へ導入しAuxKCを更新する |
+| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | 改変されたグラフィックス構成に必要。OpenCoreで導入する |
 
-OCLP forkは[Releasesページ](https://github.com/b00t0x/OpenCore-Legacy-Patcher/releases)からダウンロードしてください。rootの構成要素の導入とkernel collectionの更新はOCLPが行います。
+Data pkgはWEX 0.2.4以上を読み込んだ対象OSから実行してください。旧Xe System patchが
+ある場合は、先にその復元手順で戻してください。Data pkgはEFI・Systemファイル・snapshot・
+SIP設定を変更しません。従来のOCLP経由の導入方法は別扱いです。
 
 リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。
 
@@ -108,7 +111,7 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 
 ### Planned
 
-- OCLPの機能を利用したmacOS Monterey〜Tahoe向けroot patchの統合
+- 対象ハードウェアとOS更新の追加検証
 - Alder Lake／Raptor LakeのS/H/P/U対応
 - USB-C画面出力対応
 - 内蔵ディスプレイ対応

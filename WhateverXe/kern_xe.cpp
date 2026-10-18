@@ -130,7 +130,7 @@ extern "C" __attribute__((naked,used)) void tglTahoeMatrixBridge() {
 }
 static bool tglSonomaSurfaceFramebufferReady=true;
 static bool tglInstallSonomaSurfaceABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size,bool framebuffer) {
- if(strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") && strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64") && strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64"))return true;
+ if((XELP::kernelOS(version)!=XELP::OS::Sonoma) && (XELP::kernelOS(version)!=XELP::OS::Sequoia) && (XELP::kernelOS(version)!=XELP::OS::Tahoe))return true;
  struct Site {size_t offset,length;uint8_t before[6],after[6];};
  const Site fb[] {
   {0x2B5E8,6,{0x8B,0x80,0xA4,0,0,0},{0x8B,0x80,0x80,0,0,0}}, // pixelFormat
@@ -158,7 +158,7 @@ static bool tglInstallSonomaSurfaceABI(KernelPatcher &patcher,size_t index,mach_
  if(!framebuffer) {
   tglSonomaMatrixZero=address+0x8130E;tglSonomaMatrixOne=address+0x81305;tglSonomaMatrixOther=address+0x81361;
   uint8_t jump[15] {0xFF,0x25,0,0,0,0};
-  const auto target=reinterpret_cast<uintptr_t>(!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64") ? tglTahoeMatrixBridge : tglSonomaMatrixBridge);
+  const auto target=reinterpret_cast<uintptr_t>((XELP::kernelOS(version)==XELP::OS::Tahoe) ? tglTahoeMatrixBridge : tglSonomaMatrixBridge);
   memcpy(jump+6,&target,sizeof(target));jump[14]=0x90;
   patcher.routeBlock(address+0x812F6,jump,sizeof(jump));
   ready=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(reinterpret_cast<void *>(address+0x812F6),jump,sizeof(jump));
@@ -2143,22 +2143,22 @@ static void tglPrepareSonomaMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
  if(evidence) {root->setProperty("TGLMMIOMappingEvidence",evidence);evidence->release();}
 }
 static void tglPrepareMMIOUC(KernelPatcher &patcher,IOPCIDevice *pci) {
- if(!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64")) {
+ if((XELP::kernelOS(version)==XELP::OS::Tahoe)) {
   tglPrepareTahoeMMIOUC(patcher,pci);return;
  }
- if(!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64")) {
+ if((XELP::kernelOS(version)==XELP::OS::Sequoia)) {
   tglPrepareSequoiaMMIOUC(patcher,pci);return;
  }
- if(!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64")) {
+ if((XELP::kernelOS(version)==XELP::OS::Sonoma)) {
   tglPrepareSonomaMMIOUC(patcher,pci);return;
  }
- if(!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64")) {
+ if((XELP::kernelOS(version)==XELP::OS::Ventura)) {
   tglPrepareVenturaMMIOUC(patcher,pci);return;
  }
- if(!strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64")) {
+ if((XELP::kernelOS(version)==XELP::OS::Monterey)) {
   tglPrepareMontereyMMIOUC(patcher,pci);return;
  }
- const bool native20G=!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
+ const bool native20G=(XELP::kernelOS(version)==XELP::OS::BigSur);
  if (!native20G) return;
  tglMMIOUCReady=false;
  auto bar=pci->getDeviceMemoryWithRegister(0x10);
@@ -2216,12 +2216,12 @@ void tglVMPrepare(KernelPatcher &patcher,IOPCIDevice *pci) {
  if (memcmp(reinterpret_cast<void *>(verify+0x10),callPrefix,sizeof(callPrefix))) return;
  int32_t displacement;memcpy(&displacement,reinterpret_cast<void *>(verify+0x14),4);
  const auto target=verify+0x18+displacement;
- const bool dp1=!strcmp(version,"Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64");
- const bool monterey=!strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64");
- const bool ventura=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
- const bool sonoma=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
- const bool sequoia=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
- const bool tahoe=!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+ const bool dp1=(XELP::kernelOS(version)==XELP::OS::Donor);
+ const bool monterey=(XELP::kernelOS(version)==XELP::OS::Monterey);
+ const bool ventura=(XELP::kernelOS(version)==XELP::OS::Ventura);
+ const bool sonoma=(XELP::kernelOS(version)==XELP::OS::Sonoma);
+ const bool sequoia=(XELP::kernelOS(version)==XELP::OS::Sequoia);
+ const bool tahoe=(XELP::kernelOS(version)==XELP::OS::Tahoe);
  if (target!=verify-(dp1 ? 0x3930 : monterey ? 0x4190 : ventura ? 0x3D70 : sonoma ? 0x3EF0 : sequoia ? 0x3FE0 : tahoe ? 0x3D40 : 0x3AB0)) return;
  const uint8_t rootLoad[] {0x48,0x8B,0x47,0x50};
  if (memcmp(reinterpret_cast<void *>(target+0x20),rootLoad,sizeof(rootLoad))) return;
@@ -9388,12 +9388,12 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				int32_t relative;memcpy(&relative,reinterpret_cast<void *>(address+0x355CE),4);
 				tglBlitPoolSubmit=address+0x355D2+relative;
                 // AuxKC placement can introduce this thunk on older hosts too.
-                const bool auxThunk=!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") ||
-                    !strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64") ||
-                    !strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64") ||
-                    !strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64") ||
-                    !strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64") ||
-                    !strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+                const bool auxThunk=(XELP::kernelOS(version)==XELP::OS::BigSur) ||
+                    (XELP::kernelOS(version)==XELP::OS::Monterey) ||
+                    (XELP::kernelOS(version)==XELP::OS::Ventura) ||
+                    (XELP::kernelOS(version)==XELP::OS::Sonoma) ||
+                    (XELP::kernelOS(version)==XELP::OS::Sequoia) ||
+                    (XELP::kernelOS(version)==XELP::OS::Tahoe);
                 uint64_t resolved=0;
                 blitInitOK=TGLAuxCall::resolveSubmit(tglBlitPoolSubmit,auxThunk,tglVMRead,resolved);
                 if(blitInitOK)tglBlitPoolSubmit=resolved;
@@ -9481,7 +9481,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// host-scheduler target. Preserve native GTT mode, stamp address/value,
 			// notification selection, packet lengths and the preceding CS stall.
 			const bool tahoeTrialScope=!adlnDetected && checkKernelArgument("-disablegfxfirmware") &&
-				!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+				(XELP::kernelOS(version)==XELP::OS::Tahoe);
 			const bool completionCacheRequested=tahoeTrialScope && !(tglTahoeDisabledTrials&1);
 			const bool contextCacheRequested=tahoeTrialScope && !(tglTahoeDisabledTrials&2);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLTahoeDisabledTrials",tglTahoeDisabledTrials,32);
@@ -9709,7 +9709,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLHangBatchCaptureReady",hangOK);
             // Exact failure-only wake call. Native STOP, wake ownership and all
             // other callers remain unchanged; no instrumentation in normal submits.
-            if(!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64")) {
+            if((XELP::kernelOS(version)==XELP::OS::Tahoe)) {
              const uint8_t before[] {0x41,0x89,0xf6,0x49,0x89,0xff,0x48,0x8b,0x7f,0x10,0xbe,1,0,0,0,0xba,7,0,0,0,0xe8,0x8e,0x22,0xfd,0xff};
              const uint8_t stop[] {0x42,0xc7,0x04,0x20,1,0,1,0};
              bool ok=hangOK && size>0x569c6 &&
@@ -9735,11 +9735,11 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// performs context replay. Port that CALLER contract only. No changed
 			// completion values, queue drops, hardware reset or panic entry points.
 			// The same donor caller also stalls the accelerator resource lock on
-			// this Tahoe kernel. Keep the exact-kernel and donor guards: only the
+			// this Tahoe kernel. Keep the OS-family and exact donor guards: only the
 			// recovery caller changes; native reset/replay still owns completion.
 			const bool recoveryRequested=checkKernelArgument("-disablegfxfirmware") &&
-				(!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64") ||
-				 !strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64"));
+				((XELP::kernelOS(version)==XELP::OS::BigSur) ||
+				 (XELP::kernelOS(version)==XELP::OS::Tahoe));
 			bool recoveryOK=!recoveryRequested;
 			if (recoveryRequested) {
 				const char *recovery="__ZN18IGAccelFIFOChannel22resetHardwareAndReplayEv";
@@ -10745,11 +10745,11 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
 	IORegistryEntry::getRegistryRoot()->setProperty("TGLFramebufferStartResult", result);
  // Inspect the actual donor BAR map after framebuffer startup. This does
  // not change mapping attributes, page tables, registers or accelerator state.
- const bool venturaInspection=!strcmp(version,"Darwin Kernel Version 22.6.0: Tue Jul 15 08:22:28 PDT 2025; root:xnu-8796.141.3.713.2~2/RELEASE_X86_64");
- const bool sonomaInspection=!strcmp(version,"Darwin Kernel Version 23.6.0: Tue Jul 21 21:56:37 PDT 2026; root:xnu-10063.141.1.713.39~1/RELEASE_X86_64");
- const bool sequoiaInspection=!strcmp(version,"Darwin Kernel Version 24.6.0: Sun Aug 23 20:30:56 PDT 2026; root:xnu-11417.140.69.712.69~1/RELEASE_X86_64");
- const bool tahoeInspection=!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
- if (result && (tahoeInspection || sequoiaInspection || sonomaInspection || venturaInspection || !strcmp(version,"Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64"))) {
+ const bool venturaInspection=(XELP::kernelOS(version)==XELP::OS::Ventura);
+ const bool sonomaInspection=(XELP::kernelOS(version)==XELP::OS::Sonoma);
+ const bool sequoiaInspection=(XELP::kernelOS(version)==XELP::OS::Sequoia);
+ const bool tahoeInspection=(XELP::kernelOS(version)==XELP::OS::Tahoe);
+ if (result && (tahoeInspection || sequoiaInspection || sonomaInspection || venturaInspection || (XELP::kernelOS(version)==XELP::OS::Monterey))) {
   uint64_t q[25] {1};q[1]=tglVM.enabled;q[2]=tglVM.pciBAR;
   auto map=OSDynamicCast(IOMemoryMap,*reinterpret_cast<OSObject **>(reinterpret_cast<uint8_t *>(that)+0xC70));
   q[3]=map ? map->getVirtualAddress() : 0;q[4]=map ? map->getLength() : 0;
@@ -11964,10 +11964,10 @@ void tglCaptureCSBFailure() {
 
 namespace {
 bool tglHangDetailKernel() {
- return !strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+ return (XELP::kernelOS(version)==XELP::OS::Tahoe);
 }
 void tglCaptureHangDetail(const TGLHangPending::Capture &pending,const uint8_t *regs,const TGLHangSelect::Selection &selection) {
- // Keep this experiment on the exact admitted Tahoe kernel. No additional
+ // Keep this experiment on the admitted Tahoe kernel family. No additional
  // MMIO, native virtual calls, mappings, cache operations or success-path work.
  if(!tglHangDetailKernel())return;
  uint64_t status[4] {1,sizeof(TGLHangDetail::Capture),1,0};
