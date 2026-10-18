@@ -20,6 +20,11 @@ GPUの検証済みPCI BARから取得します。root payloadはOSごとに分�
 配線への対応はWEXが担います。Alder Lake-Nの後続OSでの実機確認は未実施であり、
 ソースの受付範囲と動作確認済み範囲は区別します。
 
+Tahoe `25G241`では `CoreMedia / AllowOnePassMetalScaling` の無効化が必要です。
+追加のouter-completion cache、indirect-context cache、same-tail restore、
+GSYNC disable、full-slice RPCSの補正は既定で無効です。render-pass cacheとCPSの
+補正は、それぞれの適用条件を満たす経路で維持します。
+
 | GPUファミリー | バックエンド実装があるdevice ID |
 | --- | --- |
 | Tiger Lake | `9A40`、`9A49`、`9A78` |

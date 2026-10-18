@@ -16,7 +16,8 @@ for at, a, b in zip([0x84ea4, 0x84f95], old, new):
     assert data[at:at+10] == a
     expected = bytearray(a); expected[3] |= 2; expected[6] = (expected[6] & ~8) | 4; expected[9] |= 0x20
     assert b == expected
-assert 'completionCacheRequested=!adlnDetected && checkKernelArgument("-disablegfxfirmware")' in source
+assert 'tahoeTrialScope=!adlnDetected && checkKernelArgument("-disablegfxfirmware")' in source
+assert 'completionCacheRequested=tahoeTrialScope && !(tglTahoeDisabledTrials&1)' in source
 assert 'recoveryOK && completionCacheOK' in source
 first = arrays('flushReplace')[0]
 code = r'''

@@ -23,6 +23,11 @@ come from the selected GPU's validated PCI BAR. Root payloads vary by OS, while
 GPU generation and connector routing remain in WEX. Later-OS Alder Lake-N
 runtime validation is pending; source admission does not establish test coverage.
 
+Tahoe `25G241` requires `CoreMedia / AllowOnePassMetalScaling` to be disabled.
+The optional outer-completion cache, indirect-context cache, same-tail restore,
+GSYNC-disable and full-slice RPCS overrides are disabled by default. The
+render-pass cache and CPS corrections remain enabled on their qualified paths.
+
 | GPU family | Device IDs with an implemented backend |
 | --- | --- |
 | Tiger Lake | `9A40`, `9A49`, `9A78` |

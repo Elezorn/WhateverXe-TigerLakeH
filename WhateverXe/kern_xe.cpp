@@ -83,7 +83,9 @@ static bool tglSameTailEnabled;
 static TGLSameTail::State tglSameTailState{},tglSameTailFailure{};
 static TGLSubmitHistory::History<> tglSubmitHistory;
 static bool tglSameTailSerialize(void *,void *,OSSerialize *);
-static bool tglGSYNCReady;
+static bool tglGSYNCReady,tglGSYNCObserveReady;
+static constexpr uint32_t tglTahoeDisabledTrials=31; // 1 completion, 2 indirect, 4 same-tail, 8 GSYNC, 16 RPCS
+static bool tglSameTailRestoreEnabled;
 // schema, attempts, writes, already disabled, guard failures, readback failures,
 // first before/after, last before/after, first/last ordinal, first complete,
 // pre-STOP value/ACK/valid. Sequential receipt, not an atomic GPU snapshot.
@@ -9422,23 +9424,29 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// its stamp and optional notification packets on the qualified Tahoe
 			// host-scheduler target. Preserve native GTT mode, stamp address/value,
 			// notification selection, packet lengths and the preceding CS stall.
-			const bool completionCacheRequested=!adlnDetected && checkKernelArgument("-disablegfxfirmware") &&
+			const bool tahoeTrialScope=!adlnDetected && checkKernelArgument("-disablegfxfirmware") &&
 				!strcmp(version,"Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64");
+			const bool completionCacheRequested=tahoeTrialScope && !(tglTahoeDisabledTrials&1);
+			const bool contextCacheRequested=tahoeTrialScope && !(tglTahoeDisabledTrials&2);
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLTahoeDisabledTrials",tglTahoeDisabledTrials,32);
 			// Preserve native submission; use its one-shot force-restore flag only
 			// for a witnessed equal-tail resubmission of the active first item.
 			const uint8_t sameTailFlag[] {0x41,0x80,0xBD,0xC9,0,0,0,0,0x74,0x10,0x41,0xC6,0x85,0xC9,0,0,0,0,0x89,0xC8,0x83,0xC8,0x04,0x89,0x45,0xC0};
-			tglSameTailEnabled=completionCacheRequested && hostOK && size>0x7C5D7 &&
+			tglSameTailEnabled=tahoeTrialScope && hostOK && size>0x7C5D7 &&
 				patcher.solveSymbol<mach_vm_address_t>(index,"__ZN17IGHardwareContext14updateRingTailEj",address,size)==address+0x7C5B6 &&
 				!memcmp(reinterpret_cast<void *>(address+0x3A7B6),sameTailFlag,sizeof(sameTailFlag));
 			patcher.clearError();
-			IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTailRestoreReady",tglSameTailEnabled);
+			tglSameTailRestoreEnabled=tglSameTailEnabled && !(tglTahoeDisabledTrials&4);
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLSameTailRestoreReady",tglSameTailRestoreEnabled);
 			// The public TGL register definition identifies colored GSYNC at
 			// B0A0[2]. Restrict this repair trial to the physical TGL B0 target,
 			// exact Tahoe kernel/donor and the qualified strong-UC mapping.
-			tglGSYNCReady=tglSameTailEnabled && tglMMIOUCReady &&
+			const bool gsyncQualified=tglSameTailEnabled && tglMMIOUCReady &&
 				xeProfile.identity==0x9A498086 && xeProfile.revision==1 && !xeProfile.overridden();
+			tglGSYNCObserveReady=gsyncQualified;
+			tglGSYNCReady=gsyncQualified && !(tglTahoeDisabledTrials&8);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLGSYNCDisableReady",tglGSYNCReady);
-			if(tglGSYNCReady)if(auto live=OSSerializer::forTarget(nullptr,tglGSYNCSerialize)) {
+			if(tglGSYNCObserveReady)if(auto live=OSSerializer::forTarget(nullptr,tglGSYNCSerialize)) {
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLGSYNCLive",live);live->release();
 			}
 			if(tglSameTailEnabled)if(auto live=OSSerializer::forTarget(nullptr,tglSameTailSerialize)) {
@@ -9494,8 +9502,8 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLCPSColorPipeReady",cpsOK);
 			// Linux Gen12 Wa_18022495364: an INDIRECT_CTX cache invalidation,
 			// distinct from ring PIPE_CONTROL. Keep the per-context batch intact.
-			bool contextCacheOK=!completionCacheRequested;
-			if(completionCacheRequested) {
+			bool contextCacheOK=!contextCacheRequested;
+			if(contextCacheRequested) {
 				const char *init="__ZN17IGHardwareContext15initWithOptionsEP11IGAccelTaskRK23IGHardwareContextParamsh";
 				const uint8_t contextCacheHead[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x28};
 				contextCacheOK=cpsOK && hostOK && size>0x7C350 &&
@@ -9508,12 +9516,12 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				}
 				patcher.clearError();
 			}
-			tglContextCacheEnabled=completionCacheRequested && contextCacheOK;
+			tglContextCacheEnabled=contextCacheRequested && contextCacheOK;
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLContextCacheIndirectReady",tglContextCacheEnabled);
 			// The native RCS constructor initializes RPCS with ENABLE alone.
 			// Request the one TGL slice explicitly, as intel_sseu_make_rpcs does.
 			// Preserve the instruction and native ownership/lifetime of the image.
-			tglRPCSPowerReady=tglGSYNCReady && contextCacheOK && cpsOK && hostOK && size>0x7C331 &&
+			tglRPCSPowerReady=gsyncQualified && !(tglTahoeDisabledTrials&16) && contextCacheOK && cpsOK && hostOK && size>0x7C331 &&
 				patcher.solveSymbol<mach_vm_address_t>(index,"__ZN17IGHardwareContext15initWithOptionsEP11IGAccelTaskRK23IGHardwareContextParamsh",address,size)==address+0x7B9D4 &&
 				!memcmp(reinterpret_cast<void *>(address+0x7C313),TGLRPCS::Find,sizeof(TGLRPCS::Find));
 			patcher.clearError();
@@ -12345,14 +12353,14 @@ void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
    q[49]=q[50]=q[114]=UINT64_MAX;
   }
   tglCSBForceWake[0](renderWakeOwner,true,1);
-  if(tglGSYNCReady && renderWakeOwner==tglHost.owner && streamer==tglCSBEngines[0].streamer) {
+  if(tglGSYNCObserveReady && renderWakeOwner==tglHost.owner && streamer==tglCSBEngines[0].streamer) {
    if(auto base=tglHostBase()) {
     const auto ack=*reinterpret_cast<volatile uint32_t *>(base+0xD84);
     auto read=[&](uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);};
     auto write=[&](uint32_t reg,uint32_t v){*reinterpret_cast<volatile uint32_t *>(base+reg)=v;};
     // Initialize before the first native request, within serialized startup.
     // Later brackets only verify retention; never change a live GSYNC domain.
-    const bool initialize=n==0 && tglHost.startingOwner==renderWakeOwner;
+    const bool initialize=tglGSYNCReady && n==0 && tglHost.startingOwner==renderWakeOwner;
     const auto r=TGLGSYNC::apply(true,ack!=UINT32_MAX && (ack&2),initialize,read,write);
     const auto ordinal=__atomic_fetch_add(tglGSYNCState+1,1ULL,__ATOMIC_RELAXED);
     if(r.wrote)__atomic_fetch_add(tglGSYNCState+2,1ULL,__ATOMIC_RELAXED);
@@ -12453,7 +12461,7 @@ void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
   if(executionSlot!=UINT32_MAX)tglExecutionSample(executionSlot,renderWakeOwner,1,1,
    reinterpret_cast<uintptr_t>(streamer),n,q[5]?q[5]:q[6]);
  }
- if(tglSameTailEnabled && tglCSB12Enabled && tglVM.nofault && renderWakeOwner &&
+ if(tglSameTailRestoreEnabled && tglCSB12Enabled && tglVM.nofault && renderWakeOwner &&
     streamer==tglCSBEngines[0].streamer && renderWakeOwner==tglHost.owner) {
   auto read=[](uint64_t p,void *out,unsigned n)->uint64_t {
    return TGLHangPending::kernelRange(p,n) ? tglVM.nofault(p,reinterpret_cast<uint64_t>(out),n) : 0;
