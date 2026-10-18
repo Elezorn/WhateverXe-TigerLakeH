@@ -11757,7 +11757,12 @@ void tglCaptureHangAddress(unsigned slot,uint64_t actualRing,const uint8_t *regs
  c->q[14]=tglVM.directBase;c->q[15]=tglVM.directEnd;
  do {
   c->q[16]=1;
-  if (regs[0x94]!=0 || ring[0x40]!=0 || !(c->q[2]&1) || !(c->q[3]&32)) break;
+  // Copy-engine faults need the same owned PPGTT evidence as render faults.
+  // Require an exact engine match; native reporting may pass a BCS ring while
+  // dumping the disabled RCS registers first. All ownership/PTE guards below
+  // remain mandatory, and this runs only inside native failure reporting.
+  const bool ownedEngine=(regs[0x94]==0 || regs[0x94]==2) && ring[0x40]==regs[0x94];
+  if (!ownedEngine || !(c->q[2]&1) || !(c->q[3]&32)) break;
   c->q[16]=2;
   if (!read32(c->q[5]+0x7C,c->q[6]) || !tglVMRead(c->q[5]+0x58,c->q[7]) ||
       !tglVMRead(c->q[7]+0x260,c->q[8]) || !tglVMRead(c->q[8],c->q[9])) break;
@@ -12080,10 +12085,10 @@ void XE::wrapTGLHangRingDump(void *ring,void *registers) {
    c->q[3]=read(reinterpret_cast<uint64_t>(registers),c->regs,sizeof(c->regs));
    c->q[4]=read(reinterpret_cast<uint64_t>(ring),c->ring,sizeof(c->ring));
    // The common IGHardwareRingBuffer::submitBatchBuffer populates this
-   // bounded cache for both RCS and VCS0. Require matching video engine IDs;
-   // retain the RCS-only PPGTT/reference walker below unchanged.
+   // bounded cache. Admit BCS only with matching saved engine IDs, as for VCS0.
    if (c->q[3]==sizeof(c->regs) && c->q[4]==sizeof(c->ring) &&
-       (c->regs[0x94]==0 || (c->regs[0x94]==3 && c->ring[0x40]==3))) {
+       (c->regs[0x94]==0 ||
+        ((c->regs[0x94]==2 || c->regs[0x94]==3) && c->ring[0x40]==c->regs[0x94]))) {
     uint64_t bb,stampBase;uint32_t stampIndex,retired,writeIndex;
     memcpy(&bb,c->regs+0x70,8);memcpy(&stampBase,c->ring+0x30,8);
     memcpy(&stampIndex,c->ring+0x38,4);memcpy(&writeIndex,c->ring+0x8A0,4);
