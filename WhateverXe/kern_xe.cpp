@@ -1823,7 +1823,8 @@ static void tglUpdateMMIOMap(IOMemoryMap *mapping) {
 static bool tglPrepareMMIOBAR(IOMemoryDescriptor *bar) {
  if(!tglVM.enabled || !bar)return false;
  IOByteCount contiguous=0;
- const auto physical=bar->getPhysicalSegment(0,&contiguous);
+ // Match the hardware BAR to CPU physical addresses, never mapper-produced IOVAs.
+ const auto physical=bar->getPhysicalSegment(0,&contiguous,kIOMemoryMapperNone);
  uint32_t first=0,end=0;
  if(!XELPMemory::mmioPages(tglVM.pciBAR,physical,bar->getLength(),contiguous,first,end))return false;
  tglPmapBARFirstPage=first;tglPmapBAREndPage=end;
