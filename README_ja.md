@@ -32,7 +32,7 @@ WEXはOSのABIとGPUバックエンドを独立して選択します。OS別の�
 
 ## 必須構成
 
-[Releases](https://github.com/b00t0x/WhateverXe/releases)から **RELEASE** ZIPをダウンロードしてください。DEBUG ZIPは問題調査用です。各版の変更点は[CHANGELOG](CHANGELOG.md)を参照してください。
+[Releases](https://github.com/b00t0x/WhateverXe/releases)から **RELEASE** ZIPをダウンロードしてください。DEBUG ZIPは問題調査用です。各ZIPには`WhateverXe.kext`と対応するdSYMのみを収録し、両ZIPのチェックサムは`SHA256SUMS`で配布します。各版の変更点は[CHANGELOG](CHANGELOG.md)を参照してください。
 
 | コンポーネント | 役割 |
 | --- | --- |

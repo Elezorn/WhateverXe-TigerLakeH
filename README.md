@@ -44,7 +44,9 @@ for detailed selection conditions and overrides.
 ## Required components
 
 Download the **RELEASE** ZIP from [Releases](https://github.com/b00t0x/WhateverXe/releases).
-The DEBUG ZIP is for troubleshooting. See [CHANGELOG](CHANGELOG.md) for release notes.
+The DEBUG ZIP is for troubleshooting. Each ZIP contains only `WhateverXe.kext`
+and its matching dSYM. `SHA256SUMS` contains checksums for both archives.
+See [CHANGELOG](CHANGELOG.md) for release notes.
 
 | Component | Role |
 | --- | --- |
