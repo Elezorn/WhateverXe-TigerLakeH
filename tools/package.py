@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the OpenCore plugin and symbols; root components are supplied by OCLP."""
+"""Package the OpenCore plugin and symbols; the graphics stack is supplied by WhateverXe Graphics."""
 import argparse
 import hashlib
 import json

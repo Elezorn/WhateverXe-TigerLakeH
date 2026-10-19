@@ -4,34 +4,24 @@
 
 WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィックスドライバを適応させるLiluプラグインです。WhateverGreenを基に開発しています。
 
-本プロジェクトは実験段階であり、対応する署名済みXeグラフィックス資材が必要です。
-Data用インストーラーは資材を`/Library`へ配置しAuxKCを更新します。
-OpenCore・Lilu・Mod AMFIPassは引き続き別途必要です。
+本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。
 
 ## 対応範囲
 
-Data用インストーラーの対象は、各OS系列内のBig Sur **11.7.11以上**、Monterey
-**12.7.6以上**、Ventura **13.7.8以上**、Sonoma **14.8.9以上**、Sequoia **15.8.x**、
-Tahoe **26.7以上**です。WEX 0.2.4ではSequoia/Tahoeのビルド日時固定を撤去し、
-Darwin系列を選択した後も既存の実行時命令列・ABI検査を維持します。
-将来更新を受付可能にする方針であり、未提供の更新を検証済みとは扱いません。
-Big Sur〜Sonomaは検証済みカーネルの識別を維持します。
+単一のWEXバイナリと1つのグラフィックスpkgで、以下のmacOSに対応します。
 
-Sonoma〜Tahoeではnative compilerとWebKit GPUの限定アクセスにより、署名済みの
-Data側GPU/compiler資材に対応します。書込みや共有実行mapは許可しません。
-VA画像変換のnull参照クラッシュは既知課題として残ります。
+| macOS | 必要バージョン |
+| --- | --- |
+| Big Sur | 11.7.11 |
+| Monterey | 12.7.6 |
+| Ventura | 13.7.8 |
+| Sonoma | 14.8.9 |
+| Sequoia | 15.8.x |
+| Tahoe | 26.7以上 |
 
-単一のWEXバイナリがOSのABIとGPUバックエンドを独立して選択します。共通のNVRAM・
-IOSurface・MMIOキャッシュ補正は、対象OSの経路でTiger Lakeと
-Alder Lake-N / Twin Lakeの実装済みバックエンドに適用されます。MMIO範囲は選択した
-GPUの検証済みPCI BARから取得します。root payloadはOSごとに分け、GPU世代・コネクタ
-配線への対応はWEXが担います。Alder Lake-Nの後続OSでの実機確認は未実施であり、
-ソースの受付範囲と動作確認済み範囲は区別します。
+Big Sur〜Sonomaは検証済みカーネルの識別を必要とします。SequoiaとTahoeでは、実行時の命令列・ABI検査を維持した上で、同じOS系列内の更新を受け付けます。将来の更新が検証済みという意味ではありません。
 
-Tahoeでは `CoreMedia / AllowOnePassMetalScaling` の無効化が必要です。
-追加のouter-completion cache、indirect-context cache、same-tail restore、
-GSYNC disable、full-slice RPCSの補正は既定で無効です。render-pass cacheとCPSの
-補正は、それぞれの適用条件を満たす経路で維持します。
+WEXはOSのABIとGPUバックエンドを独立して選択します。OS別のグラフィックス資材と共通のAppleIntelTGLCompatはWhateverXe Graphicsが導入し、GPU世代・コネクタ配線への対応はWEXが担います。
 
 | GPUファミリー | バックエンド実装があるdevice ID |
 | --- | --- |
@@ -40,7 +30,16 @@ GSYNC disable、full-slice RPCSの補正は既定で無効です。render-pass c
 
 対応状況は機種やコネクタ構成によって異なります。この表はバックエンドの実装範囲を示すもので、すべての機種での動作を保証するものではありません。詳細な選択条件と上書き設定は[デバイス選択](docs/device-selection.md)を参照してください。
 
-Tiger LakeとAlder Lake-Nで、外部2画面の1920×1080・60Hz出力、Metal/OpenGL、ハードウェアHEVC、画面の消灯／復帰を確認しています。Tiger LakeではハードウェアH.264のエンコード／デコードも確認しています。3画面同時出力、システムスリープ、より高い解像度や他のコネクタ構成は追加検証が必要です。USB-Cと内蔵ディスプレイへの対応は下記ロードマップに含まれます。
+Tiger LakeとAlder Lake-Nで、全6 OSにわたり、外部2画面の1920×1080・60Hz出力、Metal/MPS、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、ハードウェアHEVCデコード、画面の消灯／復帰、Safariのハードウェア動画デコード、Widevine再生を確認しています。共通TGLCompatビルドも、Alder Lake-Nの全6 OSで導入と機能を確認しています。すべてのcodec・アプリケーション・表内のGPUでの互換性を確認したものではありません。
+
+### 既知の問題と制限
+
+- VA画像変換でnull参照によるクラッシュが発生することがあります。
+- Sequoia・Tahoeなどで、DisplayPortの再接続により黒画面やシステムハングが発生することがあります。
+- TahoeのWidevine試験では内蔵ネットワーク経路で通信エラーが繰り返されたため、USBネットワークアダプターを使用しました。通信障害の原因は未確定です。Safariでは少数のフレーム落ちも確認しています。
+- 3画面同時出力、システムスリープ、より高い解像度や他のコネクタ構成は追加検証が必要です。USB-Cと内蔵ディスプレイへの対応は下記ロードマップに含まれます。
+
+Tahoeでは`CoreMedia / AllowOnePassMetalScaling`の無効化が必要です。WhateverXe Graphicsのインストーラーが設定します。
 
 [Releases](https://github.com/b00t0x/WhateverXe/releases)から **RELEASE** ZIPをダウンロードしてください。DEBUG ZIPは問題調査用です。
 
@@ -50,14 +49,16 @@ Tiger LakeとAlder Lake-Nで、外部2画面の1920×1080・60Hz出力、Metal/O
 | --- | --- |
 | Lilu | WhateverXeの動作に必要なランタイム |
 | WhateverXe.kext | OpenCoreでLiluより後に読み込む |
-| 全対応OS共通のXe Dataグラフィックスpkg | 署名済み資材を`/Library`へ導入しAuxKCを更新する |
-| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | 改変されたグラフィックス構成に必要。OpenCoreで導入する |
+| [WhateverXe Graphics pkg](https://github.com/b00t0x/WhateverXe-Graphics/releases) | 署名済み資材を`/Library`へ導入しAuxKCを更新する |
+| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/extras/AMFIPass-v1.4.1-Mod-RELEASE.zip) | 改変されたグラフィックス構成に必要。OpenCoreで導入する |
 
-Data pkgはWEX 0.2.4以上を読み込んだ対象OSから実行してください。旧Xe System patchが
-ある場合は、先にその復元手順で戻してください。Data pkgはEFI・Systemファイル・snapshot・
-SIP設定を変更しません。従来のOCLP経由の導入方法は別扱いです。
+SIPは`csr-active-config=03080000`（値`0x803`）に設定してください。SIPの全面有効化には対応していません。署名済みグラフィックスpkgとリンク先のMod AMFIPassを使用する場合、`amfi=0x80`と`ipc_control_port_options=0`は不要です。
 
-リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。
+グラフィックスpkgはWEX **0.3.0以上**を読み込んだ対象OSから実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
+
+リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。upstreamのAMFIPassはMod版の署名チェーンに対応していません。
+
+他のroot patchにOCLPを併用する場合は、同じMod版の署名チェーンを使用する[独自ビルド版OCLP](https://github.com/b00t0x/OpenCore-Legacy-Patcher)を使用してください。Xeグラフィックスの導入自体はOCLPに依存せず、WhateverXe Graphicsを使用します。
 
 複数GPUの構成を含め、WhateverGreenとWhateverXeは同時に有効にしないでください。
 
@@ -130,7 +131,7 @@ python3 tools/build.py --release
 python3 tools/test.py
 ```
 
-kextとソースのmanifestは`build/`に出力されます。任意のdonor再生試験には`--donor /path/to/AppleIntelTGLGraphicsFramebuffer`と`--accelerator /path/to/AppleIntelTGLGraphics`を指定します。各試験が受け付ける正確なバイナリが必要です。CPUテストだけで実GPUの互換性が確認できるわけではありません。ビルドにWhateverGreenのソースは不要です。
+WhateverXeとAppleIntelTGLCompatのkext、およびソースのmanifestは`build/`に出力されます。TGLCompatのソースと共有ヘッダーはこのリポジトリで管理し、署名済みバイナリはWhateverXe Graphicsで配布します。WEXのRelease ZIPに含まれるkextはOpenCore用プラグインのみで、グラフィックスpkgは含みません。任意のdonor再生試験には`--donor /path/to/AppleIntelTGLGraphicsFramebuffer`と`--accelerator /path/to/AppleIntelTGLGraphics`を指定します。各試験が受け付ける正確なバイナリが必要です。CPUテストだけで実GPUの互換性が確認できるわけではありません。ビルドにWhateverGreenのソースは不要です。
 
 ## ライセンスとクレジット
 

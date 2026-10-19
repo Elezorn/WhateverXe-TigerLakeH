@@ -5,35 +5,32 @@
 WhateverXe is a Lilu plugin that adapts Apple graphics drivers for selected
 Intel Xe-LP integrated GPUs. It is derived from WhateverGreen.
 
-This project is experimental and requires the matching signed Xe graphics stack.
-The Data-volume installer installs that stack under `/Library` and updates AuxKC;
-OpenCore, Lilu and Mod AMFIPass remain separate prerequisites.
+This project is experimental and requires the signed graphics package from
+[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics). It installs
+the graphics stack under `/Library` and updates the Auxiliary Kernel Collection
+(AuxKC), without patching System files or snapshots. WEX and the graphics package
+have independent release versions.
 
 ## Compatibility
 
-The Data installer targets Big Sur **11.7.11+**, Monterey **12.7.6+**, Ventura
-**13.7.8+**, Sonoma **14.8.9+**, Sequoia **15.8.x**, and Tahoe **26.7+**, within
-each named OS family. WEX 0.2.4 removes build-date pinning for Sequoia/Tahoe;
-its Darwin-family selector still requires the existing runtime instruction and
-ABI checks to pass. Future updates are accepted by policy, not prevalidated.
-Big Sur through Sonoma retain their qualified kernel identities.
+One WEX binary and one graphics pkg cover the following macOS versions:
 
-On Sonoma through Tahoe, scoped native compiler and WebKit GPU access supports
-signed Data GPU/compiler bundles. File writes and shared executable mappings
-are not enabled. VA image-conversion null-pointer crashes remain a known issue.
+| macOS | Required version |
+| --- | --- |
+| Big Sur | 11.7.11 |
+| Monterey | 12.7.6 |
+| Ventura | 13.7.8 |
+| Sonoma | 14.8.9 |
+| Sequoia | 15.8.x |
+| Tahoe | 26.7 or newer |
 
-One WEX binary selects the OS ABI and GPU backend independently. Shared NVRAM,
-IOSurface and MMIO cache corrections cover the implemented Tiger Lake and
-Alder Lake-N / Twin Lake backends on the supported OS paths. MMIO bounds
-come from the selected GPU's validated PCI BAR. Root payloads vary by OS, while
-GPU generation and connector routing remain in WEX. Later-OS Alder Lake-N
-runtime validation is pending; source admission does not establish test coverage.
+Big Sur through Sonoma require the qualified kernel identities. Sequoia and
+Tahoe accept servicing updates within their OS family while retaining runtime
+instruction and ABI checks. Future updates are not prevalidated.
 
-
-Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled.
-The optional outer-completion cache, indirect-context cache, same-tail restore,
-GSYNC-disable and full-slice RPCS overrides are disabled by default. The
-render-pass cache and CPS corrections remain enabled on their qualified paths.
+WEX selects the OS ABI and GPU backend independently. OS-specific graphics
+payloads and the common AppleIntelTGLCompat provider are installed by WhateverXe
+Graphics; GPU generation and connector routing are handled by WEX.
 
 | GPU family | Device IDs with an implemented backend |
 | --- | --- |
@@ -44,13 +41,30 @@ Support varies by system and connector layout. The table includes implemented
 backends, not a guarantee for every machine. See [device selection](docs/device-selection.md)
 for detailed selection conditions and overrides.
 
-Dual external 1920×1080 at 60 Hz output, Metal/OpenGL, hardware HEVC and display
-sleep/wake have been tested on Tiger Lake and Alder Lake-N. Hardware H.264
-encode/decode has also been tested on Tiger Lake. Three simultaneous displays,
-system sleep, higher resolutions and other connector layouts require further
-validation. USB-C and internal display support are planned below.
+Tiger Lake and Alder Lake-N have been tested across all six OS families with
+dual external 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware
+H.264 encode/decode, hardware HEVC decode, display sleep/wake, Safari hardware
+video decode and Widevine playback. The common TGLCompat build has also passed installation and functional checks
+on Alder Lake-N across all six OS families. These checks do not establish
+compatibility with every codec, application or GPU in the table.
 
-Download the **RELEASE** ZIP from [Releases](https://github.com/b00t0x/WhateverXe/releases). The DEBUG ZIP is for troubleshooting.
+### Known issues and limits
+
+- VA image conversion can crash with a null-pointer access.
+- DisplayPort reconnection can cause a black screen or system hang, including
+  on Sequoia and Tahoe.
+- Tahoe Widevine testing required a USB network adapter after repeated network
+  errors on the internal network path. The network failure's cause remains
+  unresolved. Occasional Safari frame drops were also observed.
+- Three simultaneous displays, system sleep, higher resolutions and other
+  connector layouts require further validation. USB-C and internal display
+  support are planned below.
+
+Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled; the
+WhateverXe Graphics installer applies this setting.
+
+Download the **RELEASE** ZIP from [Releases](https://github.com/b00t0x/WhateverXe/releases).
+The DEBUG ZIP is for troubleshooting.
 
 ## Required components
 
@@ -58,17 +72,28 @@ Download the **RELEASE** ZIP from [Releases](https://github.com/b00t0x/WhateverX
 | --- | --- |
 | Lilu | Runtime required by WhateverXe |
 | WhateverXe.kext | Load through OpenCore after Lilu |
-| One Xe Data graphics package for all supported OSes | Install the signed stack into `/Library` and rebuild AuxKC |
-| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | Install through OpenCore for the modified graphics stack |
+| [WhateverXe Graphics pkg](https://github.com/b00t0x/WhateverXe-Graphics/releases) | Install the signed graphics stack into `/Library` and rebuild AuxKC |
+| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/extras/AMFIPass-v1.4.1-Mod-RELEASE.zip) | Load through OpenCore for the modified graphics stack |
 
-Boot the target OS with WEX 0.2.4 or newer before running the Data package.
-Restore an older Xe System patch using its own recovery procedure first. The
-Data package does not change EFI, System files, snapshots or SIP settings.
-The earlier OCLP installation method remains separate.
+Configure SIP with `csr-active-config=03080000` (value `0x803`). Full SIP is not
+supported. With the signed graphics package and linked Mod AMFIPass,
+`amfi=0x80` and `ipc_control_port_options=0` are not required.
+
+Boot the target OS with WEX **0.3.0 or newer** before installing the graphics
+pkg. If an older Xe System patch is installed, restore it using its original
+recovery procedure first. The pkg does not change EFI, System files, snapshots
+or SIP settings. See [installation and removal](https://github.com/b00t0x/WhateverXe-Graphics#install)
+for the package instructions and the standalone uninstall script.
 
 Extract `AMFIPass.kext` from the linked **Mod** archive, place it in
 `EFI/OC/Kexts`, and enable it in `Kernel > Add`. Replace an existing AMFIPass
-with this Mod build; do not load both copies.
+with this Mod build; do not load both copies. Upstream AMFIPass does not support
+the Mod signing chain.
+
+If you use OCLP for other root patches, use the
+[custom OCLP build](https://github.com/b00t0x/OpenCore-Legacy-Patcher), which uses
+the same Mod signing chain. Xe graphics installation itself uses WhateverXe
+Graphics independently of OCLP.
 
 WhateverGreen and WhateverXe must not be enabled together, including in
 mixed-GPU configurations.
@@ -155,7 +180,10 @@ python3 tools/build.py --release
 python3 tools/test.py
 ```
 
-Kexts and a source manifest are written to `build/`. Optional donor replay tests
+WhateverXe and AppleIntelTGLCompat kexts and a source manifest are written to
+`build/`. TGLCompat source and shared headers are maintained here; its signed
+binary is distributed through WhateverXe Graphics. The WEX release ZIP contains
+only the OpenCore plugin, not the graphics package. Optional donor replay tests
 accept `--donor /path/to/AppleIntelTGLGraphicsFramebuffer` and
 `--accelerator /path/to/AppleIntelTGLGraphics`, using the exact binaries accepted
 by each test. CPU tests do not establish physical GPU compatibility.
