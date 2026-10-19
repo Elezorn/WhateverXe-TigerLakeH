@@ -63,7 +63,7 @@ def main():
             run('xcrun', 'strip', '-x', exe)
         macho_uuid = re.search(r'UUID: ([A-F0-9-]+)', run('xcrun', 'dwarfdump', '--uuid', exe)).group(1)
         assert macho_uuid in run('xcrun', 'dwarfdump', '--uuid', symbols), 'symbol UUID mismatch'
-        for name in ['README.md', 'README_ja.md', 'LICENSE.txt', 'docs/device-selection.md']:
+        for name in ['README.md', 'README_ja.md', 'CHANGELOG.md', 'LICENSE.txt', 'docs/device-selection.md']:
             dest = stage / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, dest)

@@ -41,32 +41,10 @@ Support varies by system and connector layout. The table includes implemented
 backends, not a guarantee for every machine. See [device selection](docs/device-selection.md)
 for detailed selection conditions and overrides.
 
-Tiger Lake and Alder Lake-N have been tested across all six OS families with
-dual external 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware
-H.264 encode/decode, hardware HEVC decode, display sleep/wake, Safari hardware
-video decode and Widevine playback. The common TGLCompat build has also passed installation and functional checks
-on Alder Lake-N across all six OS families. These checks do not establish
-compatibility with every codec, application or GPU in the table.
-
-### Known issues and limits
-
-- VA image conversion can crash with a null-pointer access.
-- DisplayPort reconnection can cause a black screen or system hang, including
-  on Sequoia and Tahoe.
-- Tahoe Widevine testing required a USB network adapter after repeated network
-  errors on the internal network path. The network failure's cause remains
-  unresolved. Occasional Safari frame drops were also observed.
-- Three simultaneous displays, system sleep, higher resolutions and other
-  connector layouts require further validation. USB-C and internal display
-  support are planned below.
-
-Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled; the
-WhateverXe Graphics installer applies this setting.
+## Required components
 
 Download the **RELEASE** ZIP from [Releases](https://github.com/b00t0x/WhateverXe/releases).
-The DEBUG ZIP is for troubleshooting.
-
-## Required components
+The DEBUG ZIP is for troubleshooting. See [CHANGELOG](CHANGELOG.md) for release notes.
 
 | Component | Role |
 | --- | --- |
@@ -78,6 +56,9 @@ The DEBUG ZIP is for troubleshooting.
 Configure SIP with `csr-active-config=03080000` (value `0x803`). Full SIP is not
 supported. With the signed graphics package and linked Mod AMFIPass,
 `amfi=0x80` and `ipc_control_port_options=0` are not required.
+
+Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled; the
+WhateverXe Graphics installer applies this setting.
 
 Boot the target OS with WEX **0.3.0 or newer** before installing the graphics
 pkg. If an older Xe System patch is installed, restore it using its original
@@ -155,11 +136,30 @@ Alder Lake-N / Twin Lake.
 | `-wex-tgl-off` | Disable the Tiger Lake path. |
 | `-wex-noaccel` | Tiger Lake framebuffer-only mode; blocks accelerator probing. |
 
+## Tested features and known issues
+
+Tiger Lake and Alder Lake-N have been tested across all six OS families with
+dual external 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware
+H.264 encode/decode, hardware HEVC decode, display sleep/wake, Safari hardware
+video decode and Widevine playback. The common TGLCompat build has also passed
+installation and functional checks on Alder Lake-N across all six OS families.
+These checks do not establish compatibility with every codec, application or GPU
+in the table.
+
+### Known issues and limits
+
+- VA image conversion can crash with a null-pointer access.
+- DisplayPort reconnection can cause a black screen or system hang, including
+  on Sequoia and Tahoe.
+- Occasional Safari frame drops have been observed.
+- Three simultaneous displays, system sleep, higher resolutions and other
+  connector layouts require further validation. USB-C and internal display
+  support are planned below.
+
 ## Roadmap
 
 ### Planned
 
-- Further hardware and OS-update validation
 - Alder Lake and Raptor Lake S/H/P/U support
 - USB-C display output
 - Internal displays
