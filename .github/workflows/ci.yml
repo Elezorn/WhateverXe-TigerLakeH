@@ -29,14 +29,18 @@ jobs:
           ref: 05094e5e88cec7caedbfb35e8449ed0db94bf95b
           path: MacKernelSDK
           persist-credentials: false
-      - name: Fetch Lilu development files
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/Lilu
+          ref: e4748cc081bf060302c7d3c44a643ce1d11b7e1d
+          path: build/dependencies/Lilu
+          persist-credentials: false
+      - name: Prepare Lilu development files
         shell: bash
         run: |
-          curl -fL --retry 3 -o "$RUNNER_TEMP/Lilu.zip" \
-            https://github.com/acidanthera/Lilu/releases/download/1.7.0/Lilu-1.7.0-DEBUG.zip
-          echo "2adf2425286aba87e9b50c6992724be057a89caa5884464b1adc00154c2fd012  $RUNNER_TEMP/Lilu.zip" | shasum -a 256 -c -
-          unzip -q "$RUNNER_TEMP/Lilu.zip" -d "$RUNNER_TEMP/lilu"
-          cp -R "$RUNNER_TEMP/lilu/Lilu.kext" Lilu.kext
+          mkdir -p Lilu.kext/Contents/Resources
+          ln -s "$GITHUB_WORKSPACE/build/dependencies/Lilu/Lilu/Headers" Lilu.kext/Contents/Resources/Headers
+          ln -s "$GITHUB_WORKSPACE/build/dependencies/Lilu/Lilu/Library" Lilu.kext/Contents/Resources/Library
       - name: CPU tests
         run: python3 tools/test.py
       - name: Build DEBUG
