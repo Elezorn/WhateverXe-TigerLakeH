@@ -38,7 +38,8 @@ def main():
    libs['as.vit9696.Lilu']='1.2.0'
    info['IOKitPersonalities']={ident:dict(CFBundleIdentifier=ident,IOClass=name,IOMatchCategory=name,IOProviderClass='IOResources',IOResourceMatch='IOKit')}
   (bundle/'Info.plist').write_bytes(plistlib.dumps(info))
-  # Linker debug maps can retain absolute object paths despite compiler prefix maps.
+  # Preserve DWARF before removing the linker's object-path records.
+  if name=='WhateverXe':run(['xcrun','dsymutil',exe,'-o',out/(name+'.kext.dSYM')])
   run(['xcrun','strip','-S',exe])
   symbols=subprocess.check_output(['xcrun','nm',str(exe)],text=True)
   assert ' _kmod_info' in symbols, 'missing kext lifecycle metadata'

@@ -49,7 +49,9 @@ def main():
         shutil.copytree(source, bundle)
         exe = bundle / 'Contents/MacOS/WhateverXe'
         symbols = stage / 'WhateverXe.kext.dSYM'
-        run('xcrun', 'dsymutil', source_exe, '-o', symbols)
+        shutil.copytree(build / 'WhateverXe.kext.dSYM', symbols)
+        dwarf = symbols / 'Contents/Resources/DWARF/WhateverXe'
+        assert 'DW_TAG_compile_unit' in run('xcrun', 'dwarfdump', '--debug-info', dwarf), 'missing DWARF information'
         for relocation in symbols.rglob('*.yml'):
             text = relocation.read_text()
             text = re.sub(r'(?m)^binary-path:.*$',
