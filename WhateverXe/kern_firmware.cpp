@@ -51,5 +51,6 @@ void XE::xelpReadFirmware(IOPCIDevice *pci) {
         firmwarePorts.present,firmwarePorts.unmapped,firmwarePorts.ambiguous,hdmi.valid,hdmi.hdmi,
         hdmi.ddc[0],hdmi.ddc[1],hdmi.ddc[2]};
     pci->setProperty("WhateverXeFirmwarePorts",summary,sizeof(summary));
+    pci->setProperty("WhateverXeFirmwareChecksum",firmwarePorts.checksum,32);
     pci->setProperty("WhateverXeFirmwarePortRecords",firmwarePorts.port,sizeof(firmwarePorts.port));
 }

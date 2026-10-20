@@ -62,7 +62,19 @@ int main(int argc,char **argv){
  }
  auto dup=table({{0x60d2,1,2},{0x60d2,7,2}});assert(parse(dup.data(),dup.size(),Family::TigerLake).status==Status::Conflict);
  for(size_t len=0;len<bytes.size();++len)assert(!parse(bytes.data(),len,Family::TigerLake).valid());
- auto bad=bytes;bad.back()^=1;assert(parse(bad.data(),bad.size(),Family::TigerLake).status==Status::Checksum);
+ // An otherwise valid firmware table can carry a stale checksum. Do not
+ // lose its actual connector wiring or silently normalize the source data.
+ auto bad=bytes;bad[26]=uint8_t(bad[26]+0x5a);const auto unchanged=bad;
+ auto stale=parse(bad.data(),bad.size(),Family::TigerLake);
+ assert(stale.valid()&&stale.checksum==0x5a&&stale.hdmi(3).hdmi==2&&stale.hdmi(3).ddc[1]==2);
+ assert(bad==unchanged);
+ // A checksum mismatch does not relax structural or semantic rejection.
+ auto broken=bad;broken[28]=0xff;broken[29]=0xff;
+ assert(parse(broken.data(),broken.size(),Family::TigerLake).status==Status::Header);
+ broken=bad;broken[77]=1;
+ assert(parse(broken.data(),broken.size(),Family::TigerLake).status==Status::Children);
+ broken=dup;broken[26]^=0x5a;
+ assert(parse(broken.data(),broken.size(),Family::TigerLake).status==Status::Conflict);
  for(unsigned off:{22u,24u,28u,66u,68u,71u,77u}){auto b=bytes;b[off]=0xff;b[off+1]=0xff;checksum(b);assert(!parse(b.data(),b.size(),Family::TigerLake).valid());}
  for(unsigned version:{215u,257u}){auto b=bytes;w16(b,64,version);checksum(b);assert(parse(b.data(),b.size(),Family::TigerLake).status==Status::Version);}
  auto empty=table({});assert(parse(empty.data(),empty.size(),Family::TigerLake).valid());
@@ -78,5 +90,5 @@ int main(int argc,char **argv){
  assert(!region(op.data(),8191,0x80000000).valid);
  // Deterministic bounded mutation sweep: no reads outside declared buffers.
  unsigned seed=7;for(unsigned n=0;n<2000;++n){auto b=bytes;seed=seed*1664525+1013904223;b[seed%b.size()]^=uint8_t(seed>>24);checksum(b);(void)parse(b.data(),b.size(),Family::TigerLake);}
- puts("PASS firmware bounds/checksum/versions, DVO generation maps, HDMI pin permutations, capability vs mode, overrides and OpRegion addresses");
+ puts("PASS firmware bounds/checksum diagnostics/versions, DVO generation maps, HDMI pin permutations, capability vs mode, overrides and OpRegion addresses");
 }
