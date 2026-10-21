@@ -9948,6 +9948,12 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				static const uint8_t selection[] {
 					0x0f,0xb6,0x43,0x1e,0x48,0x01,0x05,0x66,0xad,0x0b,0x00,
 					0x34,0x01,0x88,0x83,0x1a,0x01,0x00,0x00};
+				// The same port field is sent to DPCD EDP_CONFIGURATION_SET.
+				static const uint8_t alternateSR[] {
+					0x41,0x0f,0xb6,0x85,0x18,0x01,0x00,0x00,
+					0x48,0x01,0x05,0x8e,0xa8,0x0b,0x00,0x48,0x8d,0x55,0xca,
+					0x88,0x02,0x4c,0x89,0xef,0xbe,0x0a,0x01,0x00,0x00,
+					0xb9,0x01,0x00,0x00,0x00,0xe8,0x16,0x12,0x00,0x00};
 				const auto info = patcher.solveSymbol<mach_vm_address_t>(index,
 					"__ZN14AppleIntelPort11getDPCDInfoEv", address, size);
 				const auto setup = patcher.solveSymbol<mach_vm_address_t>(index,
@@ -9955,7 +9961,8 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				tglSinkFramingReady = size >= 0x1E34F && info == address + 0x1DE0E &&
 					setup == address + 0x1B588 &&
 					!memcmp(reinterpret_cast<void *>(address + 0x1E328), capability, sizeof(capability)) &&
-					!memcmp(reinterpret_cast<void *>(address + 0x1B607), selection, sizeof(selection));
+					!memcmp(reinterpret_cast<void *>(address + 0x1B607), selection, sizeof(selection)) &&
+					!memcmp(reinterpret_cast<void *>(address + 0x1BC73), alternateSR, sizeof(alternateSR));
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLSinkFramingReady", tglSinkFramingReady);
 				patcher.clearError();
 			}
@@ -16218,7 +16225,8 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 		}
 	}
 	const auto result = FunctionCast(wrapTGLTrainingPattern, callbackXE->orgTGLTrainingPattern)(path, pattern);
-	// The donor constructs DP_TP_CTL from enable/MST/pattern only, losing bit18.
+	// The donor constructs DP_TP_CTL from enable/MST/pattern only, losing bit18
+	// and eDP Alternate SR bit6 (TGL PRM Vol2c Part1, DP_TP_CTL).
 	// Its own normal and fast training write port+11a to DPCD101 bit7. Use that
 	// same negotiated field, not an unconditional enhanced-framing override.
 	if (!result && pattern <= 5 && port && callbackXE->tglActive) {
@@ -16249,15 +16257,20 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 					return result;
 				}
 				const auto before = *tp;
-				const auto wanted = (before & ~0x40000U) | (uint32_t(p[0x11A]) << 18);
+				auto wanted = (before & ~0x40000U) | (uint32_t(p[0x11A]) << 18);
+				// Match the negotiated sink setting, not merely its capability.
+				// External DP never receives this eDP-only DPCD write.
+				const bool alternateSR = config[2] == 0 && callbackXE->tglSinkFramingReady && p[0x118] <= 1;
+				if (alternateSR) wanted = (wanted & ~0x40U) | (uint32_t(p[0x118]) << 6);
 				const bool activeSST = (before & 0x88000000U) == 0x80000000U;
 				if (activeSST && before != wanted) *tp = wanted;
-				uint64_t record[11] {}, uptime;
+				uint64_t record[13] {}, uptime;
 				clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, record);
 				record[1] = pattern; record[2] = p[0x11A]; record[3] = before;
 				record[4] = wanted; record[5] = *tp; record[6] = activeSST;
 				record[7] = *reinterpret_cast<uint32_t *>(p + 0x124);
 				record[8] = reinterpret_cast<uintptr_t>(path); record[9] = transcoder; record[10] = mapping.ddi;
+				record[11] = alternateSR; record[12] = p[0x118];
 				char key[48]; snprintf(key, sizeof(key), "TGLFramingDDI%uPattern%u", mapping.ddi, pattern);
 				IORegistryEntry::getRegistryRoot()->setProperty(key, record, sizeof(record));
 			}

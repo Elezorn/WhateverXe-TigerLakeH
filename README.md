@@ -168,6 +168,8 @@ every laptop, USB-C port, adapter or dock.
 Internal-panel brightness through the standard slider and keyboard controls,
 and three simultaneous displays (the internal panel plus two external outputs)
 have also been verified on the tested Big Sur laptop configuration.
+Internal-panel display sleep/wake has been verified with HDMI connected;
+this does not qualify system sleep or USB-C wake.
 
 ### Known issues and limits
 

@@ -24,7 +24,7 @@ void absolutetime_to_nanoseconds(uint64_t t,uint64_t *p){*p=t;}
 unsigned observations,nativeCalls;
 struct XE {
  // FIELDS
- bool tglActive=true;void *tglObservationController{};uintptr_t orgTGLTrainingPattern{};
+ bool tglActive=true,tglSinkFramingReady=true;void *tglObservationController{};uintptr_t orgTGLTrainingPattern{};
  static uint32_t wrapTGLTrainingPattern(void *,uint32_t);
  static void tglObserveActivation(void*,void*,void*,unsigned,bool,uint32_t){++observations;}
  static void tglTimeEvent(unsigned,unsigned,bool,unsigned,unsigned){}
@@ -86,10 +86,22 @@ int main(){
   // Give only this port's DDI power. A fixed TC2 test would fail here.
   reg(0x45454)=3u<<(2*d);reg(0x45404)=p==2?0xFF:(d<2&&p==0?3:0x3F);
   invoke();assert(reg(0x60540+0x1000*p)==(0x80100A00|(framing<<18)));neighbors();
-  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post.size()==11&&r.post[9]==p&&r.post[10]==d);
+  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post.size()==13&&r.post[9]==p&&r.post[10]==d);
   if(pat==1){assert(r.pre.size()==22&&r.pre[1]==0&&r.pre[18]==d&&r.pre[21]==356);}
   else {assert(r.pre.empty());assert(reg(0x46140+4*p)==0x3456&&reg(0x60400+0x1000*p)==0x01000020);}
   ++cases;
+ }
+ // Normal/fast pattern transitions must agree with the sink's negotiated
+ // Alternate SR mode. Preserve unrelated bits, external ports, invalid
+ // negotiation, and unknown donor layouts; never touch another transcoder.
+ for(unsigned d:{0u,1u,3u,4u})for(unsigned p=0;p<3;++p)
+ for(unsigned pat=0;pat<6;++pat)for(unsigned sr=0;sr<3;++sr)
+ for(unsigned old=0;old<2;++old)for(unsigned known=0;known<2;++known){
+  reset(d,p,pat);port[0x118]=sr;object.tglSinkFramingReady=known;
+  reg(0x60540+0x1000*p)=0x80100300|(old<<6);
+  invoke();const bool change=d<2&&known&&sr<2;
+  assert(reg(0x60540+0x1000*p)==(0x80140300|((change?sr:old)<<6)));
+  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post[11]==change&&r.post[12]==sr);neighbors();
  }
  // DP-alt keeps its native mode3 and lane count while sharing route ordering.
  for(unsigned d:{3u,4u})for(unsigned p=0;p<3;++p)for(unsigned lanes:{1u,2u,4u}) {

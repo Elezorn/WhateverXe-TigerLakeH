@@ -8,7 +8,7 @@ guard=s[s.index('\n',start)+1:s.index(' tglAUXRecord(port,10,false',start)]
 install=s[s.index('// getDPCDInfo stores MAX_LANE_COUNT'):s.index('if (tglHDMIB)',s.index('// getDPCDInfo stores MAX_LANE_COUNT'))]
 if len(sys.argv)>1:
  b=Path(sys.argv[1]).read_bytes()
- for name,offset in [('capability',0x1e328),('selection',0x1b607)]:
+ for name,offset in [('capability',0x1e328),('selection',0x1b607),('alternateSR',0x1bc73)]:
   text=re.search(rf'{name}\[\] \{{([^}}]+)\}}',install).group(1)
   expected=bytes(int(x,0) for x in text.split(','));assert b[offset:offset+len(expected)]==expected
 code=r'''
