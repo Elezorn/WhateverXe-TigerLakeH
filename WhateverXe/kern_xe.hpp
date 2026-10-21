@@ -236,6 +236,10 @@ private:
 	static void tglObserveEngine(void *power, uint32_t event, bool done, void *caller);
 	mach_vm_address_t orgTGLScanoutAllocate {}, orgTGLScanoutSetup {}, orgTGLPlaneUpdate {}, orgTGLAperture {};
 	mach_vm_address_t orgTGLPlaneSetup {}, orgTGLColorMode {}, orgTGLPixelInfo {};
+	mach_vm_address_t orgTGLModeTiming {};
+	bool tglPanelDepthReady {false};
+	static uint32_t tglPanelDepthPort(void *port);
+	static void wrapTGLModeTiming(void *controller,void *fb,void *timing);
 	mach_vm_address_t orgTGLGamma10 {}, orgTGLRegisterWrite {}, orgTGLFastRegisterWrite {};
 	static void wrapTGLGamma10(void *path, void *transaction, uint32_t control);
 	static void wrapTGLRegisterWrite(void *access, unsigned long reg, uint32_t value);
@@ -247,6 +251,9 @@ private:
 	static volatile uint8_t *tglClockOrderTarget(void *controller, void *port, void *path, void *fb);
 	static void wrapTGLDisableClocks(void *controller, void *port, void *otherPort);
 	mach_vm_address_t tglPG1FuseReadCaller {};
+	mach_vm_address_t tglComboPLLFractionCaller {};
+	bool tglSinkFramingReady {};
+	bool tglComboAUXGateReady {};
 	mach_vm_address_t tglPortByIndex {};
 	mach_vm_address_t orgTGLCheckLinkStatus {};
 	static uint32_t wrapTGLCheckLinkStatus(void *port);
@@ -269,6 +276,7 @@ private:
 	static void tglObserveScanout(void *fb, void *plane, uint32_t event, bool done, uint32_t result);
 	bool tglNoPanel {false};
 	bool tglPanelPowerPropertyReady {false};
+	bool tglEDPTranscoderReady {false};
 	bool tglNoPanelHPDReady {false};
 	static bool wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value);
 	bool tglHDMIB {false};
@@ -321,7 +329,14 @@ private:
 	bool tglDekelReady {false};
 	bool tglPhyClockPreserveReady {false};
 	mach_vm_address_t orgTGLEnablePort {};
+	mach_vm_address_t orgTGLDisablePort {};
+	bool tglComboAUXLifetimeReady {};
+	void *tglComboAUXOwners[2] {};
+	static void tglComboAUXReference(void *port,bool acquire);
+	static uint32_t wrapTGLDisablePort(void *port);
 	mach_vm_address_t orgTGLSignalLevels {};
+	bool tglComboSignalReady {};
+	static bool tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig,uint32_t &result);
 	static uint32_t wrapTGLSignalLevels(void *port, uint32_t swing, uint32_t emphasis, void *overrideConfig);
 	mach_vm_address_t orgTGLPhyClockGating {};
 	static void wrapTGLPhyClockGating(void *port, bool gate);
@@ -375,6 +390,14 @@ private:
  // Native mode setter owns FIA1 bits 0/1 correctly on modular TGL. Later
  // instances need the new mode backend, regardless of available PHY math.
  uint32_t tglTCAutoCandidates {},tglTCAutoRegistered {};
+ uint32_t tglDPAltCandidates {};
+ bool tglDPSSTEligible(uint32_t ddi) const {
+  return tglLegacyTCEligible(ddi) || (ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
+ }
+ bool tglDPSSTMode(uint32_t ddi,uint32_t mode) const {
+  return (mode==4 && tglLegacyTCEligible(ddi)) ||
+   (mode==3 && ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
+ }
  uintptr_t tglNativeLegacyHPDCaller {};
  bool tglRegisterLegacyHPD(uint32_t ddi,uint32_t mode,uintptr_t caller) {
   // The qualified native HPD-high branch supplies its decoded transport.
@@ -614,6 +637,11 @@ private:
  bool tglNativeFiaReady {}; uint32_t tglModularProbed {},tglNativeFiaReads {},tglNativeFiaWrites {};
  mach_vm_address_t tglNativeFiaBase {},orgTGLPortReadReg {};
  static uint32_t wrapTGLPortReadReg(void *port,uint32_t reg);
+ bool tglDPAltFiaReady {},tglDPModeReplaceReady {};
+ mach_vm_address_t orgTGLConfiguredLanes {},orgTGLFIALaneCount {};
+ static bool tglDPAltFia(void *port,TGLFiaPort &fia);
+ static uint32_t wrapTGLConfiguredLanes(void *port);
+ static void wrapTGLFIALaneCount(void *port,uint32_t lanes);
  static bool tglNativeFiaAccess(void *port,uint32_t reg,uintptr_t caller,bool write,TGLNativeFia &mapping);
 	bool tglModeResultReady {false};
 	uint32_t tglModeResultCorrections {};

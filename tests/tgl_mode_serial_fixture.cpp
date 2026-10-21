@@ -23,7 +23,10 @@ void IORecursiveLockUnlock(IORecursiveLock*p){p->unlock();}
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry s;return &s;}template<class...A>void setProperty(A...){};};
 void tglConnectionRecord(void*,unsigned,bool,uint32_t,uint32_t,void*){}
 void tglAUXRecord(void*,unsigned,bool,uint32_t,uint32_t,uint32_t){}
+bool coldReady=true;
+bool tglDPAltColdReady(void*){return coldReady;}
 struct XE {
+ uint32_t tglDPAltCandidates=0;void *tglObservationController=nullptr;
  uint32_t tglTCAutoRegistered=0,tglTCAutoCandidates=0x10,tglAUXParentMask=0x18;
  // LEGACY_HPD_POLICY
  bool tglTCModeAllowed(uint32_t,uint32_t)const{return true;}
@@ -33,6 +36,10 @@ struct XE {
  uintptr_t tglNativeFiaBase=0,orgTGLPortReadReg=0,orgTGLPortWriteReg=0;
  uint32_t tglNativeFiaReads=0,tglNativeFiaWrites=0;
  bool tglLegacyTCEligible(uint32_t ddi)const{return ddi>=3&&ddi<=6;}
+ static bool tglDPAltFia(void *port,TGLFiaPort &fia) {
+  auto config=*reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port)+0x548);
+  TGLTypeCPort tc;return coldReady && TGLTypeCPort::resolve(config[0],tc) && tc.resolveFia(0x10,fia);
+ }
  static bool tglNativeFiaAccess(void*,uint32_t,uintptr_t,bool,TGLNativeFia&);
  static uint32_t wrapTGLPortReadReg(void*,uint32_t);
  static void wrapTGLPortWriteReg(void*,uint32_t,uint32_t);

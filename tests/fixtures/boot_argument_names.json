@@ -137,5 +137,6 @@
   "-wexbeta": [
     "-wxebeta"
   ],
-  "-wex-noaccel": []
+  "-wex-noaccel": [],
+  "-wex-display-trace": []
 }

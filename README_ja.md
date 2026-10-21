@@ -59,6 +59,16 @@ GPUはPCI device IDから自動選択します。対応範囲内ではファー�
 
 対応GPUでは、WhateverGreenと同様に、検出されたIntel Management Engineのデバイス名も`IMEI`へ統一します。`HECI`や`MEI`から`IMEI`へのACPI renameを別途追加する必要はありません。
 
+### 内蔵パネルの輝度
+
+Tiger Lakeラップトップでは、実際のiGPUのACPIパス配下に、`_HID=APP0002`、
+`_CID=backlight`、`_UID=19`のPNLFデバイスが必要です。SSDTのScopeはファームウェアの
+ACPIパスに合わせてください。IORegistryの`IGPU`は実行時のrenameである場合があります。
+内蔵Framebufferが0〜65535のバックライト範囲を報告する場合、WEXは不足している
+汎用16 bit輝度プロファイルを補います。既存のApple製・カスタムプロファイルは保持します。
+PNLFの登録だけでは実パネルの明るさ変更を保証せず、PWMの動作には表示バックエンド側の
+対応も必要です。内蔵パネルのないミニPCにはPNLFは不要です。
+
 ### DVMT
 
 BIOS/UEFIで変更できる場合は、**DVMT Pre-Allocatedを96MBに設定することを推奨します**。
@@ -92,6 +102,7 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 
 | 引数 | 用途 |
 | --- | --- |
+| `-wex-display-trace` | Tiger Lakeの表示遷移・PHYの詳細診断を有効にする。既定では無効。 |
 | `gfxrst=` | 起動時framebufferの引継ぎ方式。0：自動（既定）、1：reset、2：copy、3：clear、4：無効。 |
 | `-wexdbg` | debug buildでログを有効にする。 |
 | `-wexoff` | WhateverXeを無効にする。 |
@@ -103,20 +114,24 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 
 Tiger LakeとAlder Lake-Nで、全6 OSにわたり、外部2画面の1920×1080・60Hz出力、Metal/MPS、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、ハードウェアHEVCデコード、画面の消灯／復帰、Safariのハードウェア動画デコード、Widevine再生を確認しています。共通TGLCompatビルドも、Alder Lake-Nの全6 OSで導入と機能を確認しています。すべてのcodec・アプリケーション・表内のGPUでの互換性を確認したものではありません。
 
+Tiger Lakeラップトップの実験的な対応として、Big Surで内蔵1366×768 eDPパネルと、USB-C DP-alt→HDMIアダプター経由の1920×1080・60Hzの同時表示を確認しています。コネクタはファームウェアのVBTから選択し、現在のDP-alt backendはTC1〜TC4を受け付け、TC1とTC3で表示を確認しています。すべてのラップトップ・USB-C端子・アダプター・ドックの対応を保証するものではありません。
+検証したBig Surのラップトップ構成では、標準スライダー・キーボード操作による内蔵パネルの輝度調整と、内蔵＋外部2画面の計3画面同時出力も確認しています。
+
 ### 既知の問題と制限
 
 - VA画像変換でnull参照によるクラッシュが発生することがあります。
 - Sequoia・Tahoeなどで、DisplayPortの再接続により黒画面やシステムハングが発生することがあります。
 - Safariでは少数のフレーム落ちを確認しています。
-- 3画面同時出力、システムスリープ、より高い解像度や他のコネクタ構成は追加検証が必要です。USB-Cと内蔵ディスプレイへの対応は下記ロードマップに含まれます。
+- 4画面同時出力は、現在の3 pipeドライバの対応範囲外です。
+- システムスリープ、より高い解像度や他のコネクタ構成は追加検証が必要です。実験的なDP-alt経路は現在、起動中のTC-coldを抑止しています。この経路の省電力・再接続・消灯／スリープ復帰は追加検証が必要です。
 
 ## ロードマップ
 
 ### Planned
 
 - Alder Lake／Raptor LakeのS/H/P/U対応
-- USB-C画面出力対応
-- 内蔵ディスプレイ対応
+- USB-Cの追加端子・アダプター・ドック構成への対応
+- 内蔵ディスプレイとラップトップ省電力への対応拡大
 
 ### Not Planned
 

@@ -50,7 +50,73 @@ struct PortFixture {
  }
 };
 int main() {
+ for(uint32_t mask=0;mask<17;++mask)for(uint32_t lanes:{1U,2U,4U})
+ for(uint32_t rate:{6U,10U,20U})for(unsigned swing=0;swing<4;++swing)for(unsigned pre=0;pre<4;++pre) {
+  uint32_t regs[6],touched=0;for(auto &v:regs)v=0xA5CFFFFF;
+  auto access=[&](uint32_t index,bool write,uint32_t &value) {
+   assert(index>=0x42 && index<=0x47);unsigned i=index-0x42;
+   assert(mask&(3U<<(2*(i/3))));
+   if(write){regs[i]=value;touched|=1U<<i;}else value=regs[i];return true;
+  };
+  unsigned count=0;for(unsigned bit=0;bit<4;++bit)count+=(mask>>bit)&1;
+  const bool valid=mask && mask<=15 && count>=lanes && swing+pre<=3;
+  assert(TGLDPAltSignal::program(mask,lanes,rate,swing,pre,access)==valid);
+  if(!valid){assert(!touched);continue;}
+  for(unsigned i=0;i<6;++i) {
+   bool selected=(i%3==2)?bool(mask&(3U<<(2*(i/3)))):bool(mask&(1U<<(2*(i/3)+i%3)));
+   assert(bool(touched&(1U<<i))==selected);
+   if(!selected)assert(regs[i]==0xA5CFFFFF);
+   else if(i%3==2)assert(regs[i]==(0xA5CFFFFF&~4U));
+   else {
+    assert((regs[i]&~0x3FF07U)==(0xA5CFFFFF&~0x3FF07U));
+    const uint32_t expected[4][4]={{7,0x505,0xB02,0x1900},{5,0x802,0x1400,0},{2,0xB00,0,0},{0,0,0,0}};
+    const auto coeff=expected[swing][pre]-((rate<=10 && swing==0 && pre==3)?0x100:0);
+    assert((regs[i]&0x3FF07U)==coeff);
+   }
+  }
+ }
+ unsigned calls=0;
+ auto fail=[&](uint32_t,bool,uint32_t &){++calls;return false;};
+ assert(!TGLDPAltSignal::program(12,2,10,0,0,fail) && calls==1);
+ assert(!TGLDPAltSignal::program(12,2,30,0,0,fail) && calls==1);
+ auto mismatch=[](uint32_t,bool write,uint32_t &v){if(!write)v=0;return true;};
+ assert(!TGLDPAltSignal::program(12,2,10,0,0,mismatch));
+ for(uint32_t ddi=0;ddi<10;++ddi)for(uint32_t lanes=0;lanes<6;++lanes) {
+  uint32_t value=0xA5A55ACCu,old=value;
+  const bool valid=ddi>=3 && ddi<=4 && (lanes==1 || lanes==2 || lanes==4);
+  assert(TGLDPAltLaneEnable::update(ddi,lanes,value)==valid);
+  if(valid) {
+   const unsigned shift=4*(ddi-3);
+   assert((value&~(15U<<shift))==(old&~(15U<<shift)));
+   assert(((value>>shift)&15)==(lanes==1?1U:lanes==2?3U:15U));
+  } else assert(value==old);
+ }
+ uint32_t unavailable=UINT32_MAX;
+ assert(!TGLDPAltLaneEnable::update(3,2,unavailable) && unavailable==UINT32_MAX);
+ // Published Linux DP_MODE table, independent of physical orientation mask.
+ const uint32_t expected[7][3][2]={{{0,0x40},{0x80,0x80},{0x80,0x80}},
+  {{0,0},{0,0},{0x80,0x80}},{{0,0},{0x80,0x80},{0,0}},
+  {{0x40,0x40},{0x80,0x80},{0x80,0x80}},{{0x40,0x40},{0x80,0x80},{0x80,0x80}},
+  {{0x40,0x40},{0x80,0x80},{0x80,0x80}},{{0x40,0x40},{0x80,0x80},{0x80,0x80}}};
+ for(unsigned pin=0;pin<16;++pin)for(unsigned width=0;width<=5;++width){
+  uint32_t mode[2]={9,9};bool valid=TGLDklDPMode::select(pin,width,mode);
+  assert(valid==(pin<=6&&(width==1||width==2||width==4)));
+  if(valid){unsigned i=width==1?0:width==2?1:2;
+   assert(mode[0]==expected[pin][i][0]&&mode[1]==expected[pin][i][1]);}
+  else assert(mode[0]==0&&mode[1]==0);
+ }
+
  int lock;object.tglDekelLock=&lock;
+ // DP-alt shares physical DKL banking and HBR divider corrections, while
+ // retaining native pin/lane selection. No fixed-DP policy bit is added.
+ object.tglDPAltCandidates=8;
+ {PortFixture f(3);*reinterpret_cast<uint32_t *>(f.port+0x550)=3;
+  *reinterpret_cast<uint32_t *>(f.port+0x128)=10;
+  *reinterpret_cast<uint32_t *>(f.port+0x580+0x35*4)=0x20D8;
+  uint32_t value=0x500;assert(XE::tglDekelAccess(f.port,0x35,true,value));
+  assert(value==0xA00);assert(!object.tglLegacyTCEligible(3));}
+ object.tglDPAltCandidates=0;
+
  object.orgTGLReadDekel=(uintptr_t)nativeRead;object.orgTGLWriteDekel=(uintptr_t)nativeWrite;
  // Independent literal coordinates from the Linux v6.12 register definitions.
  const uint32_t phy[]={0x168000,0x169000,0x16A000,0x16B000,0x16C000,0x16D000};

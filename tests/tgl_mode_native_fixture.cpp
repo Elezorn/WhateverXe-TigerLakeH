@@ -24,13 +24,20 @@ struct IORegistryEntry {
 };
 void tglConnectionRecord(void*,unsigned,bool,uint32_t,uint32_t,void*){}
 void tglAUXRecord(void*,unsigned,bool,uint32_t,uint32_t,uint32_t){}
+bool coldReady=true;
+bool tglDPAltColdReady(void*){return coldReady;}
 struct XE {
+ uint32_t tglDPAltCandidates=0;void *tglObservationController=nullptr;
  static void tglRecordStartOrder(unsigned,void*,unsigned=9,uint64_t=0,uint64_t=0,uint64_t=0) {}
  static void tglRecordNativeModeBinding(void *,uint32_t,uint32_t) {}
  TGLNativeFiaContext tglNativeFiaContext; bool tglNativeFiaReady=false; uint32_t tglModularProbed=0;
  uintptr_t tglNativeFiaBase=0,orgTGLPortReadReg=0,orgTGLPortWriteReg=0;
  uint32_t tglNativeFiaReads=0,tglNativeFiaWrites=0;
  bool tglLegacyTCEligible(uint32_t ddi)const{return ddi>=3&&ddi<=6;}
+ static bool tglDPAltFia(void *port,TGLFiaPort &fia) {
+  auto config=*reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port)+0x548);
+  TGLTypeCPort tc;return coldReady && TGLTypeCPort::resolve(config[0],tc) && tc.resolveFia(0x10,fia);
+ }
  static bool tglNativeFiaAccess(void*,uint32_t,uintptr_t,bool,TGLNativeFia&);
  static uint32_t wrapTGLPortReadReg(void*,uint32_t);
  static void wrapTGLPortWriteReg(void*,uint32_t,uint32_t);
@@ -91,6 +98,9 @@ int main(int argc,char **argv){
  int32_t disp;std::memcpy(&disp,m+0x5fe3a,4);const auto vt=0x5fe3e + disp;
  *reinterpret_cast<uintptr_t*>(m+vt+0x148)=(uintptr_t)baseCall;
  base=(Fn)(m+0x1b4c8);native=(Fn)(m+0x5fcb8);instance.orgTGLSetPortMode=(uintptr_t)native;
+ reset(3,1);instance.tglDPAltCandidates=8;coldReady=false;
+ assert(XE::wrapTGLSetPortMode(port,3)==kIOReturnNotReady && !reads && !writes && !powerGets);
+ coldReady=true;instance.tglDPAltCandidates=0;
  unsigned cases=0;
  for(bool skipPower:{false,true})for(unsigned d=3;d<=8;++d)for(unsigned requested:{3u,4u})for(bool isReady:{false,true}){
   controller[0xc58]=skipPower?2:0;const unsigned powerCalls=skipPower?0:1;
@@ -176,10 +186,11 @@ int main(int argc,char **argv){
  instance.orgTGLPortWriteReg=reinterpret_cast<uintptr_t>(writeReg);
  jump(m+0x1fe8e,reinterpret_cast<uintptr_t>(XE::wrapTGLPortReadReg));
  jump(m+0x1fea8,reinterpret_cast<uintptr_t>(XE::wrapTGLPortWriteReg));
- for(unsigned d=3;d<=6;++d){
+ for(unsigned requested:{3U,4U})for(unsigned d=3;d<=6;++d){
+  instance.tglDPAltCandidates=requested==3?0x78:0;
   const auto bit=1u<<((d-3)%2);reset(d,d<5?bit:0);ready2=d>=5?bit:0;
   owned2=0x8000000e;const auto before=owned2;
-  assert(XE::wrapTGLSetPortMode(port,4)==0&&mode()==4&&powerGets==1&&powerPuts==0);
+  assert(XE::wrapTGLSetPortMode(port,requested)==0&&mode()==requested&&powerGets==1&&powerPuts==0);
   assert(d<5?owned==(0x40000000u|bit):owned==0x40000000u);
   if(d>=5)assert(owned2==(before|bit));
   assert(XE::wrapTGLSetPortMode(port,0)==0&&mode()==0&&powerGets==powerPuts);

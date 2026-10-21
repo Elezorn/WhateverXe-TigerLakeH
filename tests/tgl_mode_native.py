@@ -7,7 +7,7 @@ if hashlib.sha256(a.donor.read_bytes()).hexdigest()!='c004fc1ac9ee4157e2e12736f4
 r=Path(__file__).resolve().parents[1];s=(a.source or r/'WhateverXe/kern_xe.cpp').read_text()
 # Verify the production admission bytes, not just the fixture's ready flag.
 donor=a.donor.read_bytes()
-for name,offset in [('modeEntry',0x5fcb8),('modeFailure',0x5ffeb),('modeReturn',0x6010e),('hotplugModeCall',0x74a4b)]:
+for name,offset in [('modeEntry',0x5fcb8),('modeFailure',0x5ffeb),('modeReturn',0x6010e),('hotplugModeCall',0x74a4b),('laneGetEntry',0x602cc),('laneSetEntry',0x603e8)]:
  values=re.search(r'const uint8_t '+name+r'\[\] \{([^}]+)\}',s).group(1)
  expected=bytes(int(v.strip(),0) for v in values.split(','))
  assert donor[offset:offset+len(expected)]==expected,name

@@ -13,7 +13,7 @@ struct OSData:OSObject {
 struct IOService {OSObject *property {};unsigned reads {};OSObject *getProperty(const char *n){assert(!strcmp(n,"tgl-tc-wiring"));++reads;return property;}};
 struct IORegistryEntry {
  uint32_t record[10] {},candidates {};unsigned writes {};
- void setProperty(const char *name,uint32_t value,unsigned bits){assert(!strcmp(name,"WhateverXeTCDPCandidates")&&bits==32);candidates=value;}
+ void setProperty(const char *name,uint32_t value,unsigned bits){assert(bits==32);if(!strcmp(name,"WhateverXeDPAltCandidates"))return;assert(!strcmp(name,"WhateverXeTCDPCandidates"));candidates=value;}
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  void setProperty(const char *name,const void *data,unsigned length){assert(!strcmp(name,"TGLTCWiring")&&length==sizeof(record));memcpy(record,data,length);++writes;}
 };
@@ -25,6 +25,8 @@ struct XE {
  // FIELDS
  uintptr_t orgTGLLaneMask {};
  static uint32_t wrapTGLLaneMask(void *);
+ static bool tglDPAltFia(void*,TGLFiaPort&){return false;}
+ static uint32_t wrapTGLPortReadReg(void*,uint32_t){assert(false);return 0;}
 };
 XE object,*callbackXE=&object;
 // FUNCTIONS

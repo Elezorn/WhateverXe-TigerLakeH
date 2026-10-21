@@ -23,7 +23,20 @@ int main(int argc,char **argv){
   auto r=parse(b.data(),b.size(),!strcmp(argv[1],"12")?Family::TigerLake:Family::AlderLakeN);auto w=r.hdmi(3);
   printf("status=%u bdb=%u present=%x unmapped=%u ambiguous=%x hdmi=%x pins=%u,%u,%u valid=%u\n",unsigned(r.status),r.version,r.present,r.unmapped,r.ambiguous,w.hdmi,w.ddc[0],w.ddc[1],w.ddc[2],w.valid);
   for(unsigned d=0;d<9;++d)if(r.present&(1U<<d)){auto q=r.port[d];printf("ddi=%u type=%x dvo=%u ddc=%u aux=%x flags=%x caps=%x\n",d,q.type,q.dvo,q.ddc,q.aux,q.flags,q.capabilities);}
+  printf("panel valid=%u type=%u ddi=%u low=%u hobl=%u\n",r.panel.valid,r.panel.type,r.panel.ddi,r.panel.lowSwing,r.panel.hobl);
   return !r.valid();
+ }
+ // DP-alt firmware admission is independent of fixed-DP policy and mode.
+ for(unsigned d=3;d<9;++d) {
+  Ports q;q.status=Status::Valid;q.present=1U<<d;
+  q.port[d]={0x68c6,9,0,d==3?0x30U:(d+1)*0x10U,0xc0,1};
+  assert(q.tglDPAltCandidates(0x1f8)==(1U<<d));
+  assert(q.tglDPAltCandidates(0x18)==(d<5?1U<<d:0));
+  auto bad=q;bad.port[d].capabilities=2;assert(!bad.tglDPAltCandidates(0x1f8));
+  bad=q;bad.port[d].aux=0x40;assert(!bad.tglDPAltCandidates(0x1f8));
+  bad=q;bad.port[d].type|=0x1000;assert(!bad.tglDPAltCandidates(0x1f8));
+  bad=q;bad.port[d].flags|=4;assert(!bad.tglDPAltCandidates(0x1f8));
+  bad=q;bad.present|=1;bad.port[0]=q.port[d];assert(!bad.tglDPAltCandidates(0x1f8));
  }
  // HDMI capabilities are authoritative even if firmware's DVO label is DP.
  for(auto family:{Family::TigerLake,Family::AlderLakeN})for(unsigned mask=1;mask<4;++mask)
@@ -90,5 +103,38 @@ int main(int argc,char **argv){
  assert(!region(op.data(),8191,0x80000000).valid);
  // Deterministic bounded mutation sweep: no reads outside declared buffers.
  unsigned seed=7;for(unsigned n=0;n<2000;++n){auto b=bytes;seed=seed*1664525+1013904223;b[seed%b.size()]^=uint8_t(seed>>24);checksum(b);(void)parse(b.data(),b.size(),Family::TigerLake);}
- puts("PASS firmware bounds/checksum diagnostics/versions, DVO generation maps, HDMI pin permutations, capability vs mode, overrides and OpRegion addresses");
+ // Optional panel blocks: malformed/missing panel data cannot remove HDMI.
+ auto panelTable=table({{0x78C6,10,0,0x40},{0x60D2,1,2}});
+ auto append=[](std::vector<uint8_t>&b,unsigned id,unsigned n) {
+  auto at=b.size();b.resize(at+3+n);b[at]=id;w16(b,at+1,n);
+  w16(b,24,b.size());w16(b,68,b.size()-48);return at+3;
+ };
+ auto options=append(panelTable,40,1);panelTable[options]=2;
+ auto edp=append(panelTable,27,212);panelTable[edp+205]=1;
+ auto power=append(panelTable,44,56);checksum(panelTable);
+ auto panel=parse(panelTable.data(),panelTable.size(),Family::TigerLake);
+ assert(panel.valid()&&panel.hdmi(3).hdmi==2&&panel.panel.valid);
+ assert(panel.panel.type==2&&panel.panel.ddi==0&&!panel.panel.lowSwing&&!panel.panel.hobl);
+ for(unsigned n=0;n<16;++n) {
+  auto b=panelTable;b[options]=n;memset(b.data()+edp+204,0,8);
+  w16(b,power+54,1U<<n);
+  auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.panel.valid&&q.panel.lowSwing&&q.panel.hobl&&q.panel.type==n);
+ }
+ for(unsigned bad=0;bad<5;++bad) {
+  auto b=panelTable;
+  if(bad==0)b[options]=255;
+  if(bad==1)w16(b,edp-2,211);
+  if(bad==2)w16(b,power-2,55);
+  if(bad==3)append(b,40,1);
+  if(bad==4)w16(b,78+2,0x60D6); // no internal connector
+  auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.valid()&&q.hdmi(3).hdmi==2&&!q.panel.valid);
+ }
+ for(size_t n=power;n<panelTable.size();++n) {
+  auto b=panelTable;b.resize(n);w16(b,24,b.size());w16(b,68,b.size()-48);
+  auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.valid()&&!q.panel.valid);
+ }
+ puts("PASS firmware bounds, checksum diagnostics, connector maps, optional panel facts and OpRegion addresses");
 }

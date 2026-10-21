@@ -92,6 +92,17 @@ On supported GPUs, WhateverXe also normalizes the detected Intel Management
 Engine device name to `IMEI`, as WhateverGreen does. A separate ACPI rename
 from `HECI` or `MEI` to `IMEI` is unnecessary.
 
+### Internal-panel brightness
+
+Tiger Lake laptops need a PNLF ACPI device under the actual iGPU namespace,
+with `_HID=APP0002`, `_CID=backlight`, and `_UID=19`. Adapt the SSDT scope to
+the firmware's ACPI path; the IORegistry name `IGPU` may be a runtime rename.
+WEX supplies a missing generic 16-bit brightness profile for that PNLF device
+when the internal framebuffer reports a 0–65535 backlight range. Existing
+Apple/custom profiles are preserved. PNLF registration alone does not prove
+that brightness reaches the panel; PWM behavior still depends on the display
+backend. Mini PCs without an internal panel do not need PNLF.
+
 ### DVMT
 
 Set **DVMT Pre-Allocated to 96MB** in the BIOS/UEFI settings where possible.
@@ -131,6 +142,7 @@ Alder Lake-N / Twin Lake.
 
 | Argument | Purpose |
 | --- | --- |
+| `-wex-display-trace` | Enable detailed Tiger Lake display-transition and PHY diagnostics. Disabled by default. |
 | `gfxrst=` | Boot framebuffer handoff: 0 automatic (default), 1 reset, 2 copy, 3 clear, 4 disable. |
 | `-wexdbg` | Enable debug logging in a debug build. |
 | `-wexoff` | Disable WhateverXe. |
@@ -148,23 +160,34 @@ installation and functional checks on Alder Lake-N across all six OS families.
 These checks do not establish compatibility with every codec, application or GPU
 in the table.
 
+Experimental Tiger Lake laptop support has been verified on Big Sur with an
+internal 1366×768 eDP panel and simultaneous 1920×1080 at 60 Hz output through
+a USB-C DP-alt-to-HDMI adapter. Connector selection uses firmware VBT data;
+the current DP-alt backend admits TC1–TC4; TC1 and TC3 have been tested. This does not establish support for
+every laptop, USB-C port, adapter or dock.
+Internal-panel brightness through the standard slider and keyboard controls,
+and three simultaneous displays (the internal panel plus two external outputs)
+have also been verified on the tested Big Sur laptop configuration.
+
 ### Known issues and limits
 
 - VA image conversion can crash with a null-pointer access.
 - DisplayPort reconnection can cause a black screen or system hang, including
   on Sequoia and Tahoe.
 - Occasional Safari frame drops have been observed.
-- Three simultaneous displays, system sleep, higher resolutions and other
-  connector layouts require further validation. USB-C and internal display
-  support are planned below.
+- Four simultaneous displays are outside the current three-pipe driver scope.
+- System sleep, higher resolutions and other
+  connector layouts require further validation. The experimental DP-alt path
+  currently keeps TC-cold blocked for the boot session; power management,
+  reconnect and sleep/wake on this path need further validation.
 
 ## Roadmap
 
 ### Planned
 
 - Alder Lake and Raptor Lake S/H/P/U support
-- USB-C display output
-- Internal displays
+- Additional USB-C ports, adapters and dock configurations
+- Broader internal-display and laptop power-management support
 
 ### Not Planned
 
