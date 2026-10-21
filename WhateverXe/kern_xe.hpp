@@ -640,6 +640,8 @@ private:
  bool tglDPAltFiaReady {},tglDPModeReplaceReady {};
  mach_vm_address_t orgTGLConfiguredLanes {},orgTGLFIALaneCount {};
  static bool tglDPAltFia(void *port,TGLFiaPort &fia);
+ bool tglDPAUXHealthReady {};
+ static bool tglDPAUXReady(void *port);
  static uint32_t wrapTGLConfiguredLanes(void *port);
  static void wrapTGLFIALaneCount(void *port,uint32_t lanes);
  static bool tglNativeFiaAccess(void *port,uint32_t reg,uintptr_t caller,bool write,TGLNativeFia &mapping);
