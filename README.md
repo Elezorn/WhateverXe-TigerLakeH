@@ -160,28 +160,28 @@ installation and functional checks on Alder Lake-N across all six OS families.
 These checks do not establish compatibility with every codec, application or GPU
 in the table.
 
-Experimental Tiger Lake laptop support has been verified on Big Sur with an
-internal 1366×768 eDP panel and simultaneous 1920×1080 at 60 Hz output through
-a USB-C DP-alt-to-HDMI adapter. Connector selection uses firmware VBT data;
-the current DP-alt backend admits TC1–TC4; TC1 and TC3 have been tested. This does not establish support for
-every laptop, USB-C port, adapter or dock.
-Internal-panel brightness through the standard slider and keyboard controls,
-and three simultaneous displays (the internal panel plus two external outputs)
-have also been verified on the tested Big Sur laptop configuration.
-Internal-panel display sleep/wake has been verified with HDMI connected;
-this does not qualify system sleep or USB-C wake.
+Experimental Tiger Lake laptop support has been verified from Big Sur through
+Tahoe with a 1366×768 internal eDP panel, standard brightness control and three
+simultaneous displays (the internal panel plus two 1920×1080 at 60 Hz outputs).
+Monterey through Tahoe were checked with HDMI and a USB-C DP-alt-to-HDMI adapter
+connected, including display sleep/wake and Metal compute/render checks.
+HDMI and both tested USB-C ports also passed disconnect/reconnect checks on Tahoe.
+Connector selection uses firmware VBT data; the current DP-alt backend admits
+TC1–TC4, with TC1 and TC3 tested. These results do not qualify every laptop,
+USB-C port, adapter, dock, or system sleep.
 
 ### Known issues and limits
 
 - VA image conversion can crash with a null-pointer access.
-- DisplayPort reconnection can cause a black screen or system hang, including
-  on Sequoia and Tahoe.
+- Fixed DisplayPort reconnection has caused black screens or system hangs,
+  including on Sequoia and Tahoe. The laptop DP-alt checks above do not clear
+  this separate path's known issue.
 - Occasional Safari frame drops have been observed.
 - Four simultaneous displays are outside the current three-pipe driver scope.
 - System sleep, higher resolutions and other
   connector layouts require further validation. The experimental DP-alt path
-  currently keeps TC-cold blocked for the boot session; power management,
-  reconnect and sleep/wake on this path need further validation.
+  currently keeps TC-cold blocked for the boot session; releasing that protection
+  for power savings and system sleep need further implementation and validation.
 
 ## Roadmap
 

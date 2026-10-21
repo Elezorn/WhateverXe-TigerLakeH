@@ -34,7 +34,7 @@ thread_local bool expectScope=true;thread_local uint32_t nativeResult=0;
 unsigned portIndex(void *p){for(unsigned i=0;i<6;++i)if(p==ports[i])return i;assert(false);return 0;}
 void nativeCheck(void *p){
  assert(!held);++nativeCalls;auto i=portIndex(p);
- IOLockLock(&coldLock);if(expectScope)assert(tglBootstrapTrial.cold.bootstrapHeld && tglBootstrapTrial.cold.refs[i+3][1]);IOLockUnlock(&coldLock);
+ IOLockLock(&coldLock);if(expectScope)assert(tglTCBootstrap.cold.bootstrapHeld && tglTCBootstrap.cold.refs[i+3][1]);IOLockUnlock(&coldLock);
 }
 uint32_t readNative(void *p,uint32_t address,void *data,uint32_t length){nativeCheck(p);assert(address==0x100 && length==4);if(!nativeResult)memset(data,0x5a,4);return nativeResult;}
 uint32_t writeNative(void *p,uint32_t address,void *data,uint32_t length){nativeCheck(p);assert(address==0x100 && length==4 && data);return nativeResult;}
@@ -43,8 +43,8 @@ uint32_t i2cNative(void *p,uint32_t command,uint32_t *packet,uint32_t length,uin
  return XE::wrapTGLWriteAUX(p,0x100,packet,4);
 }
 void reset(){
- tglBootstrapTrial={};tglBootstrapAUX={};tglPcodeGate={};nativeCalls=0;expectScope=true;nativeResult=0;
- auto &s=tglBootstrapTrial;s.lock=&coldLock;s.controller=reinterpret_cast<IOService *>(controller);s.base=static_cast<volatile uint8_t *>(noAccess);s.stage=2;
+ tglTCBootstrap={};tglBootstrapAUX={};tglPcodeGate={};nativeCalls=0;expectScope=true;nativeResult=0;
+ auto &s=tglTCBootstrap;s.lock=&coldLock;s.controller=reinterpret_cast<IOService *>(controller);s.base=static_cast<volatile uint8_t *>(noAccess);s.stage=2;
  s.cold.owner=reinterpret_cast<uintptr_t>(controller);s.cold.bootstrapHeld=true;s.cold.total=1;s.cold.phase=TGLTCCold::Phase::Blocked;
  *reinterpret_cast<void**>(controller+0xc40)=manager;
  for(unsigned i=0;i<6;++i){config[i][0]=i+3;*reinterpret_cast<void**>(ports[i]+0x548)=config[i];*reinterpret_cast<void**>(ports[i]+0x578)=manager;}
@@ -58,8 +58,8 @@ void run(unsigned kind,unsigned i){uint32_t data[5]{};uint32_t result;
  assert(result==nativeResult);if(kind==0 && !nativeResult)assert(data[0]==0x5a5a5a5a);
 }
 void balanced(){
- assert(tglBootstrapTrial.cold.total==1 && tglBootstrapTrial.cold.bootstrapHeld && tglPcodeGate.owner==0);
- for(auto &p:tglBootstrapTrial.cold.refs)for(auto n:p)assert(!n);
+ assert(tglTCBootstrap.cold.total==1 && tglTCBootstrap.cold.bootstrapHeld && tglPcodeGate.owner==0);
+ for(auto &p:tglTCBootstrap.cold.refs)for(auto n:p)assert(!n);
  for(auto &p:tglBootstrapAUX.i2cThreads)for(auto n:p)assert(!n);
  for(unsigned k=0;k<3;++k)assert(!tglBootstrapAUX.acquireErrors[k] && !tglBootstrapAUX.releaseErrors[k]);
 }
@@ -76,9 +76,9 @@ int main(){
  for(auto &w:workers)w.join();balanced();
  for(unsigned i=0;i<3;++i)assert(tglBootstrapAUX.nestedWrites[i]==50 && tglBootstrapAUX.peak[i]==2);
  assert(nativeCalls==300 && !tglBootstrapAUX.scopeOverflow);
- reset();tglBootstrapTrial.cold.phase=TGLTCCold::Phase::Unknown;uint32_t data=0;
+ reset();tglTCBootstrap.cold.phase=TGLTCCold::Phase::Unknown;uint32_t data=0;
  assert(XE::wrapTGLReadAUX(ports[0],0x100,&data,4)==kIOReturnNotReady && !nativeCalls && tglBootstrapAUX.acquireErrors[0]==1);
- assert(!data && tglBootstrapTrial.cold.total==1);
+ assert(!data && tglTCBootstrap.cold.total==1);
  assert(munmap(noAccess,0x140000)==0);
  puts("PASS actual bootstrap AUX adapter + read/write/I2C wrappers: 36 calls across 6 ports, preserved native errors/data, same-thread same-port nesting, 3-thread 150 I2C operations, bypass/readiness guards; all AUX refs return to bootstrap-only. MMIO PROT_NONE proves no new PCODE request under immutable bootstrap (ASan/UBSan).");
 }

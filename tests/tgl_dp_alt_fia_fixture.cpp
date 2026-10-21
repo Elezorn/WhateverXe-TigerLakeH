@@ -10,7 +10,7 @@ void IORecursiveLockUnlock(IORecursiveLock *p){p->unlock();}
 #define FunctionCast(name,address) reinterpret_cast<decltype(&name)>(address)
 bool coldReady=true;
 bool tglDPAltColdReady(void *controller){return controller && coldReady;}
-struct {volatile uint8_t *base;} tglBootstrapTrial;
+struct {volatile uint8_t *base;} tglTCBootstrap;
 struct XE {
  bool tglDPAltFiaReady=true,tglNativeFiaReady=true,tglActive=true;
  uint32_t tglDPAltCandidates=0x78;void *tglObservationController=(void*)1;
@@ -36,7 +36,7 @@ int main(){
  auto &size=*reinterpret_cast<uint32_t*>(access+0x60);
  *reinterpret_cast<uint32_t**>(port+0x548)=config;
  *reinterpret_cast<uint8_t**>(port+0x578)=access;
- *reinterpret_cast<volatile uint8_t**>(access+0x50)=base;tglBootstrapTrial.base=base;size=0x170000;
+ *reinterpret_cast<volatile uint8_t**>(access+0x50)=base;tglTCBootstrap.base=base;size=0x170000;
  IORecursiveLock lock;instance.tglModeTransitionLock=&lock;
  instance.orgTGLPortReadReg=reinterpret_cast<uintptr_t>(XE::wrapTGLPortReadReg);
  instance.orgTGLLaneMask=instance.orgTGLConfiguredLanes=reinterpret_cast<uintptr_t>(fallback);

@@ -225,7 +225,7 @@ static bool xelpMemoryMatches(IOPCIDevice *pci) {return xelpMemory.reservationKn
 static constexpr bool adlnFixedSysMemEnabled=false;
 static bool tglPcodeGateSerialize(void *,void *,OSSerialize *);
 static bool tglPcodeEDRAMSerialize(void *,void *,OSSerialize *);
-static bool tglBootstrapTrialSerialize(void *,void *,OSSerialize *);
+static bool tglTCBootstrapSerialize(void *,void *,OSSerialize *);
 static bool tglDPAltColdReady(void *controller);
 static TGLStartOrder::Trace tglStartOrder;
 static bool tglStartOrderSerialize(void *,void *,OSSerialize *serializer) {
@@ -10895,7 +10895,7 @@ bool XE::wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, O
 // explicit profile or a mismatched donor connector must not be partly applied.
 bool XE::wrapTGLGetOSInformation(void *controller) {
  const auto r=FunctionCast(wrapTGLGetOSInformation,callbackXE->orgTGLGetOSInformation)(controller);
- if(r)tglBeginBootstrapTrial(controller);
+ if(r)tglBeginTCColdProtection(controller);
  auto self=callbackXE;
  if(!r)return r;
  auto c=static_cast<uint8_t *>(controller);
@@ -13705,25 +13705,25 @@ struct TGLPcodeWait {
  void sleepMs(unsigned n) { IOSleep(n); }
 };
 
-// Explicit opt-in transport trial, not generalized port admission. Retain
-// the early bootstrap token for this whole boot: no unqualified last-unblock
-// is sent while EFI/native uses have not yet been inventoried. Controller/map
-// stay retained and no further MMIO is issued by this trial after publication.
-// The trial flag must be removed for subsequent ordinary boots.
-struct TGLBootstrapTrialState {
+// Controller-wide TC-cold protection for firmware-selected DP-alt ports.
+// Retain the bootstrap token, controller and map for this boot: EFI/native
+// uses are not yet fully inventoried, so zero AUX refs cannot permit unblock.
+// -wex-tc-bootstrap also enables explicit transport/readout diagnostics;
+// ordinary DP-alt operation does not require that diagnostic argument.
+struct TGLTCBootstrapState {
  TGLTCCold cold;
  IOLock *lock {}; IOService *controller {}; IOMemoryMap *mapping {};
  volatile uint8_t *base {};uint32_t stage {};uint64_t record[16] {};
 };
-static TGLBootstrapTrialState tglBootstrapTrial;
+static TGLTCBootstrapState tglTCBootstrap;
 static bool tglDPAltColdReady(void *controller) {
- auto &b=tglBootstrapTrial;
+ auto &b=tglTCBootstrap;
  return controller && b.controller==controller &&
   __atomic_load_n(&b.stage,__ATOMIC_ACQUIRE)==2 && b.record[1]==0 &&
   b.record[4]==0 && b.record[12] && b.record[11]==static_cast<uint32_t>(TGLTCCold::Phase::Blocked);
 }
-struct TGLBootstrapTrialIO {
- TGLBootstrapTrialState &state;uintptr_t thread;
+struct TGLTCBootstrapIO {
+ TGLTCBootstrapState &state;uintptr_t thread;
  void coldLock(){IOLockLock(state.lock);}void coldUnlock(){IOLockUnlock(state.lock);}
  bool pcodeTryLock(){return tglPcodeGate.tryAcquire(thread)==TGLPcodeGate::Status::Acquired;}
  void pcodeUnlock(){tglPcodeGate.release(thread);}
@@ -13732,10 +13732,10 @@ struct TGLBootstrapTrialIO {
  uint64_t nowUs(){uint64_t t,n;clock_get_uptime(&t);absolutetime_to_nanoseconds(t,&n);return n/1000;}
  void delayUs(unsigned n){IODelay(n);}void sleepMs(unsigned n){IOSleep(n);}
 };
-static void tglBootstrapTrialRun(void *controller,bool ready) {
- auto &s=tglBootstrapTrial;uint32_t expected=0;
+static void tglTCBootstrapRun(void *controller,bool ready) {
+ auto &s=tglTCBootstrap;uint32_t expected=0;
  if(!__atomic_compare_exchange_n(&s.stage,&expected,1,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED))return;
- struct Publish {TGLBootstrapTrialState &s;~Publish(){__atomic_store_n(&s.stage,2,__ATOMIC_RELEASE);}} publish {s};
+ struct Publish {TGLTCBootstrapState &s;~Publish(){__atomic_store_n(&s.stage,2,__ATOMIC_RELEASE);}} publish {s};
  auto q=s.record;q[0]=348;q[1]=10;q[14]=ready;
  uint64_t t;clock_get_uptime(&t);absolutetime_to_nanoseconds(t,q+2);
  if(!ready || !controller)return;
@@ -13751,7 +13751,7 @@ static void tglBootstrapTrialRun(void *controller,bool ready) {
  q[1]=13;s.lock=IOLockAlloc();if(!s.lock)return;
  s.controller=static_cast<IOService *>(controller);s.mapping=map;s.base=base;
  s.controller->retain();s.mapping->retain();
- TGLBootstrapTrialIO io {s,reinterpret_cast<uintptr_t>(current_thread())};
+ TGLTCBootstrapIO io {s,reinterpret_cast<uintptr_t>(current_thread())};
  const auto result=s.cold.beginBootstrap(io,reinterpret_cast<uintptr_t>(controller));
  q[1]=0;q[4]=static_cast<uint32_t>(result.status);q[5]=static_cast<uint32_t>(result.transport.status);
  q[6]=result.transport.mailbox;q[7]=result.transport.data;q[8]=result.transport.data1;
@@ -13762,7 +13762,7 @@ static void tglBootstrapTrialRun(void *controller,bool ready) {
 // Upper AUX runtime attachment under the IMMUTABLE whole-boot bootstrap.
 // This experiment never removes bootstrap or performs a final AUX unblock.
 // It does not claim Mode admission/drain coverage. No port pointer survives
-// the native call; the controller/map/cold lock remain held by the trial.
+// the native call; the controller/map/cold lock remain held by the controller-wide protection.
 struct TGLBootstrapAUXStats {
  uint32_t enabled {},stopSeen {};
  uint64_t calls[3] {},bypass[3] {},acquireErrors[3] {},releaseErrors[3] {},nativeErrors[3] {};
@@ -13772,7 +13772,7 @@ struct TGLBootstrapAUXStats {
 static TGLBootstrapAUXStats tglBootstrapAUX;
 template<class Operation> static uint32_t tglInvokeBootstrapAUX(bool ready,unsigned kind,void *port,Operation operation) {
  if(!ready)return operation();
- auto &stats=tglBootstrapAUX;auto &state=tglBootstrapTrial;
+ auto &stats=tglBootstrapAUX;auto &state=tglTCBootstrap;
  __atomic_fetch_add(&stats.calls[kind],1,__ATOMIC_RELAXED);
  auto p=static_cast<uint8_t *>(port);
  auto config=p?*reinterpret_cast<uint32_t **>(p+0x548):nullptr;
@@ -13781,7 +13781,7 @@ template<class Operation> static uint32_t tglInvokeBootstrapAUX(bool ready,unsig
     *reinterpret_cast<void **>(p+0x578)!=*reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(state.controller)+0xC40)) {
   __atomic_fetch_add(&stats.bypass[kind],1,__ATOMIC_RELAXED);return operation();
  }
- TGLBootstrapTrialIO io {state,reinterpret_cast<uintptr_t>(current_thread())};
+ TGLTCBootstrapIO io {state,reinterpret_cast<uintptr_t>(current_thread())};
  const auto owner=reinterpret_cast<uintptr_t>(state.controller);
  if(!state.cold.bootstrapReady(io,owner)) {
   __atomic_fetch_add(&stats.acquireErrors[kind],1,__ATOMIC_RELAXED);return kIOReturnNotReady;
@@ -13812,7 +13812,7 @@ template<class Operation> static uint32_t tglInvokeBootstrapAUX(bool ready,unsig
  return result.operationResult;
 }
 static bool tglBootstrapAUXSerialize(void *,void *,OSSerialize *serializer) {
- uint64_t q[60] {};q[0]=353;auto &s=tglBootstrapAUX;auto &b=tglBootstrapTrial;
+ uint64_t q[60] {};q[0]=353;auto &s=tglBootstrapAUX;auto &b=tglTCBootstrap;
  q[1]=__atomic_load_n(&s.enabled,__ATOMIC_ACQUIRE);q[2]=__atomic_load_n(&b.stage,__ATOMIC_ACQUIRE);
  if(q[1] && q[2]==2){
   IOLockLock(b.lock);q[3]=b.cold.bootstrapHeld;q[4]=b.cold.total;q[5]=static_cast<uint64_t>(b.cold.phase);
@@ -13833,26 +13833,26 @@ static bool tglBootstrapAUXSerialize(void *,void *,OSSerialize *serializer) {
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
 
-static bool tglBootstrapTrialSerialize(void *,void *,OSSerialize *serializer) {
- uint64_t q[17] {};q[16]=__atomic_load_n(&tglBootstrapTrial.stage,__ATOMIC_ACQUIRE);
- if(q[16]==2)memcpy(q,tglBootstrapTrial.record,sizeof(tglBootstrapTrial.record));
+static bool tglTCBootstrapSerialize(void *,void *,OSSerialize *serializer) {
+ uint64_t q[17] {};q[16]=__atomic_load_n(&tglTCBootstrap.stage,__ATOMIC_ACQUIRE);
+ if(q[16]==2)memcpy(q,tglTCBootstrap.record,sizeof(tglTCBootstrap.record));
  auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
-void XE::tglBeginBootstrapTrial(void *controller) {
+void XE::tglBeginTCColdProtection(void *controller) {
  // Qualified DP-alt ports need TC-cold blocked before the native mode/FIA
  // transaction. Keep the controller-wide bootstrap token until inherited
  // and runtime use can be fully inventoried; never unblock from a zero AUX count.
  if(!callbackXE->tglDPAltCandidates && !checkKernelArgument("-wex-tc-bootstrap"))return;
- tglBootstrapTrialRun(controller,callbackXE->tglPcodeNativeReady());
- if(callbackXE->tglBootstrapAUXReady && __atomic_load_n(&tglBootstrapTrial.stage,__ATOMIC_ACQUIRE)==2 &&
-    tglBootstrapTrial.controller==controller && tglBootstrapTrial.lock && tglBootstrapTrial.record[4]==0) {
+ tglTCBootstrapRun(controller,callbackXE->tglPcodeNativeReady());
+ if(callbackXE->tglBootstrapAUXReady && __atomic_load_n(&tglTCBootstrap.stage,__ATOMIC_ACQUIRE)==2 &&
+    tglTCBootstrap.controller==controller && tglTCBootstrap.lock && tglTCBootstrap.record[4]==0) {
   __atomic_store_n(&tglBootstrapAUX.enabled,1,__ATOMIC_RELEASE);
   if(auto live=OSSerializer::forTarget(nullptr,tglBootstrapAUXSerialize)) {
    IORegistryEntry::getRegistryRoot()->setProperty("TGLBootstrapAUX",live);live->release();
   }
  }
- if(auto live=OSSerializer::forTarget(nullptr,tglBootstrapTrialSerialize)) {
+ if(auto live=OSSerializer::forTarget(nullptr,tglTCBootstrapSerialize)) {
   IORegistryEntry::getRegistryRoot()->setProperty("TGLTCBootstrapTrial",live);live->release();
  }
 }
@@ -13862,7 +13862,7 @@ void XE::tglBeginBootstrapTrial(void *controller) {
 static TGLBootReadout::Result tglBootReadout;
 static uint32_t tglBootReadoutStage;
 struct TGLBootReadoutIO {
- uint8_t *power;TGLBootstrapTrialState &state;
+ uint8_t *power;TGLTCBootstrapState &state;
  void (*get)(void *,uint32_t);void (*put)(void *,uint32_t);
  bool admissionReady(){return true;} // host identity/lifetime proof below
  uint32_t refs(unsigned i){return *reinterpret_cast<uint32_t *>(power+0x20+4*i);}
@@ -13875,7 +13875,7 @@ void XE::wrapTGLPowerInit(void *power,void *controller) {
  FunctionCast(wrapTGLPowerInit,self->orgTGLPowerInit)(power,controller);
  uint32_t expected=0;
  if(!__atomic_compare_exchange_n(&tglBootReadoutStage,&expected,1,false,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED))return;
- auto &state=tglBootstrapTrial;auto c=static_cast<uint8_t *>(controller);auto p=static_cast<uint8_t *>(power);
+ auto &state=tglTCBootstrap;auto c=static_cast<uint8_t *>(controller);auto p=static_cast<uint8_t *>(power);
  if(self->tglBootReadoutReady && __atomic_load_n(&state.stage,__ATOMIC_ACQUIRE)==2 &&
     state.controller==controller && state.cold.bootstrapHeld && state.cold.phase==TGLTCCold::Phase::Blocked &&
     power && *reinterpret_cast<void **>(c+0xC8)==power && *reinterpret_cast<void **>(p+0x10)==controller &&
@@ -16363,7 +16363,7 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 // Resolve only a firmware-qualified DP-alt port on the retained controller.
 // Topology reads require the existing TC-cold hold; no board/connector table.
 bool XE::tglDPAltFia(void *port,TGLFiaPort &fia) {
- auto self=callbackXE;auto p=static_cast<uint8_t *>(port);auto &b=tglBootstrapTrial;
+ auto self=callbackXE;auto p=static_cast<uint8_t *>(port);auto &b=tglTCBootstrap;
  if(!p || !self->tglDPAltFiaReady || !self->tglNativeFiaReady ||
     !tglDPAltColdReady(self->tglObservationController))return false;
  auto config=*reinterpret_cast<uint32_t **>(p+0x548);
@@ -16542,7 +16542,7 @@ void XE::wrapTGLSetDklDPMode(void *port) {
 		(lanes != 1 && lanes != 2 && lanes != 4)) return;
 	uint32_t pin=0,selected[2]{};
 	if(mode==3) {
-		auto &b=tglBootstrapTrial;
+		auto &b=tglTCBootstrap;
   TGLFiaPort fia;if(!tglDPAltFia(port,fia))return;
   const auto owned=wrapTGLPortReadReg(port,fia.owned);
   if(owned==~0U || !(owned&fia.readyMask))return;

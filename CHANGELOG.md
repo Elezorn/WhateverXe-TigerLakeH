@@ -10,7 +10,7 @@ Xe-LP graphics compatibility for the configurations described in the [README](ht
 - Supports signed Data graphics bundles with Mod AMFIPass, without `amfi=0x80` or `ipc_control_port_options=0`.
 - Preserve debug information in the bundled dSYM before stripping the kext.
 - Tiger Lake and Alder Lake-N have completed the six-OS functional checks described in the README. Known issues and hardware coverage limits still apply.
-- Adds experimental Tiger Lake eDP, firmware-selected USB-C DP-alt output and standard internal-panel brightness support; laptop validation is currently limited to Big Sur.
+- Adds experimental Tiger Lake eDP, firmware-selected USB-C DP-alt output and standard internal-panel brightness support; laptop display and brightness checks cover Big Sur through Tahoe, with HDMI and USB-C reconnection checked on Tahoe.
 - Keep eDP Alternate Scrambler Reset synchronized with the sink during link training, fixing corrupted internal-panel output after display sleep.
 
 ## 0.2.3

@@ -7,7 +7,7 @@
 struct IORegistryEntry{static IORegistryEntry*getRegistryRoot(){static IORegistryEntry r;return &r;}template<class...T>void setProperty(T...){}};
 template<class...T>void tglTransitionRecord(T...){}
 bool tglQuietTraining(){return true;}
-struct {volatile uint8_t *base=nullptr;} tglBootstrapTrial;
+struct {volatile uint8_t *base=nullptr;} tglTCBootstrap;
 unsigned IOSimpleLockLockDisableInterrupt(void*){assert(false);return 0;}
 void IOSimpleLockUnlockEnableInterrupt(void*,unsigned){assert(false);}
 void IODelay(unsigned){assert(false);}

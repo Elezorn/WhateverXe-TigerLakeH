@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess,tempfile
 repo=Path(__file__).resolve().parents[1]
 s=(repo/'WhateverXe/kern_xe.cpp').read_text()
-state=s[s.index('struct TGLBootstrapTrialState'):s.index('static void tglBootstrapTrialRun(')]
+state=s[s.index('struct TGLTCBootstrapState'):s.index('static void tglTCBootstrapRun(')]
 adapter=s[s.index('struct TGLBootstrapAUXStats'):s.index('static bool tglBootstrapAUXSerialize(')]
 wrappers=s[s.index('uint32_t XE::wrapTGLReadAUX('):s.index('uint32_t XE::wrapTGLTrainingPattern(')]
 with tempfile.TemporaryDirectory(prefix='tgl-bootstrap-aux-') as directory:

@@ -369,7 +369,7 @@ private:
 	}
 	mach_vm_address_t orgTGLMailboxRead {}, orgTGLMailboxReadData {}, orgTGLMailboxWrite {};
 	static void tglEDRAMPCODE(void *manager);
- static void tglBeginBootstrapTrial(void *controller);
+ static void tglBeginTCColdProtection(void *controller);
  bool tglBootReadoutReady {};mach_vm_address_t orgTGLPowerInit {};
  TGLTCNativeFunctions tglTCNativeFunctions;
  static void tglRecordNativeModeBinding(void *port,uint32_t ddi,uint32_t requested);

@@ -31,7 +31,7 @@ struct XE {
  // FIELDS
  uintptr_t orgTGLGetOSInformation {},orgTGLGMBus {},orgTGLComputeLanes {},tglHDMILaneCaller=0x100;
  uint64_t tglNoPanelPlatform[0x1C0/8] {};
- static void tglBeginBootstrapTrial(void*){}
+ static void tglBeginTCColdProtection(void*){}
  static bool wrapTGLGetOSInformation(void *);
  static uint32_t wrapTGLGMBus(void *,uint32_t,uint32_t,void *);
  static bool wrapTGLComputeLanes(void *,const void *,uint32_t,uint32_t,uint32_t *);
