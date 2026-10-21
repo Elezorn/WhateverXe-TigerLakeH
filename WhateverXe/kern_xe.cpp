@@ -227,7 +227,6 @@ static bool tglPcodeGateSerialize(void *,void *,OSSerialize *);
 static bool tglPcodeEDRAMSerialize(void *,void *,OSSerialize *);
 static bool tglTCBootstrapSerialize(void *,void *,OSSerialize *);
 static bool tglDPAltColdReady(void *controller);
-static bool tglDPAUXHealthSerialize(void *,void *,OSSerialize *);
 static TGLStartOrder::Trace tglStartOrder;
 static bool tglStartOrderSerialize(void *,void *,OSSerialize *serializer) {
  uint64_t data[1+TGLStartOrder::Slots*(TGLStartOrder::Words+1)] {};
@@ -10799,20 +10798,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
    }
 			if (tglAUXLock) {
 				KernelPatcher::RouteRequest aux("__ZN17AppleIntelPortHAL13runAUXCommandEN14AppleIntelPort11AUX_CommandEPjjb", wrapTGLRunAUX, orgTGLRunAUX);
-                const auto entry=patcher.solveSymbol<mach_vm_address_t>(index,
-                    "__ZN17AppleIntelPortHAL13runAUXCommandEN14AppleIntelPort11AUX_CommandEPjjb",address,size);
-                static const uint8_t expected[] {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x50,0x48,0xff};
-                static const uint8_t lockField[] {0x48,0x8b,0xb8,0x30,0x0c,0x00,0x00};
-                const bool known=size>0x61BC0 && entry==address+0x61748 &&
-                    !memcmp(reinterpret_cast<const void *>(entry),expected,sizeof(expected)) &&
-                    !memcmp(reinterpret_cast<const void *>(entry+0x35),lockField,sizeof(lockField));
-                patcher.clearError();
 				const bool routed = patcher.routeMultiple(index, &aux, 1, address, size);
-                tglDPAUXHealthReady=routed && known && tglTCNativeFunctions.complete();
-                IORegistryEntry::getRegistryRoot()->setProperty("TGLDPAUXHealthReady",tglDPAUXHealthReady);
-                if(tglDPAUXHealthReady)if(auto live=OSSerializer::forTarget(nullptr,tglDPAUXHealthSerialize)) {
-                    IORegistryEntry::getRegistryRoot()->setProperty("TGLDPAUXHealth",live);live->release();
-                }
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteAUXCommands", routed);
 				patcher.clearError();
 			}
@@ -14034,24 +14020,7 @@ uint32_t XE::wrapTGLRunAUX(void *port, uint32_t command, uint32_t *packet, uint3
 	const auto header = packet && length >= 4 ? packet[0] : 0;
 	const uint32_t args = length | (static_cast<uint32_t>(flag) << 16);
 	tglAUXRecord(port, 0, false, 0, command, args, header, header);
-	// Extend the donor's existing recursive AUX lock over the new health
-    // check as well as the native command. Power refs alone do not serialize
-    // AUX users. Preserve the donor's lock order and normal caller cleanup.
-    auto self=callbackXE;const bool check=tglDPAUXRequired(port);
-    IORecursiveLock *lock=nullptr;
-    if(check) {
-        auto ctl=static_cast<uint8_t *>(self->tglObservationController);
-        if(ctl && self->tglTCNativeFunctions.controllerSlot &&
-           *self->tglTCNativeFunctions.controllerSlot==ctl &&
-           *reinterpret_cast<void **>(static_cast<uint8_t *>(port)+0x578)==
-           *reinterpret_cast<void **>(ctl+0xC40))
-            lock=*reinterpret_cast<IORecursiveLock **>(ctl+0xC30);
-    }
-    if(lock)IORecursiveLockLock(lock);
-    const auto result = (!check || (lock && tglDPAUXReady(port))) ?
-        FunctionCast(wrapTGLRunAUX, self->orgTGLRunAUX)(port, command, packet, length, flag) :
-        static_cast<uint32_t>(kIOReturnNotReady);
-    if(lock)IORecursiveLockUnlock(lock);
+	const auto result = FunctionCast(wrapTGLRunAUX, callbackXE->orgTGLRunAUX)(port, command, packet, length, flag);
 	tglAUXRecord(port, 0, true, result, command, args, header, packet && length >= 4 ? packet[0] : 0);
 	return result;
 }
@@ -16409,73 +16378,6 @@ bool XE::tglDPAltFia(void *port,TGLFiaPort &fia) {
  // An inaccessible bank must not be interpreted as ready/owned by native.
  return FunctionCast(wrapTGLPortReadReg,self->orgTGLPortReadReg)(port,fia.ready)!=~0U &&
   FunctionCast(wrapTGLPortReadReg,self->orgTGLPortReadReg)(port,fia.owned)!=~0U;
-}
-
-
-// Last sample and counters only; registry reads never access powered hardware.
-static uint32_t tglDPAUXHealth[9][8] {};
-static bool tglDPAUXHealthSerialize(void *,void *,OSSerialize *serializer) {
- uint32_t data[1+9*8] {2};
- for(unsigned d=0;d<9;++d)for(unsigned i=0;i<8;++i)
-  data[1+d*8+i]=__atomic_load_n(&tglDPAUXHealth[d][i],__ATOMIC_RELAXED);
- auto out=OSData::withBytes(data,sizeof(data));if(!out)return false;
- const bool ok=out->serialize(serializer);out->release();return ok;
-}
-
-bool XE::tglDPAUXRequired(void *port) {
- auto self=callbackXE;auto p=static_cast<uint8_t *>(port);
- if(!self->tglDPAUXHealthReady || !p)return false;
- auto c=*reinterpret_cast<uint32_t **>(p+0x548);
- // Preserve Combo/eDP, fixed DP and TBT behavior. Firmware chooses the ports.
- return c && c[0]<9 && (self->tglDPAltCandidates&(1U<<c[0])) && c[3]==1 &&
-    *reinterpret_cast<uint32_t *>(p+0x550)==3;
-}
-
-// Caller holds the donor controller's recursive AUX lock through the command.
-bool XE::tglDPAUXReady(void *port) {
- if(!tglDPAUXRequired(port))return true;
- auto self=callbackXE;auto p=static_cast<uint8_t *>(port);
- auto c=*reinterpret_cast<uint32_t **>(p+0x548);
- auto record=tglDPAUXHealth[c[0]];__atomic_fetch_add(record,1,__ATOMIC_RELAXED);
- uint32_t aux=~0U,first=~0U,last=~0U,wait=0,parent=~0U,fuse=~0U;bool ready=false;
- TGLFiaPort fia;TGLTypeCPort phy;
- if(self->tglDekelLock && tglDPAltFia(port,fia) && TGLTypeCPort::resolve(c[0],phy)) {
-  const auto access=*reinterpret_cast<uint8_t **>(p+0x578);
-  const auto length=*reinterpret_cast<uint32_t *>(access+0x60);
-  if(length<phy.phyRegister(0x236C)+4 || length<phy.hipRegister+4) {
-   __atomic_fetch_add(record+1,1,__ATOMIC_RELAXED);return false;
-  }
-  const auto owned=wrapTGLPortReadReg(port,fia.owned);
-  const auto state=wrapTGLPortReadReg(port,fia.ready);
-  aux=wrapTGLPortReadReg(port,0x45444);
-  parent=wrapTGLPortReadReg(port,0x45404);fuse=wrapTGLPortReadReg(port,0x42000);
-  const auto mask=3U<<(2*c[0]);
-  if(owned!=~0U && (owned&fia.readyMask) && state!=~0U && (state&fia.readyMask) &&
-     aux!=~0U && (aux&mask)==mask && parent!=~0U && (parent&0x15)==0x15 &&
-     fuse!=~0U && (fuse&0x07000000)==0x07000000) {
-   // TGL Type-C AUX requires uC health after power ACK. Like i915, allow
-   // up to 1 ms. Hold the shared bank lock only for each read, never the wait.
-   do {
-    const auto irq=IOSimpleLockLockDisableInterrupt(self->tglDekelLock);
-    auto hip=reinterpret_cast<volatile uint32_t *>(tglTCBootstrap.base+phy.hipRegister);
-    const auto saved=*hip;last=~0U;
-    if(saved!=~0U) {
-     *hip=phy.selectBank(saved,0x236C);(void)*hip;
-     last=*reinterpret_cast<volatile uint32_t *>(tglTCBootstrap.base+phy.phyRegister(0x236C));
-     *hip=saved;(void)*hip;
-    }
-    IOSimpleLockUnlockEnableInterrupt(self->tglDekelLock,irq);
-    if(!wait)first=last;
-    ready=last!=~0U && (last&0x8000U);
-    if(ready || last==~0U || wait==1000)break;
-    IODelay(10);wait+=10;
-   } while(true);
-  }
- }
- if(!ready)__atomic_fetch_add(record+1,1,__ATOMIC_RELAXED);
- const uint32_t values[]={aux,first,last,wait,parent,fuse};
- for(unsigned i=0;i<6;++i)__atomic_store_n(record+2+i,values[i],__ATOMIC_RELAXED);
- return ready;
 }
 
 uint32_t XE::wrapTGLConfiguredLanes(void *port) {

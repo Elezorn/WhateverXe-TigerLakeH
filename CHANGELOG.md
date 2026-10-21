@@ -11,7 +11,6 @@ Xe-LP graphics compatibility for the configurations described in the [README](ht
 - Preserve debug information in the bundled dSYM before stripping the kext.
 - Tiger Lake and Alder Lake-N have completed the six-OS functional checks described in the README. Known issues and hardware coverage limits still apply.
 - Adds experimental Tiger Lake eDP, firmware-selected USB-C DP-alt output and standard internal-panel brightness support; laptop display and brightness checks cover Big Sur through Tahoe, with HDMI and USB-C reconnection checked on Tahoe.
-- Check Type-C PHY readiness after AUX power acknowledgement and stop unready DP-alt AUX transactions.
 - Keep eDP Alternate Scrambler Reset synchronized with the sink during link training, fixing corrupted internal-panel output after display sleep.
 
 ## 0.2.3
