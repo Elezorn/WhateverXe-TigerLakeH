@@ -6,7 +6,7 @@ repo=Path(__file__).resolve().parents[1]
 source=(repo/"WhateverXe/kern_xe.cpp").read_text()
 if len(sys.argv)>1:
     source=subprocess.check_output(["git","-C",str(repo),"show",sys.argv[1]+":WhateverXe/kern_xe.cpp"],text=True)
-patterns=[r"void tglConnectionRecord\(.*?\n\}",r"uint32_t XE::wrapTGLProbePort\(.*?\n\}"]
+patterns=[r"void tglConnectionRecord\(.*?\n\}",r"uint32_t XE::wrapTGLProbePort\(.*?\n\}",r"uint32_t XE::wrapTGLHPDState\(.*?\n\}"]
 body="\n".join(re.search(p,source,re.S).group() for p in patterns)
 fixture=(repo/"tests/tgl_probe_fixture.cpp").read_text().replace("// PRODUCTION_FUNCTIONS",body)
 header=(repo/"WhateverXe/kern_xe.hpp").read_text()

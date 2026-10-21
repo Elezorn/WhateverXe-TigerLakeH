@@ -10,6 +10,7 @@
 struct IOService;
 #define arrsize(a) (sizeof(a)/sizeof((a)[0]))
 #define SYSLOG(...)
+#define FunctionCast(fn,address) reinterpret_cast<decltype(&fn)>(address)
 constexpr uint32_t tglConnectionEvents=7,tglConnectionCapacity=64;
 struct TGLConnectionRecord { uint64_t q[32]; };
 TGLConnectionRecord tglConnectionFirst[7][64] {},tglConnectionLast[7][64] {};
@@ -27,11 +28,16 @@ struct IORegistryEntry {
 };
 void tglAUXRecord(void *,uint32_t,bool,uint32_t,uint32_t,uint32_t) {}
 uint32_t providerProbe(void *);
+uint32_t nativeHPD(void *) {return 1;}
 struct XE {
  uint32_t tglModularProbed=0;
  bool tglActive=true;
+ bool tglNoPanel=false;
+ struct {uint32_t hdmi=0;} tglHDMIWiring;
  void *tglObservationController=nullptr;
  uintptr_t xelpProviderProbe=reinterpret_cast<uintptr_t>(providerProbe);
+ uintptr_t orgTGLHPDState=reinterpret_cast<uintptr_t>(nativeHPD);
+ static uint32_t wrapTGLHPDState(void *);
  bool xelpBindProbe(void*) {return xelpProviderProbe!=0;}
  // TC_WIRING_FIELDS
  static void tglRecordStartOrder(unsigned,void*,unsigned=9,uint64_t=0,uint64_t=0,uint64_t=0) {} static uint32_t wrapTGLProbePort(void *); };
@@ -63,6 +69,31 @@ int main(int argc,char **) {
  *reinterpret_cast<uint32_t **>(port+0x548)=config;
  *reinterpret_cast<uint8_t **>(port+0x578)=access;
  *reinterpret_cast<uint8_t **>(access+0x50)=mmio;
+ // No-panel must reject a real panel before reaching the provider, but must
+ // preserve HDMI-A, other external ports, and the ordinary panel-enabled path.
+ config[0]=0;object.tglNoPanel=true;
+ const auto savedProbe=object.xelpProviderProbe;object.xelpProviderProbe=1;
+ assert(XE::wrapTGLProbePort(port)==0); // calling the provider would fault
+ object.xelpProviderProbe=savedProbe;
+ object.tglHDMIWiring.hdmi=1;assert(XE::wrapTGLProbePort(port)==1);
+ object.tglHDMIWiring.hdmi=2;assert(XE::wrapTGLProbePort(port)==0);
+ config[0]=1;assert(XE::wrapTGLProbePort(port)==1);
+ config[0]=0;object.tglNoPanel=false;assert(XE::wrapTGLProbePort(port)==1);
+ object.tglHDMIWiring.hdmi=0;config[0]=4;
+ // HPD must be low before native probePortState reaches AUX, independently
+ // of probePortMode. Suppression must not inspect the powered register map.
+ auto savedHPD=object.orgTGLHPDState;object.orgTGLHPDState=1;
+ object.tglNoPanel=true;config[0]=0;
+ *reinterpret_cast<uint8_t **>(port+0x578)=mmio+0x160000;
+ assert(XE::wrapTGLHPDState(port)==0);
+ object.orgTGLHPDState=savedHPD;
+ *reinterpret_cast<uint8_t **>(port+0x578)=nullptr;
+ object.tglHDMIWiring.hdmi=1;assert(XE::wrapTGLHPDState(port)==1);
+ object.tglHDMIWiring.hdmi=2;assert(XE::wrapTGLHPDState(port)==0);
+ config[0]=1;assert(XE::wrapTGLHPDState(port)==1);
+ config[0]=0;object.tglNoPanel=false;assert(XE::wrapTGLHPDState(port)==1);
+ object.tglHDMIWiring.hdmi=0;config[0]=4;
+ *reinterpret_cast<uint8_t **>(port+0x578)=access;
  auto &length=*reinterpret_cast<uint32_t *>(access+0x60);length=size;
  auto &hpd=*reinterpret_cast<uint32_t *>(mmio+0xC4000);hpd=0;
  if(argc>1) tglConnectionLock=nullptr;

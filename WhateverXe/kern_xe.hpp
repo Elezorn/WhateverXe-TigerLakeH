@@ -268,6 +268,9 @@ private:
 	static IOMemoryDescriptor *wrapTGLAperture(void *fb, int aperture);
 	static void tglObserveScanout(void *fb, void *plane, uint32_t event, bool done, uint32_t result);
 	bool tglNoPanel {false};
+	bool tglPanelPowerPropertyReady {false};
+	bool tglNoPanelHPDReady {false};
+	static bool wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value);
 	bool tglHDMIB {false};
  TGLHDMIWiring tglHDMIWiring;
  bool tglHDMIWiringLoaded {},tglHDMIWiringExplicit {},tglHDMIWiringApplied {};

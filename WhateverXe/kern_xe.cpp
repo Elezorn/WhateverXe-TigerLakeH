@@ -9906,6 +9906,23 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				patcher.clearError();
 			}
 			if (tglActive) {
+				// Both power-on and power-off converge on this property update.
+				// Native getBuiltInFramebuffer returns null when there is no
+				// built-in port; the donor nevertheless dereferences its vtable.
+				// Replace only the metadata call, preserving the PPS sequence.
+				const auto fn = patcher.solveSymbol(index, "__ZN31AppleIntelFramebufferController15hwSetPanelPowerEj", address, size);
+				static const uint8_t expected[] {0x48,0x8B,0x07,0x48,0x8D,0x35,0x1D,0xDB,0x05,0x00,0xFF,0x90,0x68,0x02,0x00,0x00};
+				uint8_t replacement[] {0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x90,0x90,0x90,0x90};
+				const auto handler = reinterpret_cast<uintptr_t>(wrapTGLPanelPowerProperty);
+				memcpy(replacement+2,&handler,sizeof(handler));
+				auto site = reinterpret_cast<uint8_t *>(fn+0x45A);
+				if (fn == address+0x48652 && size >= 0x48ABC && !memcmp(site,expected,sizeof(expected))) {
+					patcher.routeBlock(fn+0x45A,replacement,sizeof(replacement));
+					tglPanelPowerPropertyReady = patcher.getError()==KernelPatcher::Error::NoError &&
+						!memcmp(site,replacement,sizeof(replacement));
+				}
+				IORegistryEntry::getRegistryRoot()->setProperty("TGLPanelPowerPropertyGuard",tglPanelPowerPropertyReady);
+				patcher.clearError();
 				if (framebufferPatchFlags.bits.FPFStolenMemorySize) {
 					const auto fn = patcher.solveSymbol(index, "__ZN31AppleIntelFramebufferController16getOSInformationEv", address, size);
 					// Selected platform +0x14 is copied to controller +0xDE8
@@ -10563,6 +10580,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			KernelPatcher::RouteRequest hpdRequest("__ZN17AppleIntelPortHAL11getHPDStateEv",
 				wrapTGLHPDState, orgTGLHPDState);
 			const bool hpdOK = patcher.routeMultiple(index, &hpdRequest, 1, address, size);
+			tglNoPanelHPDReady = hpdOK;
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGHPDObservationRouted", hpdOK);
 			patcher.clearError();
 			KernelPatcher::RouteRequest laneRequest("__ZN17AppleIntelPortHAL26getDklPhyLaneConfigBitMaskEv",
@@ -10578,6 +10596,13 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 		return false;
 	}
 	return false;
+}
+
+bool XE::wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value) {
+ if(framebuffer)return framebuffer->setProperty("AAPL,LCD-PowerState-ON",value);
+ static uint32_t skipped {};
+ IORegistryEntry::getRegistryRoot()->setProperty("TGLPanelPowerPropertySkipped",__sync_add_and_fetch(&skipped,1),32);
+ return false;
 }
 
 // Panel absence and HDMI routing are board inputs, not common-fix opt-ins.
@@ -10706,7 +10731,8 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  }
 	if (!tglSonomaSurfaceFramebufferReady || !callbackXE->tglPlatformNVRAMReady || !callbackXE->tglFBIRQReady || !callbackXE->tglProbeReady || !callbackXE->tglFramebufferInitReady || !callbackXE->tglDekelReady ||
 		(callbackXE->tglHDMIB && !callbackXE->tglGMBusReady) ||
-		!callbackXE->tglTopologyReady ||
+		!callbackXE->tglTopologyReady || !callbackXE->tglPanelPowerPropertyReady ||
+		(callbackXE->tglNoPanel && !callbackXE->tglNoPanelHPDReady) ||
 		(callbackXE->tglTrainingLeaseRequested && (!callbackXE->tglTrainingLeaseReady ||
 			!callbackXE->tglEnablePG || !callbackXE->tglDisablePG ||
 			!callbackXE->tglPortByDDI || !callbackXE->orgTGLPathLookup ||
@@ -12976,7 +13002,12 @@ uint32_t XE::wrapTGLProbePort(void *port) {
     // Binding is CPU-only and precedes the first probe's MMIO access.
     tglAUXRecord(port,7,false,0,0,0);
     uint32_t mode=0;
-    if(callbackXE->xelpBindProbe(callbackXE->tglObservationController))
+    // A no-panel topology alone only clears the built-in flags. The donor's
+    // port type still selects LightUpEDP, so do not probe that physical port.
+    // Explicit/firmware HDMI on DDI A remains an external display.
+    if(callbackXE->tglNoPanel && ddi==0 && !(callbackXE->tglHDMIWiring.hdmi&1))
+        IORegistryEntry::getRegistryRoot()->setProperty("TGLNoPanelProbeSuppressed",true);
+    else if(callbackXE->xelpBindProbe(callbackXE->tglObservationController))
         mode=reinterpret_cast<XELP::ProbePort>(callbackXE->xelpProviderProbe)(port);
     tglAUXRecord(port,7,true,mode,0,0);
     // Register a fixed-DP backend only after the provider's powered mode4
@@ -13134,6 +13165,15 @@ bool XE::wrapTGLFramebufferInit(void *framebuffer, void *controller, uint32_t in
 
 
 uint32_t XE::wrapTGLHPDState(void *port) {
+	// Native probePortState can continue to AUX even after mode0. Report HPD
+	// low as well so a physically attached but disabled panel is not probed.
+	if (port && callbackXE->tglNoPanel && !(callbackXE->tglHDMIWiring.hdmi&1)) {
+		auto config = *reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port)+0x548);
+		if (config && config[0]==0) {
+			IORegistryEntry::getRegistryRoot()->setProperty("TGLNoPanelHPDSuppressed",true);
+			return 0;
+		}
+	}
 	auto caller = __builtin_return_address(0);
 	tglConnectionRecord(port, 1, false, 0, 0, caller);
 	const auto result = FunctionCast(wrapTGLHPDState, callbackXE->orgTGLHPDState)(port);

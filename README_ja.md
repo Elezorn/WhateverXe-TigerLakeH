@@ -84,7 +84,7 @@ OpenCoreの`boot-args`に以下を追加してください。
 | --- | --- |
 | `-allow3d` | Appleドライバの3D処理を有効にする。 |
 | `-disablegfxfirmware` | 現在のバックエンドで、Appleドライバのグラフィックスファームウェア読み込みを無効にする。 |
-| `-wex-nopanel` | 内蔵画面のないTiger Lake機で追加する。現在のAlder Lake-N / Twin Lakeは外部画面用の構成を自動生成するため、この引数を使用しない。 |
+| `-wex-nopanel` | Tiger Lakeの内蔵パネル検出を無効にする（DDI Aの外部HDMIは維持）。外部画面のみで運用するときに指定し、内蔵パネルの検証時は外す。現在のAlder Lake-N / Twin Lakeは外部画面用の構成を自動生成するため、この引数を使用しない。 |
 
 Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追加する必要はありません。
 
