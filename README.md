@@ -139,6 +139,11 @@ Internal-panel detection is automatic; no panel-disable argument is required.
 No family-selection or per-feature enable arguments are required for
 Alder Lake-N / Twin Lake.
 
+The supported Display 13 backend selects Y-tiled scanout automatically;
+`AAPL,GfxYTile` is not required in OpenCore. Existing values are preserved.
+Do not use the Apple driver's `-yTileDisable` argument with this backend:
+its X-tiled scanout path is unsupported. Display 12 tiling selection is unchanged.
+
 ### Optional boot arguments
 
 | Argument | Purpose |

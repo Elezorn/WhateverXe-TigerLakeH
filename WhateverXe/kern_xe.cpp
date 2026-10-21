@@ -6535,13 +6535,21 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	if(Display13FBTopology::multiOutputWiring(s->adlnHDMIWiring) && !dualReady)return false;
 	// Native provider-workloop mode creates/binds the PCI interrupt source in
 	// controller start, rather than waiting for an accelerator or FB open.
+	// This backend supports linear boot surfaces and Y-tiled native scanout,
+	// not the donor's optional X-tiled allocation path. Select Y before native
+	// start so allocation, pitch and plane programming agree. The donor tests
+	// AAPL,GfxYTile for presence only; preserve any existing provider value.
 	auto old=OSDynamicCast(OSDictionary,that->getProperty("FeatureControl"));
-	auto features=old ? OSDictionary::withDictionary(old) : OSDictionary::withCapacity(1);
+	auto features=old ? OSDictionary::withDictionary(old) : OSDictionary::withCapacity(2);
 	auto mode=OSNumber::withNumber(0ULL,32);
-	const bool loopSelected=provider->getWorkLoop() && features && mode &&
-		features->setObject("ThreadingMode",mode) && that->setProperty("FeatureControl",features);
-	OSSafeReleaseNULL(mode);OSSafeReleaseNULL(features);
-	if(!loopSelected)return false;
+	auto yTiling=OSNumber::withNumber(1ULL,32);
+	uint32_t enabled=1;
+	const bool featuresSelected=provider->getWorkLoop() && features && mode && yTiling &&
+		features->setObject("ThreadingMode",mode) && features->setObject("YTiling",yTiling) &&
+		that->setProperty("FeatureControl",features) &&
+		(provider->getProperty("AAPL,GfxYTile") || provider->setProperty("AAPL,GfxYTile",&enabled,sizeof(enabled)));
+	OSSafeReleaseNULL(yTiling);OSSafeReleaseNULL(mode);OSSafeReleaseNULL(features);
+	if(!featuresSelected)return false;
 	const auto started=FunctionCast(wrapDisplay13FramebufferStart,s->orgDisplay13FramebufferStart)(that,provider);
 	that->setProperty("N97FramebufferOriginalStart",started);
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FramebufferOriginalStart",started);

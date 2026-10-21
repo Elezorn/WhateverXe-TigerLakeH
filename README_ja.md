@@ -99,6 +99,9 @@ OpenCoreの`boot-args`に以下を追加してください。
 
 Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追加する必要はありません。
 
+対応済みのDisplay 13バックエンドではYタイル出力を自動選択するため、OpenCoreの`AAPL,GfxYTile`設定は不要です。既存の値は保持します。
+このバックエンドはXタイル出力に未対応なので、Appleドライバの`-yTileDisable`引数は使用しないでください。Display 12のタイル選択は変更しません。
+
 ### 任意のブート引数
 
 | 引数 | 用途 |
