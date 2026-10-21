@@ -3751,7 +3751,6 @@ void XE::selectProfile(const XELP::Profile &profile) {
     }
     tglRequested=profile.admitted() && profile.family==XELP::Family::TigerLake &&
         !checkKernelArgument("-wex-tgl-off");
-    tglNoPanel=checkKernelArgument("-wex-nopanel");
     tglInactivePorts=tglPG1Poll=tglClockOrderRequested=tglTrainingLeaseRequested=tglRequested;
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
     tglAcceleratorRequested=tglRequested && !checkKernelArgument("-wex-noaccel");
@@ -10143,7 +10142,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				}
 				KernelPatcher::RouteRequest topology("__ZN31AppleIntelFramebufferController16getOSInformationEv", wrapTGLGetOSInformation, orgTGLGetOSInformation);
 				tglTopologyReady = patcher.routeMultiple(index, &topology, 1, address, size);
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteNoPanelTopology", tglTopologyReady);
+				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteTopology", tglTopologyReady);
 				patcher.clearError();
 			}
 			// DP1 KC vtable inheritance fixup replaces this externally supplied
@@ -10850,7 +10849,6 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			KernelPatcher::RouteRequest hpdRequest("__ZN17AppleIntelPortHAL11getHPDStateEv",
 				wrapTGLHPDState, orgTGLHPDState);
 			const bool hpdOK = patcher.routeMultiple(index, &hpdRequest, 1, address, size);
-			tglNoPanelHPDReady = hpdOK;
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGHPDObservationRouted", hpdOK);
 			patcher.clearError();
 			KernelPatcher::RouteRequest laneRequest("__ZN17AppleIntelPortHAL26getDklPhyLaneConfigBitMaskEv",
@@ -10890,7 +10888,7 @@ bool XE::wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, O
  return false;
 }
 
-// Panel absence and HDMI routing are board inputs, not common-fix opt-ins.
+// HDMI routing follows firmware wiring or an explicit board override.
 // Copy the donor description before any port/FB is constructed. A malformed
 // explicit profile or a mismatched donor connector must not be partly applied.
 bool XE::wrapTGLGetOSInformation(void *controller) {
@@ -10904,8 +10902,8 @@ bool XE::wrapTGLGetOSInformation(void *controller) {
   auto &poolSize=*reinterpret_cast<uint32_t *>(c+0xDE8);
   const auto requested=self->framebufferPatch.fStolenMemorySize;
   if(poolSize==*reinterpret_cast<uint32_t *>(platform+0x14) && requested<=poolSize) {
-   auto copy=reinterpret_cast<uint8_t *>(self->tglNoPanelPlatform);
-   memcpy(copy,platform,sizeof(self->tglNoPanelPlatform));
+   auto copy=reinterpret_cast<uint8_t *>(self->tglPlatformCopy);
+   memcpy(copy,platform,sizeof(self->tglPlatformCopy));
    *reinterpret_cast<uint32_t *>(copy+0x14)=requested;
    platform=copy;poolSize=requested;
    IORegistryEntry::getRegistryRoot()->setProperty("TGLStolenMemoryApplied",requested,32);
@@ -10913,24 +10911,22 @@ bool XE::wrapTGLGetOSInformation(void *controller) {
  }
  const uint32_t expectedPanel[]={0,0,0,0,2,0x18};
  if(!platform || platform[0x12]!=9 || memcmp(platform+0x20,expectedPanel,sizeof(expectedPanel))) {
-  IORegistryEntry::getRegistryRoot()->setProperty("TGLNoPanelTopologyGuardFailed",true);
+  IORegistryEntry::getRegistryRoot()->setProperty("TGLTopologyGuardFailed",true);
   return false;
  }
- auto copy=reinterpret_cast<uint8_t *>(self->tglNoPanelPlatform);
- if(copy!=platform)memcpy(copy,platform,sizeof(self->tglNoPanelPlatform));
+ auto copy=reinterpret_cast<uint8_t *>(self->tglPlatformCopy);
+ if(copy!=platform)memcpy(copy,platform,sizeof(self->tglPlatformCopy));
  if(!self->tglHDMIWiringLoaded || !self->tglHDMIWiring.supported(self->tglHDMIBackendMask,self->tglHDMIB) ||
-    !self->tglHDMIWiring.apply(copy,sizeof(self->tglNoPanelPlatform))) {
+    !self->tglHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy))) {
   IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiringGuardFailed",true);return false;
  }
  auto config=reinterpret_cast<uint32_t *>(copy+0x20);
- if (self->tglNoPanel && !(self->tglHDMIWiring.hdmi&1)) {config[4]=1;config[5]=0;} // preserve external HDMI-A
  platform=copy;self->tglHDMIWiringApplied=true;
  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiringApplied",self->tglHDMIWiring.hdmi,32);
  // Preserve the existing TC2 machine's diagnostic names for old collectors.
  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIBTopologyApplied",bool(self->tglHDMIWiring.hdmi&2));
  if(self->tglHDMIWiring.hdmi&2)IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIBPortConfig",config+6,24);
- IORegistryEntry::getRegistryRoot()->setProperty("TGLNoPanelPortConfig",config,24);
- IORegistryEntry::getRegistryRoot()->setProperty("TGLNoPanelTopologyApplied",self->tglNoPanel);
+ IORegistryEntry::getRegistryRoot()->setProperty("TGLPortAConfig",config,24);
  return r;
 }
 
@@ -11026,7 +11022,6 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
 	if (!tglSonomaSurfaceFramebufferReady || !callbackXE->tglPlatformNVRAMReady || !callbackXE->tglFBIRQReady || !callbackXE->tglProbeReady || !callbackXE->tglFramebufferInitReady || !callbackXE->tglDekelReady ||
 		(callbackXE->tglHDMIB && !callbackXE->tglGMBusReady) ||
 		!callbackXE->tglTopologyReady || !callbackXE->tglPanelPowerPropertyReady || !callbackXE->tglEDPTranscoderReady ||
-		(callbackXE->tglNoPanel && !callbackXE->tglNoPanelHPDReady) ||
 		(callbackXE->tglTrainingLeaseRequested && (!callbackXE->tglTrainingLeaseReady ||
 			!callbackXE->tglEnablePG || !callbackXE->tglDisablePG ||
 			!callbackXE->tglPortByDDI || !callbackXE->orgTGLPathLookup ||
@@ -13302,15 +13297,10 @@ uint32_t XE::wrapTGLProbePort(void *port) {
     // uses the firmware policy and separate native HPD transport signal.
     tglAUXRecord(port,7,false,0,0,0);
     uint32_t mode=0;
-    // A no-panel topology alone only clears the built-in flags. The donor's
-    // port type still selects LightUpEDP, so do not probe that physical port.
-    // Explicit/firmware HDMI on DDI A remains an external display.
-    if(callbackXE->tglNoPanel && ddi==0 && !(callbackXE->tglHDMIWiring.hdmi&1))
-        IORegistryEntry::getRegistryRoot()->setProperty("TGLNoPanelProbeSuppressed",true);
-    else if(callbackXE->xelpBindProbe(callbackXE->tglObservationController)) {
+    if(callbackXE->xelpBindProbe(callbackXE->tglObservationController)) {
         mode=reinterpret_cast<XELP::ProbePort>(callbackXE->xelpProviderProbe)(port);
         if(!mode && ddi>=3 && ddi<9 && (callbackXE->tglDPAltCandidates&(1U<<ddi)) &&
-           config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(callbackXE->tglNoPanelPlatform)+0x20+24*ddi)) {
+           config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(callbackXE->tglPlatformCopy)+0x20+24*ddi)) {
             auto ctl=static_cast<uint8_t *>(callbackXE->tglObservationController);
             auto access=*reinterpret_cast<uint8_t **>(bytes+0x578);
             if(ctl && access && access==*reinterpret_cast<void **>(ctl+0xC40) &&
@@ -13478,15 +13468,6 @@ bool XE::wrapTGLFramebufferInit(void *framebuffer, void *controller, uint32_t in
 
 
 uint32_t XE::wrapTGLHPDState(void *port) {
-	// Native probePortState can continue to AUX even after mode0. Report HPD
-	// low as well so a physically attached but disabled panel is not probed.
-	if (port && callbackXE->tglNoPanel && !(callbackXE->tglHDMIWiring.hdmi&1)) {
-		auto config = *reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port)+0x548);
-		if (config && config[0]==0) {
-			IORegistryEntry::getRegistryRoot()->setProperty("TGLNoPanelHPDSuppressed",true);
-			return 0;
-		}
-	}
 	auto caller = __builtin_return_address(0);
 	tglConnectionRecord(port, 1, false, 0, 0, caller);
 	const auto result = FunctionCast(wrapTGLHPDState, callbackXE->orgTGLHPDState)(port);
@@ -14688,7 +14669,7 @@ uint32_t XE::wrapTGLAGDCPortStatus(void *controller, void *request, void *output
 	auto s = callbackXE;
 	if (s->tglInactivePorts && s->tglPortByIndex && r == 0 && output &&
 		(id == 6 || id == 7) && controller && controller == s->tglObservationController &&
-		*reinterpret_cast<void **>(static_cast<uint8_t *>(controller) + 0xD40) == s->tglNoPanelPlatform) {
+		*reinterpret_cast<void **>(static_cast<uint8_t *>(controller) + 0xD40) == s->tglPlatformCopy) {
 		auto port = static_cast<uint8_t *>(reinterpret_cast<void *(*)(uint32_t)>(s->tglPortByIndex)(id - 1));
 		auto config = port ? *reinterpret_cast<uint32_t **>(port + 0x548) : nullptr;
 		if (config && config[0] == id - 1 && config[1] == id + 5 && config[2] == 1) {
@@ -14795,7 +14776,7 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 	auto ctl = static_cast<uint8_t *>(controller);
 	auto port = static_cast<uint8_t *>(reinterpret_cast<void *(*)(uint32_t)>(s->tglPortByDDI)(lease.ddi));
 	if (!ctl || !port ||
-		*reinterpret_cast<void **>(ctl + 0xD40) != s->tglNoPanelPlatform ||
+		*reinterpret_cast<void **>(ctl + 0xD40) != s->tglPlatformCopy ||
 		!s->tglDPSSTMode(lease.ddi,*reinterpret_cast<uint32_t *>(port + 0x550)) || port[0x117]) return 1;
 	auto access = *reinterpret_cast<uint8_t **>(ctl + 0xC40);
 	auto power = *reinterpret_cast<void **>(ctl + 0xC8);

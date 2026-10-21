@@ -133,7 +133,8 @@ Add the following to OpenCore's `boot-args`:
 | --- | --- |
 | `-allow3d` | Enable the Apple driver's 3D path. |
 | `-disablegfxfirmware` | Disable the Apple driver's graphics-firmware loading path for the current backend. |
-| `-wex-nopanel` | Disable internal-panel detection on Tiger Lake (external HDMI on DDI A remains available). Use for external-display-only operation; remove it to test an internal panel. Alder Lake-N / Twin Lake currently builds an external-display topology automatically and does not use this flag. |
+
+Internal-panel detection is automatic; no panel-disable argument is required.
 
 No family-selection or per-feature enable arguments are required for
 Alder Lake-N / Twin Lake.

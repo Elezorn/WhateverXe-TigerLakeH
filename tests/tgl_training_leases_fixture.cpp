@@ -150,7 +150,7 @@ void setup() {
  existingPath=badPipe=failAdoption=stopCalled=false; nativeCalls=0; nativeEndResult=0;
  nativeBoundary={}; clockBoundary={}; protectedMMIO=nullptr; protectOnPowerDrop=bufferIdlePending=false;portDisables=clockDisables=0;
  std::fill(std::begin(used),std::end(used),false); std::fill(std::begin(pgRefs),std::end(pgRefs),0);
- ctl.at<void *>(0xd40)=obj.tglNoPanelPlatform; ctl.at<void *>(0xc40)=access.data(); ctl.at<void *>(0xc8)=power.data();
+ ctl.at<void *>(0xd40)=obj.tglPlatformCopy; ctl.at<void *>(0xc40)=access.data(); ctl.at<void *>(0xc8)=power.data();
  access.at<void *>(0x50)=mmio.data(); access.at<uint32_t>(0x60)=sizeof(mmio);
  for (unsigned i=0; i<9; ++i) { ports[i]={}; ports[i].at<uint32_t>(0x550)=4; ports[i].at<void *>(0x578)=access.data(); obj.tglTrainingLeases[i].ddi=i;mmio.at<uint32_t>(0x64000+0x100*i)=0x80; }
  for (auto &fb : fbs) { fb={}; fb.at<void *>(0x1d0)=ctl.data(); fb.at<void *>(0x4a40)=access.data(); }

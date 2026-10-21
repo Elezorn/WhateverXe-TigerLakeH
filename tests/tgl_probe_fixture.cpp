@@ -31,9 +31,8 @@ uint32_t providerProbe(void *);
 uint32_t nativeHPD(void *) {return 1;}
 struct XE {
  uint32_t tglModularProbed=0;
- uint64_t tglNoPanelPlatform[0x1c0/8] {};
+ uint64_t tglPlatformCopy[0x1c0/8] {};
  bool tglActive=true;
- bool tglNoPanel=false;
  struct {uint32_t hdmi=0;} tglHDMIWiring;
  void *tglObservationController=nullptr;
  uintptr_t xelpProviderProbe=reinterpret_cast<uintptr_t>(providerProbe);
@@ -70,29 +69,14 @@ int main(int argc,char **) {
  *reinterpret_cast<uint32_t **>(port+0x548)=config;
  *reinterpret_cast<uint8_t **>(port+0x578)=access;
  *reinterpret_cast<uint8_t **>(access+0x50)=mmio;
- // No-panel must reject a real panel before reaching the provider, but must
- // preserve HDMI-A, other external ports, and the ordinary panel-enabled path.
- config[0]=0;object.tglNoPanel=true;
- const auto savedProbe=object.xelpProviderProbe;object.xelpProviderProbe=1;
- assert(XE::wrapTGLProbePort(port)==0); // calling the provider would fault
- object.xelpProviderProbe=savedProbe;
- object.tglHDMIWiring.hdmi=1;assert(XE::wrapTGLProbePort(port)==1);
- object.tglHDMIWiring.hdmi=2;assert(XE::wrapTGLProbePort(port)==0);
- config[0]=1;assert(XE::wrapTGLProbePort(port)==1);
- config[0]=0;object.tglNoPanel=false;assert(XE::wrapTGLProbePort(port)==1);
- object.tglHDMIWiring.hdmi=0;config[0]=4;
- // HPD must be low before native probePortState reaches AUX, independently
- // of probePortMode. Suppression must not inspect the powered register map.
- auto savedHPD=object.orgTGLHPDState;object.orgTGLHPDState=1;
- object.tglNoPanel=true;config[0]=0;
- *reinterpret_cast<uint8_t **>(port+0x578)=mmio+0x160000;
- assert(XE::wrapTGLHPDState(port)==0);
- object.orgTGLHPDState=savedHPD;
+ // Panel and external combo ports reach the provider and native HPD.
+ // Wiring never suppresses panel discovery; the provider classifies the port.
  *reinterpret_cast<uint8_t **>(port+0x578)=nullptr;
- object.tglHDMIWiring.hdmi=1;assert(XE::wrapTGLHPDState(port)==1);
- object.tglHDMIWiring.hdmi=2;assert(XE::wrapTGLHPDState(port)==0);
- config[0]=1;assert(XE::wrapTGLHPDState(port)==1);
- config[0]=0;object.tglNoPanel=false;assert(XE::wrapTGLHPDState(port)==1);
+ for(unsigned mask:{0u,1u,2u,3u}) for(unsigned ddi:{0u,1u}) {
+  object.tglHDMIWiring.hdmi=mask;config[0]=ddi;
+  assert(XE::wrapTGLProbePort(port)==1);
+  assert(XE::wrapTGLHPDState(port)==1);
+ }
  object.tglHDMIWiring.hdmi=0;config[0]=4;
  *reinterpret_cast<uint8_t **>(port+0x578)=access;
  auto &length=*reinterpret_cast<uint32_t *>(access+0x60);length=size;
@@ -184,7 +168,7 @@ int main(int argc,char **) {
  *reinterpret_cast<void **>(controller+0xc40)=access;
  *reinterpret_cast<void **>(port+0x578)=access;
  for(unsigned ddi:{3u,4u})for(unsigned status=0;status<8;++status) {
-  auto cp=reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(object.tglNoPanelPlatform)+0x20+24*ddi);
+  auto cp=reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(object.tglPlatformCopy)+0x20+24*ddi);
   cp[0]=ddi;*reinterpret_cast<uint32_t **>(port+0x548)=cp;
   hpd=(status&1)?1U<<(24+ddi-3):0;
   *reinterpret_cast<uint32_t *>(mmio+0x44470)=((status&2)?1U<<(16+ddi-3):0)|((status&4)?1U<<(ddi-3):0);

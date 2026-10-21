@@ -274,10 +274,8 @@ private:
 	static void wrapTGLPlaneUpdate(void *plane, bool flag);
 	static IOMemoryDescriptor *wrapTGLAperture(void *fb, int aperture);
 	static void tglObserveScanout(void *fb, void *plane, uint32_t event, bool done, uint32_t result);
-	bool tglNoPanel {false};
 	bool tglPanelPowerPropertyReady {false};
 	bool tglEDPTranscoderReady {false};
-	bool tglNoPanelHPDReady {false};
 	static bool wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value);
 	bool tglHDMIB {false};
  TGLHDMIWiring tglHDMIWiring;
@@ -319,7 +317,7 @@ private:
 	static uint32_t tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease);
 	static bool tglReleaseTrainingLease(TGLTrainingLease &lease, bool disableLink);
 	static void tglObserveTrainingLease(const TGLTrainingLease &lease, uint32_t event, uint32_t result, uint32_t argument = 0);
-	uint64_t tglNoPanelPlatform[0x1C0 / sizeof(uint64_t)] {};
+	uint64_t tglPlatformCopy[0x1C0 / sizeof(uint64_t)] {};
 	mach_vm_address_t orgTGLGetOSInformation {};
 	bool tglStolenMemoryReady {};
 	static bool wrapTGLGetOSInformation(void *controller);
