@@ -78,7 +78,10 @@ private:
 	bool adlnDetected {false};
     bool adlsDetected {},adlsNativeReady {},adlsDisplayHooksReady {};
     bool adlsPortInitReady {};
-    bool adlsPLLTableReady {},adlsClockReady {};
+    bool adlsPLLTableReady {},adlsClockReady {},adlsPowerReady {};
+    mach_vm_address_t orgADLSPowerPG {};
+    static uint8_t *adlsPowerTarget(void *power);
+    static void wrapADLSPowerPG(void *power,bool enable,uint32_t requested);
     mach_vm_address_t orgADLSEnableClocks {};
     static bool adlsClockTarget(void *controller,void *port,void *otherPort);
     static void wrapADLSEnableClocks(void *controller,void *port,void *otherPort,uint32_t *params);

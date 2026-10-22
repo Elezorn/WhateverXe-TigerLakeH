@@ -10978,8 +10978,19 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     }
     adlsClockReady=ready;
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSClockReady",ready);
+    const char *pg="__ZN19AppleIntelPowerWell21hwSetPowerWellStatePGEbj";
+    const auto pgfn=patcher.solveSymbol<mach_vm_address_t>(index,pg,address,size);
+    const uint8_t pgentry[]={0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53};
+    adlsPowerReady=orgTGLPowerDDIState && pgfn==address+0x5B640 && size>0x5BD40 &&
+     !memcmp(reinterpret_cast<void *>(pgfn),pgentry,sizeof(pgentry));
+    patcher.clearError();
+    if(adlsPowerReady) {
+     KernelPatcher::RouteRequest route(pg,wrapADLSPowerPG,orgADLSPowerPG);
+     adlsPowerReady=patcher.routeMultiple(index,&route,1,address,size);patcher.clearError();
+    }
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLSLanePowerReady",adlsPowerReady);
     // Native startup remains closed if any required ADL-S adapter is absent.
-    adlsDisplayHooksReady=ready && adlsPortInitReady && orgTGLEnableCombo && tglPortByDDI &&
+    adlsDisplayHooksReady=ready && adlsPowerReady && adlsPortInitReady && orgTGLEnableCombo && tglPortByDDI &&
      orgTGLGetOSInformation && orgTGLRegisterWrite && orgTGLRegisterRead && hpdOK;
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayHooksReady",adlsDisplayHooksReady);
    }
@@ -16450,12 +16461,42 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 	return result;
 }
 
+uint8_t *XE::adlsPowerTarget(void *power) {
+ auto s=callbackXE;auto p=static_cast<uint8_t *>(power);
+ auto c=static_cast<uint8_t *>(s->tglObservationController);
+ if(!s->adlsDetected || !s->adlsPowerReady || !p || !c ||
+    !s->adlsHDMIWiring.valid || s->adlsHDMIWiring.selected!=8 ||
+    *reinterpret_cast<void **>(p+0x10)!=c || *reinterpret_cast<void **>(c+0xC8)!=p ||
+    *reinterpret_cast<void **>(p+0x78)!=*reinterpret_cast<void **>(c+0xC40))return nullptr;
+ return p;
+}
+
+void XE::wrapADLSPowerPG(void *power,bool enable,uint32_t requested) {
+ auto p=adlsPowerTarget(power);
+ const auto target=AlderLakeS::LanePower::target(requested,p && *reinterpret_cast<uint32_t *>(p+0x3C));
+ tglTransitionRecord(73,false,power,requested,target,enable);
+ FunctionCast(wrapADLSPowerPG,callbackXE->orgADLSPowerPG)(power,enable,target);
+ tglTransitionRecord(73,true,power,requested,target,enable);
+}
+
 void XE::wrapTGLPowerDDIState(void *power, bool enable, uint32_t requested) {
  auto bytes=static_cast<uint8_t *>(power);
  tglTransitionRecord(33,false,power,requested,enable,bytes[0x18],bytes+0x20,52);
 	auto controller = *reinterpret_cast<void **>(static_cast<uint8_t *>(power) + 0x10);
 	tglObserveActivation(controller, nullptr, nullptr, 3, false, requested);
+ // Acquire parent wells before DDI IO turns on; release after IO turns off.
+ // Native reference counts remain untouched. The PG target is the union of
+ // the native pipe consumers and the current TC1 lane consumer.
+ auto adls=adlsPowerTarget(power);
+ if(adls && (requested&0x80)) {
+  const auto native=AlderLakeS::LanePower::pipeRequests(reinterpret_cast<uint32_t *>(adls+0x20));
+  FunctionCast(wrapADLSPowerPG,callbackXE->orgADLSPowerPG)(power,true,AlderLakeS::LanePower::target(native,true));
+ }
 	FunctionCast(wrapTGLPowerDDIState, callbackXE->orgTGLPowerDDIState)(power, enable, requested);
+ if(adls && !(requested&0x80)) {
+  const auto native=AlderLakeS::LanePower::pipeRequests(reinterpret_cast<uint32_t *>(adls+0x20));
+  FunctionCast(wrapADLSPowerPG,callbackXE->orgADLSPowerPG)(power,false,native);
+ }
  tglTransitionRecord(33,true,power,requested,enable,bytes[0x18],bytes+0x20,52);
 	tglObserveActivation(controller, nullptr, nullptr, 3, true, requested);
 }

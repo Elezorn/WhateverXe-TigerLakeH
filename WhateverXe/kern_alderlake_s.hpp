@@ -33,6 +33,18 @@ struct Port {
     }
     bool connected(uint32_t sde) const {return sde!=UINT32_MAX && (sde&hpd);}
 };
+// ADL-S uses TGL PW_2/PW_3 for physical TC lane domains, including Combo
+// PHY HDMI. Native pipe refs do not include this independent lane consumer.
+struct LanePower {
+    static uint32_t target(uint32_t native,bool tc1) {
+        return native | (tc1 ? 0x2AU : 0U);
+    }
+    static uint32_t pipeRequests(const uint32_t *refs) {
+        uint32_t out=0;
+        for(unsigned i=0;i<4;++i)if(refs[i])out|=2U<<(2*i);
+        return out;
+    }
+};
 // VBT numbers A/TC1..4 as 1..5; GMBUS uses 1/9..12. Zero means absent.
 inline uint32_t gmbus(uint32_t vbtPin) {
     return vbtPin==1?1:vbtPin>=2 && vbtPin<=5?vbtPin+7:0;
