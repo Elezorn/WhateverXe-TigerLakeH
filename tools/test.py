@@ -9,7 +9,7 @@ python_tests=['xelp_mmio_bar','bigsur_pmap','tahoe_iosurface','tahoe_pmap','sequ
 jobs=[(p.stem,['clang++','-std=c++17','-O1','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-I'+str(R/'WhateverXe'),str(p),'-o',str(O/p.stem)],[str(O/p.stem)]) for p in sorted((R/'tests').glob('*.cpp')) if not p.stem.endswith('_fixture')]
 python_tests += ['backlight_adapter', 'tgl_panel_power', 'tgl_edp_transcoder', 'tgl_training_pattern', 'tgl_combo_pll_write', 'tgl_sink_framing', 'tgl_combo_aux_gate', 'tgl_combo_signal_guard', 'tgl_combo_aux_lifetime', 'tgl_iosurface_compression', 'tgl_panel_depth_route', 'display13_tiling']
 jobs += [(n,[sys.executable,str(R/'tests'/(n+'.py'))],None) for n in python_tests]
-if a.donor:jobs += [(n,[sys.executable,str(R/'tests'/(n+'.py')),str(a.donor.resolve())],None) for n in ['tgl_tc_native','tgl_tc_mode','tgl_mode_native','tgl_panel_depth_route']]
+if a.donor:jobs += [(n,[sys.executable,str(R/'tests'/(n+'.py')),str(a.donor.resolve())],None) for n in ['tgl_tc_native','tgl_tc_mode','tgl_mode_native','tgl_panel_depth_route','adls_donor']]
 if a.accelerator:jobs += [('xelp_forcewake_irq_native',[sys.executable,str(R/'tests/xelp_forcewake_irq.py'),'--donor',str(a.accelerator.resolve())],None),('tgl_rpcs_native',[sys.executable,str(R/'tests/tgl_rpcs_native.py'),str(a.accelerator.resolve())],None)] + [(n,[sys.executable,str(R/'tests'/(n+'.py')),str(a.accelerator.resolve())],None) for n in ['tgl_tlb_preparser','tgl_semaphore_tlb','tgl_iosurface_compression']]
 def check(job):
  n,compile,execute=job

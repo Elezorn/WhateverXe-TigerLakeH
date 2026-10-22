@@ -20,7 +20,8 @@ std::vector<uint8_t> table(const std::vector<Port>&ports){
 }
 int main(int argc,char **argv){
  if(argc==3){std::ifstream f(argv[2],std::ios::binary);assert(f);std::vector<uint8_t>b{std::istreambuf_iterator<char>(f),{}};
-  auto r=parse(b.data(),b.size(),!strcmp(argv[1],"12")?Family::TigerLake:Family::AlderLakeN);auto w=r.hdmi(3);
+  const auto family=!strcmp(argv[1],"adls")?Family::AlderLakeS:!strcmp(argv[1],"12")?Family::TigerLake:Family::AlderLakeN;
+  auto r=parse(b.data(),b.size(),family);auto w=r.hdmi(3);
   printf("status=%u bdb=%u present=%x unmapped=%u ambiguous=%x hdmi=%x pins=%u,%u,%u valid=%u\n",unsigned(r.status),r.version,r.present,r.unmapped,r.ambiguous,w.hdmi,w.ddc[0],w.ddc[1],w.ddc[2],w.valid);
   for(unsigned d=0;d<9;++d)if(r.present&(1U<<d)){auto q=r.port[d];printf("ddi=%u type=%x dvo=%u ddc=%u aux=%x flags=%x caps=%x\n",d,q.type,q.dvo,q.ddc,q.aux,q.flags,q.capabilities);}
   printf("panel valid=%u type=%u ddi=%u low=%u hobl=%u\n",r.panel.valid,r.panel.type,r.panel.ddi,r.panel.lowSwing,r.panel.hobl);
@@ -67,6 +68,10 @@ int main(int argc,char **argv){
  auto shared=r;shared.present|=8;shared.port[3]={0x68c6,9,0,0x50};
  assert(!shared.tglDPCandidates(0x18));
  auto adl=table({{0x60d2,10,1},{0x60d2,7,2},{0x60d2,14,3}});
+ auto desktop=table({{0x60d6,10,1,0x40},{0x60d2,1,2},{0x60d6,8,3,0x20},
+                     {0x68c6,9,0,0x30},{1,0,0},{0x100,0,0}});
+ auto ds=parse(desktop.data(),desktop.size(),Family::AlderLakeS);
+ assert(ds.valid() && ds.present==0x39 && ds.port[3].fixedTMDS() && ds.port[3].ddc==2);
  auto a=parse(adl.data(),adl.size(),Family::AlderLakeN);assert(a.valid()&&a.present==0xB&&a.hdmi(3).hdmi==3);
  assert(ddi(Family::TigerLake,9)==3&&ddi(Family::AlderLakeN,13)==3&&ddi(Family::AlderLakeN,19)==6);
  assert(ddi(Family::AlderLakeN,9)==PortCount&&ddi(Family::TigerLake,8)==PortCount);
