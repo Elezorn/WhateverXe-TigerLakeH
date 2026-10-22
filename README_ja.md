@@ -4,7 +4,7 @@
 
 WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィックスドライバを適応させるLiluプラグインです。WhateverGreenを基に開発しています。
 
-本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。
+本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。WEX 0.4.0は既存のグラフィックスpkgを使用でき、WEX更新のためにpkgを再インストールする必要はありません。
 
 ## 対応範囲
 
@@ -121,6 +121,9 @@ Tiger LakeとAlder Lake-Nで、全6 OSにわたり、外部2画面の1920×1080�
 Tiger Lakeラップトップの実験的な対応として、Big Sur〜Tahoeで内蔵1366×768 eDPパネル、標準輝度調整、内蔵＋外部1920×1080・60Hzの2画面による計3画面同時出力を確認しています。
 Monterey〜Tahoeでは本体HDMIとUSB-C DP-alt→HDMIアダプターを接続した状態で、画面の消灯／復帰とMetal計算・描画も確認しました。TahoeではHDMIと検証したUSB-Cの2端子で抜き差しも確認しています。
 コネクタはファームウェアのVBTから選択し、現在のDP-alt backendはTC1〜TC4を受け付け、TC1とTC3で確認しています。すべてのラップトップ・USB-C端子・アダプター・ドックやシステムスリープを認定したものではありません。
+
+Tiger LakeとAlder Lake-NのミニPCでも、パネルを無効化する引数なしでBig Sur/Tahoeの回帰試験を通過しました。
+EFIの`AAPL,GfxYTile`設定を省いたDisplay 13のYタイル自動選択は、Alder Lake-NのBig Sur/Tahoeで、2画面出力・Metal/MPS・画面の消灯／復帰を確認しています。
 
 ### 既知の問題と制限
 

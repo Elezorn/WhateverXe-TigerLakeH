@@ -9,7 +9,8 @@ This project is experimental and requires the signed graphics package from
 [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics). It installs
 the graphics stack under `/Library` and updates the Auxiliary Kernel Collection
 (AuxKC), without patching System files or snapshots. WEX and the graphics package
-have independent release versions.
+have independent release versions. WEX 0.4.0 uses the existing graphics package;
+updating WEX does not require reinstalling it.
 
 ## Compatibility
 
@@ -175,6 +176,11 @@ HDMI and both tested USB-C ports also passed disconnect/reconnect checks on Taho
 Connector selection uses firmware VBT data; the current DP-alt backend admits
 TC1–TC4, with TC1 and TC3 tested. These results do not qualify every laptop,
 USB-C port, adapter, dock, or system sleep.
+
+Tiger Lake and Alder Lake-N mini PCs also passed Big Sur/Tahoe regression
+checks without a panel-disable argument. Automatic Display 13 Y tiling without
+an EFI `AAPL,GfxYTile` property was verified on Alder Lake-N with Big Sur and
+Tahoe, including dual-display output, Metal/MPS and display sleep/wake.
 
 ### Known issues and limits
 

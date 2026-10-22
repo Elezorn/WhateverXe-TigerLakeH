@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0
+
+Add experimental Tiger Lake laptop display support and automatic Display 13 tiling selection.
+
+- Read connector routing from structurally valid firmware VBT tables even when their checksum is stale, while retaining bounds and connector checks.
+- Add Tiger Lake internal eDP output with EDID-derived color depth, firmware-derived panel setup and standard brightness control with a suitable PNLF device.
+- Add firmware-selected Tiger Lake USB-C DisplayPort Alt Mode output, including PHY, AUX and lane assignment handling.
+- Keep eDP scrambler settings synchronized with the panel during link training to restore normal output after display sleep.
+- Detect internal panels automatically on laptops and mini PCs without a panel-disable boot argument.
+- Select Y-tiled scanout automatically on the supported Display 13 backend, removing the OpenCore `AAPL,GfxYTile` requirement.
+
+Laptop display and brightness checks cover Big Sur through Tahoe. HDMI and both tested USB-C ports passed reconnection checks on Tahoe; Tiger Lake and Alder Lake-N mini PCs passed Big Sur/Tahoe regression checks. Automatic Display 13 Y tiling was verified on Alder Lake-N with Big Sur and Tahoe.
+
+This update uses the existing WhateverXe Graphics package. Fixed DisplayPort reconnection remains a known issue, and system sleep is not validated; see the [README](https://github.com/b00t0x/WhateverXe#tested-features-and-known-issues) for coverage and limitations.
+
 ## 0.3.0
 
 Xe-LP graphics compatibility for the configurations described in the [README](https://github.com/b00t0x/WhateverXe#compatibility).
@@ -10,10 +25,6 @@ Xe-LP graphics compatibility for the configurations described in the [README](ht
 - Supports signed Data graphics bundles with Mod AMFIPass, without `amfi=0x80` or `ipc_control_port_options=0`.
 - Preserve debug information in the bundled dSYM before stripping the kext.
 - Tiger Lake and Alder Lake-N have completed the six-OS functional checks described in the README. Known issues and hardware coverage limits still apply.
-- Adds experimental Tiger Lake eDP, firmware-selected USB-C DP-alt output and standard internal-panel brightness support; laptop display and brightness checks cover Big Sur through Tahoe, with HDMI and USB-C reconnection checked on Tahoe.
-- Detect internal panels automatically without a panel-disable boot argument on laptops or mini PCs.
-- Select Y-tiled scanout automatically on the supported Display 13 backend without requiring an OpenCore `AAPL,GfxYTile` property.
-- Keep eDP Alternate Scrambler Reset synchronized with the sink during link training, fixing corrupted internal-panel output after display sleep.
 
 ## 0.2.3
 
