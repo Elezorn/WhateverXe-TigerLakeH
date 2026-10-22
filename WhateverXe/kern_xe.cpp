@@ -9968,6 +9968,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 					ready = !memcmp(site, after, sizeof(after));
 				}
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIComboPLLReady", ready);
+                adlsPLLTableReady=adlsDetected && ready;
 				patcher.clearError();
 			}
 			{
@@ -10939,6 +10940,44 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     patcher.clearError();
    }
    IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDPAltFiaReady",tglDPAltFiaReady);
+   if(adlsDetected) {
+    // Keep the physical DDI in every port/power/display object. Only the
+    // native Combo PLL indices are translated, under the single-HDMI entry
+    // guards below. The removed instructions are profiling counters.
+    const uint8_t adlsClockOnFind[]={0x48,0xff,0x05,0xbe,0x86,0x07,0x00,0x48,0x63,0x00,0x48,0x83,0xf8,0x03};
+    const uint8_t adlsClockOnReplace[]={0x48,0x63,0x00,0x48,0x83,0xe8,0x02,0x48,0x83,0xf8,0x03,0x0f,0x1f,0x00};
+    const uint8_t adlsClockSelectFind[]={0x83,0xf9,0x01};
+    const uint8_t adlsClockSelectReplace[]={0x83,0xf9,0x03};
+    const uint8_t adlsClockOffFind[]={0x48,0xff,0x05,0xe9,0x79,0x07,0x00,0x48,0x8b,0x8b,0x48,0x05,0x00,0x00,0x4c,0x63,0x21,0x49,0x83,0xfc,0x03};
+    const uint8_t adlsClockOffReplace[]={0x48,0x8b,0x8b,0x48,0x05,0x00,0x00,0x4c,0x63,0x21,0x49,0x83,0xec,0x02,0x49,0x83,0xfc,0x03,0x0f,0x1f,0x00};
+    const uint8_t entry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53};
+    const auto symbol="__ZN31AppleIntelFramebufferController12enableClocksEP14AppleIntelPortS1_P11ClockParams";
+    const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,symbol,address,size);
+    bool ready=adlsPLLTableReady && orgTGLDisableClocks && tglClockOffCaller && tglComboPLLFractionCaller &&
+     fn==address+0x6CE10 && size>0x6DCBD && !memcmp(reinterpret_cast<void *>(fn),entry,sizeof(entry));
+    struct Site {uint32_t offset;const uint8_t *find,*replace;size_t bytes;};
+    const Site sites[]={{0x6CFD3,adlsClockOnFind,adlsClockOnReplace,sizeof(adlsClockOnFind)},
+     {0x6D222,adlsClockSelectFind,adlsClockSelectReplace,sizeof(adlsClockSelectFind)},
+     {0x6DCA8,adlsClockOffFind,adlsClockOffReplace,sizeof(adlsClockOffFind)}};
+    for(const auto &site:sites)ready=ready && !memcmp(reinterpret_cast<void *>(address+site.offset),site.find,site.bytes);
+    patcher.clearError();
+    if(ready) {
+     KernelPatcher::RouteRequest route(symbol,wrapADLSEnableClocks,orgADLSEnableClocks);
+     ready=patcher.routeMultiple(index,&route,1,address,size);patcher.clearError();
+     if(ready)for(const auto &site:sites) {
+      KernelPatcher::LookupPatch patch {currentFramebuffer,site.find,site.replace,site.bytes,1};
+      patcher.applyLookupPatch(&patch,reinterpret_cast<uint8_t *>(address+site.offset),site.bytes+1);
+      ready &= !memcmp(reinterpret_cast<void *>(address+site.offset),site.replace,site.bytes);
+      patcher.clearError();
+     }
+    }
+    adlsClockReady=ready;
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLSClockReady",ready);
+    // Native startup remains closed if any required ADL-S adapter is absent.
+    adlsDisplayHooksReady=ready && adlsPortInitReady && orgTGLEnableCombo && tglPortByDDI &&
+     orgTGLGetOSInformation && orgTGLRegisterWrite && orgTGLRegisterRead && hpdOK;
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayHooksReady",adlsDisplayHooksReady);
+   }
    tglRecordStartOrder(1,nullptr);
 			return true;
 		}
@@ -15657,6 +15696,9 @@ volatile uint8_t *XE::tglClockOrderTarget(void *controller, void *port, void *pa
 }
 
 void XE::wrapTGLDisableClocks(void *controller, void *port, void *otherPort) {
+ if(callbackXE->adlsDetected && !adlsClockTarget(controller,port,otherPort)) {
+  IORegistryEntry::getRegistryRoot()->setProperty("ADLSClockDisableRejected",true);return;
+ }
  tglTransitionRecord(32,false,port,reinterpret_cast<uintptr_t>(controller),reinterpret_cast<uintptr_t>(otherPort),0);
 	auto s = callbackXE;
 	auto &tx = tglClockOffTransaction;
@@ -15711,6 +15753,31 @@ uint32_t XE::wrapTGLLightUpTMDS(void *controller, void *fb, void *path, const vo
 // The 20A2314a donor nevertheless initializes DDI2 at 0x160000 (EHL PHY C).
 // r44's exact return PC 0x5a843 proves that this third call caused its panic.
 // Keep PHY A, including its shared reference role, and PHY B entirely native.
+bool XE::adlsClockTarget(void *controller,void *port,void *otherPort) {
+    auto self=callbackXE;
+    if(!self->adlsClockReady || !controller || controller!=self->tglObservationController ||
+       !port || (otherPort && otherPort!=port) ||
+       self->adlsHDMIWiring.selected!=8)return false;
+    auto p=static_cast<uint8_t *>(port);
+    auto config=*reinterpret_cast<uint32_t **>(p+0x548);
+    auto access=*reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(controller)+0xC40);
+    return config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(self->tglPlatformCopy)+0x68) &&
+        self->adlsHDMIWiring.matches(config) && access &&
+        *reinterpret_cast<void **>(p+0x578)==access && *reinterpret_cast<uint32_t *>(p+0x5B8)==0x6C10C &&
+        *reinterpret_cast<uint32_t *>(access+0x60)>=0x164294;
+}
+
+void XE::wrapADLSEnableClocks(void *controller,void *port,void *otherPort,uint32_t *params) {
+    AlderLakeS::HDMIClock encoded;
+    if(!adlsClockTarget(controller,port,otherPort) ||
+       !AlderLakeS::HDMIClock::encode(params,*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(controller)+0xEA8),encoded)) {
+        IORegistryEntry::getRegistryRoot()->setProperty("ADLSClockEnableRejected",true);return;
+    }
+    tglTransitionRecord(71,false,port,encoded.cfg0,encoded.cfg1,0);
+    FunctionCast(wrapADLSEnableClocks,callbackXE->orgADLSEnableClocks)(controller,port,otherPort,params);
+    tglTransitionRecord(71,true,port,encoded.cfg0,encoded.cfg1,0);
+}
+
 bool XE::wrapADLSPortInit(void *port,uint32_t *config) {
     const bool result=FunctionCast(wrapADLSPortInit,callbackXE->orgADLSPortInit)(port,config);
     if(!result || !callbackXE->adlsDetected || !config || config[0]!=3)return result;

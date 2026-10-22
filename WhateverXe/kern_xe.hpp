@@ -78,6 +78,10 @@ private:
 	bool adlnDetected {false};
     bool adlsDetected {},adlsNativeReady {},adlsDisplayHooksReady {};
     bool adlsPortInitReady {};
+    bool adlsPLLTableReady {},adlsClockReady {};
+    mach_vm_address_t orgADLSEnableClocks {};
+    static bool adlsClockTarget(void *controller,void *port,void *otherPort);
+    static void wrapADLSEnableClocks(void *controller,void *port,void *otherPort,uint32_t *params);
     mach_vm_address_t orgADLSPortInit {};
     static bool wrapADLSPortInit(void *port,uint32_t *config);
     AlderLakeS::GT adlsGT;
