@@ -5,15 +5,15 @@
 Add experimental Tiger Lake laptop display support and automatic Display 13 tiling selection.
 
 - Read connector routing from structurally valid firmware VBT tables even when their checksum is stale, while retaining bounds and connector checks.
-- Add Tiger Lake internal eDP output with EDID-derived color depth, firmware-derived panel setup and standard brightness control with a suitable PNLF device.
+- Add Tiger Lake internal eDP output with EDID-derived color depth, firmware-derived panel setup and brightness control with SSDT-PNLF.
 - Add firmware-selected Tiger Lake USB-C DisplayPort Alt Mode output, including PHY, AUX and lane assignment handling.
 - Keep eDP scrambler settings synchronized with the panel during link training to restore normal output after display sleep.
-- Detect internal panels automatically on laptops and mini PCs without a panel-disable boot argument.
+- Remove the `-wex-nopanel` boot argument: it is no longer needed because internal displays are detected automatically on laptops and mini PCs.
 - Select Y-tiled scanout automatically on the supported Display 13 backend, removing the OpenCore `AAPL,GfxYTile` requirement.
 
 Laptop display and brightness checks cover Big Sur through Tahoe. HDMI and both tested USB-C ports passed reconnection checks on Tahoe; Tiger Lake and Alder Lake-N mini PCs passed Big Sur/Tahoe regression checks. Automatic Display 13 Y tiling was verified on Alder Lake-N with Big Sur and Tahoe.
 
-This update uses the existing WhateverXe Graphics package. Fixed DisplayPort reconnection remains a known issue, and system sleep is not validated; see the [README](https://github.com/b00t0x/WhateverXe#tested-features-and-known-issues) for coverage and limitations.
+This update does not require updating or reinstalling the WhateverXe Graphics package. Fixed DisplayPort reconnection remains a known issue, and system sleep is not validated; see the [README](https://github.com/b00t0x/WhateverXe#tested-features-and-known-issues) for coverage and limitations.
 
 ## 0.3.0
 

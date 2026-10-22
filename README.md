@@ -9,8 +9,7 @@ This project is experimental and requires the signed graphics package from
 [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics). It installs
 the graphics stack under `/Library` and updates the Auxiliary Kernel Collection
 (AuxKC), without patching System files or snapshots. WEX and the graphics package
-have independent release versions. WEX 0.4.0 uses the existing graphics package;
-updating WEX does not require reinstalling it.
+have independent release versions.
 
 ## Compatibility
 
@@ -95,14 +94,7 @@ from `HECI` or `MEI` to `IMEI` is unnecessary.
 
 ### Internal-panel brightness
 
-Tiger Lake laptops need a PNLF ACPI device under the actual iGPU namespace,
-with `_HID=APP0002`, `_CID=backlight`, and `_UID=19`. Adapt the SSDT scope to
-the firmware's ACPI path; the IORegistry name `IGPU` may be a runtime rename.
-WEX supplies a missing generic 16-bit brightness profile for that PNLF device
-when the internal framebuffer reports a 0–65535 backlight range. Existing
-Apple/custom profiles are preserved. PNLF registration alone does not prove
-that brightness reaches the panel; PWM behavior still depends on the display
-backend. Mini PCs without an internal panel do not need PNLF.
+Add `SSDT-PNLF` to OpenCore to enable internal-display brightness control.
 
 ### DVMT
 
@@ -135,7 +127,8 @@ Add the following to OpenCore's `boot-args`:
 | `-allow3d` | Enable the Apple driver's 3D path. |
 | `-disablegfxfirmware` | Disable the Apple driver's graphics-firmware loading path for the current backend. |
 
-Internal-panel detection is automatic; no panel-disable argument is required.
+The `-wex-nopanel` boot argument has been removed and is no longer needed.
+WEX automatically handles systems with or without an internal display.
 
 No family-selection or per-feature enable arguments are required for
 Alder Lake-N / Twin Lake.
@@ -145,63 +138,35 @@ The supported Display 13 backend selects Y-tiled scanout automatically;
 Do not use the Apple driver's `-yTileDisable` argument with this backend:
 its X-tiled scanout path is unsupported. Display 12 tiling selection is unchanged.
 
-### Optional boot arguments
-
-| Argument | Purpose |
-| --- | --- |
-| `-wex-display-trace` | Enable detailed Tiger Lake display-transition and PHY diagnostics. Disabled by default. |
-| `gfxrst=` | Boot framebuffer handoff: 0 automatic (default), 1 reset, 2 copy, 3 clear, 4 disable. |
-| `-wexdbg` | Enable debug logging in a debug build. |
-| `-wexoff` | Disable WhateverXe. |
-| `-wexbeta` | Bypass the plugin's OS-version check. Exact kernel/driver checks still apply. |
-| `-wex-tgl-off` | Disable the Tiger Lake path. |
-| `-wex-noaccel` | Tiger Lake framebuffer-only mode; blocks accelerator probing. |
-
 ## Tested features and known issues
 
-Tiger Lake and Alder Lake-N have been tested across all six OS families with
-dual external 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware
-H.264 encode/decode, hardware HEVC decode, display sleep/wake, Safari hardware
-video decode and Widevine playback. The common TGLCompat build has also passed
-installation and functional checks on Alder Lake-N across all six OS families.
-These checks do not establish compatibility with every codec, application or GPU
-in the table.
+| Hardware | Verified features |
+| --- | --- |
+| Tiger Lake / Alder Lake-N | Big Sur–Tahoe: dual 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware H.264 encode/decode, HEVC decode, display sleep/wake, Safari video decoding and Widevine playback |
+| Tiger Lake laptops | Big Sur–Tahoe: internal 1366×768 eDP display, brightness control, HDMI and USB-C DisplayPort Alt Mode, up to three simultaneous displays; HDMI and both USB-C ports reconnected successfully on Tahoe |
+| Alder Lake-N | Big Sur/Tahoe: automatic Y tiling without an EFI `AAPL,GfxYTile` setting |
 
-Experimental Tiger Lake laptop support has been verified from Big Sur through
-Tahoe with a 1366×768 internal eDP panel, standard brightness control and three
-simultaneous displays (the internal panel plus two 1920×1080 at 60 Hz outputs).
-Monterey through Tahoe were checked with HDMI and a USB-C DP-alt-to-HDMI adapter
-connected, including display sleep/wake and Metal compute/render checks.
-HDMI and both tested USB-C ports also passed disconnect/reconnect checks on Tahoe.
-Connector selection uses firmware VBT data; the current DP-alt backend admits
-TC1–TC4, with TC1 and TC3 tested. These results do not qualify every laptop,
-USB-C port, adapter, dock, or system sleep.
-
-Tiger Lake and Alder Lake-N mini PCs also passed Big Sur/Tahoe regression
-checks without a panel-disable argument. Automatic Display 13 Y tiling without
-an EFI `AAPL,GfxYTile` property was verified on Alder Lake-N with Big Sur and
-Tahoe, including dual-display output, Metal/MPS and display sleep/wake.
+These results cover tested systems, not every GPU, display, adapter or dock.
 
 ### Known issues and limits
 
-- VA image conversion can crash with a null-pointer access.
-- Fixed DisplayPort reconnection has caused black screens or system hangs,
-  including on Sequoia and Tahoe. The laptop DP-alt checks above do not clear
-  this separate path's known issue.
-- Occasional Safari frame drops have been observed.
-- Four simultaneous displays are outside the current three-pipe driver scope.
-- System sleep, higher resolutions and other
-  connector layouts require further validation. The experimental DP-alt path
-  currently keeps TC-cold blocked for the boot session; releasing that protection
-  for power savings and system sleep need further implementation and validation.
+- Some image-conversion operations can crash the application.
+- Reconnecting a monitor to a dedicated DisplayPort connector can leave the
+  screen black or freeze the computer. USB-C DisplayPort Alt Mode passed the
+  reconnection checks above.
+- Safari video playback may occasionally drop frames.
+- Up to three displays can be used simultaneously; a fourth display will not
+  receive an image.
+- Full system sleep/wake and resolutions above those listed above are unverified.
+  USB-C display output currently prevents part of the display hardware from
+  entering a low-power state.
 
 ## Roadmap
 
 ### Planned
 
 - Alder Lake and Raptor Lake S/H/P/U support
-- Additional USB-C ports, adapters and dock configurations
-- Broader internal-display and laptop power-management support
+- Display 13 USB-C and eDP support
 
 ### Not Planned
 

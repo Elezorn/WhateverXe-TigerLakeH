@@ -4,7 +4,7 @@
 
 WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィックスドライバを適応させるLiluプラグインです。WhateverGreenを基に開発しています。
 
-本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。WEX 0.4.0は既存のグラフィックスpkgを使用でき、WEX更新のためにpkgを再インストールする必要はありません。
+本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。
 
 ## 対応範囲
 
@@ -61,13 +61,7 @@ GPUはPCI device IDから自動選択します。対応範囲内ではファー�
 
 ### 内蔵パネルの輝度
 
-Tiger Lakeラップトップでは、実際のiGPUのACPIパス配下に、`_HID=APP0002`、
-`_CID=backlight`、`_UID=19`のPNLFデバイスが必要です。SSDTのScopeはファームウェアの
-ACPIパスに合わせてください。IORegistryの`IGPU`は実行時のrenameである場合があります。
-内蔵Framebufferが0〜65535のバックライト範囲を報告する場合、WEXは不足している
-汎用16 bit輝度プロファイルを補います。既存のApple製・カスタムプロファイルは保持します。
-PNLFの登録だけでは実パネルの明るさ変更を保証せず、PWMの動作には表示バックエンド側の
-対応も必要です。内蔵パネルのないミニPCにはPNLFは不要です。
+内蔵ディスプレイの輝度調整には、OpenCoreへ`SSDT-PNLF`を追加してください。
 
 ### DVMT
 
@@ -95,51 +89,37 @@ OpenCoreの`boot-args`に以下を追加してください。
 | `-allow3d` | Appleドライバの3D処理を有効にする。 |
 | `-disablegfxfirmware` | 現在のバックエンドで、Appleドライバのグラフィックスファームウェア読み込みを無効にする。 |
 
-内蔵パネルの検出は自動で行うため、パネルを無効化する引数は不要です。
+`-wex-nopanel`ブート引数は廃止され、不要になりました。内蔵ディスプレイの有無は自動で判定します。
 
 Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追加する必要はありません。
 
 対応済みのDisplay 13バックエンドではYタイル出力を自動選択するため、OpenCoreの`AAPL,GfxYTile`設定は不要です。既存の値は保持します。
 このバックエンドはXタイル出力に未対応なので、Appleドライバの`-yTileDisable`引数は使用しないでください。Display 12のタイル選択は変更しません。
 
-### 任意のブート引数
-
-| 引数 | 用途 |
-| --- | --- |
-| `-wex-display-trace` | Tiger Lakeの表示遷移・PHYの詳細診断を有効にする。既定では無効。 |
-| `gfxrst=` | 起動時framebufferの引継ぎ方式。0：自動（既定）、1：reset、2：copy、3：clear、4：無効。 |
-| `-wexdbg` | debug buildでログを有効にする。 |
-| `-wexoff` | WhateverXeを無効にする。 |
-| `-wexbeta` | プラグインのOSバージョンチェックを回避する。kernel／driverの一致条件は維持する。 |
-| `-wex-tgl-off` | Tiger Lakeの処理を無効にする。 |
-| `-wex-noaccel` | Tiger LakeのFramebuffer単独モード。Acceleratorのprobeを停止します。 |
-
 ## 動作確認済みの機能と既知の問題
 
-Tiger LakeとAlder Lake-Nで、全6 OSにわたり、外部2画面の1920×1080・60Hz出力、Metal/MPS、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、ハードウェアHEVCデコード、画面の消灯／復帰、Safariのハードウェア動画デコード、Widevine再生を確認しています。共通TGLCompatビルドも、Alder Lake-Nの全6 OSで導入と機能を確認しています。すべてのcodec・アプリケーション・表内のGPUでの互換性を確認したものではありません。
+| ハードウェア | 確認済みの機能 |
+| --- | --- |
+| Tiger Lake / Alder Lake-N | Big Sur〜Tahoe：外部2画面の1920×1080・60Hz出力、Metal/MPS、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、HEVCデコード、画面の消灯／復帰、Safariの動画デコード、Widevine再生 |
+| Tiger Lakeラップトップ | Big Sur〜Tahoe：内蔵1366×768 eDP、輝度調整、HDMI、USB-C DisplayPort Alt Mode、最大3画面同時出力。TahoeではHDMIとUSB-Cの2端子で抜き差しも確認 |
+| Alder Lake-N | Big Sur/Tahoe：EFIの`AAPL,GfxYTile`設定なしでのYタイル自動選択 |
 
-Tiger Lakeラップトップの実験的な対応として、Big Sur〜Tahoeで内蔵1366×768 eDPパネル、標準輝度調整、内蔵＋外部1920×1080・60Hzの2画面による計3画面同時出力を確認しています。
-Monterey〜Tahoeでは本体HDMIとUSB-C DP-alt→HDMIアダプターを接続した状態で、画面の消灯／復帰とMetal計算・描画も確認しました。TahoeではHDMIと検証したUSB-Cの2端子で抜き差しも確認しています。
-コネクタはファームウェアのVBTから選択し、現在のDP-alt backendはTC1〜TC4を受け付け、TC1とTC3で確認しています。すべてのラップトップ・USB-C端子・アダプター・ドックやシステムスリープを認定したものではありません。
-
-Tiger LakeとAlder Lake-NのミニPCでも、パネルを無効化する引数なしでBig Sur/Tahoeの回帰試験を通過しました。
-EFIの`AAPL,GfxYTile`設定を省いたDisplay 13のYタイル自動選択は、Alder Lake-NのBig Sur/Tahoeで、2画面出力・Metal/MPS・画面の消灯／復帰を確認しています。
+検証した機器での結果であり、すべてのGPU・ディスプレイ・アダプター・ドックでの動作を保証するものではありません。
 
 ### 既知の問題と制限
 
-- VA画像変換でnull参照によるクラッシュが発生することがあります。
-- 固定DisplayPort経路では、Sequoia・Tahoeなどで再接続時の黒画面やシステムハングが発生しています。上記ラップトップのDP-alt検証で、この別経路の既知問題が解決したとは扱いません。
-- Safariでは少数のフレーム落ちを確認しています。
-- 4画面同時出力は、現在の3 pipeドライバの対応範囲外です。
-- システムスリープ、より高い解像度や他のコネクタ構成は追加検証が必要です。実験的なDP-alt経路は現在、起動中のTC-coldを抑止しています。省電力のための保護解放とシステムスリープは追加実装・検証が必要です。
+- 一部の画像変換処理で、アプリケーションがクラッシュすることがあります。
+- DisplayPort専用端子でモニターを接続し直すと、黒画面になったりコンピューターが応答しなくなったりすることがあります。USB-CのDisplayPort Alt Modeでは、上記の抜き差し試験を通過しています。
+- Safariの動画再生で、ときどきコマ落ちが発生します。
+- 同時出力は最大3画面です。4画面目には映像が出ません。
+- システム全体のスリープ／復帰と、上記を超える解像度は未検証です。USB-C映像出力では現在、表示回路の一部を省電力状態へ移行させずに動作させています。
 
 ## ロードマップ
 
 ### Planned
 
 - Alder Lake／Raptor LakeのS/H/P/U対応
-- USB-Cの追加端子・アダプター・ドック構成への対応
-- 内蔵ディスプレイとラップトップ省電力への対応拡大
+- Display 13のUSB-C / eDP対応
 
 ### Not Planned
 
