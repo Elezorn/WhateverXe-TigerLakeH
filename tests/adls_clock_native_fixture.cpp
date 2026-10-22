@@ -73,6 +73,18 @@ int main(int argc,char **argv){
   uint32_t params[]={464,2048,2,3,2};enable(ctl,port,nullptr,params);
   assert(delays==2000 && errors==1 && mmio[0x164280]==0x01e07400);
  }
+ // Stop immediately after native GMBUS parameter validation, before MMIO.
+ // Native request validation and its original return/status path execute.
+ const uint8_t accepted[]={0x41,0xbc,0x78,0x56,0x34,0x12,0xe9};
+ memcpy(image+0x53b96,accepted,sizeof(accepted));
+ int32_t back=0x53b79-(0x53b96+11);memcpy(image+0x53b96+7,&back,4);
+ auto bus=(uint32_t(*)(void*,uint32_t,uint32_t,void*))(image+0x53a7c);
+ alignas(8) uint8_t request[0x80] {};
+ for(unsigned pin:{7u,9u,10u,UINT32_MAX}) {
+  const auto result=bus(ctl,pin,3,request);
+  assert(result==(pin<10?0x12345678u:0xe00002c2u));assert(at<uint32_t>(request,0x1c)==result);
+ }
+ at<uint32_t>(request,0x38)=0x200;assert(bus(ctl,9,3,request)==0xe00002c2);
  munmap(image,0x400000);
  printf("PASS %u real donor Combo PLL enable/disable cases: physical TC1 preserved, PHY B selection, reference fraction, voltage/power order; 2 bounded timeout paths. MMIO and power hardware mocked.\n",cases);
 }

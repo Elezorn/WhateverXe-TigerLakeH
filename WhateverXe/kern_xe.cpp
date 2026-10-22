@@ -4161,7 +4161,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 			// Preserve firmware power/ownership; no MMIO writes. The guarded20G
             // route first qualifies the shared writable BAR map. All-ones FIA
             // reads are unavailable, not connected ports.
-			if (!adlsDetected && (pci->configRead16(4) & 2)) {
+			if (pci->configRead16(4) & 2) {
 				auto mmio = pci->mapDeviceMemoryWithRegister(0x10,
                     tglMMIOUCRouted ? 0 : kIOMapReadOnly | kIOMapInhibitCache);
                 if (tglMMIOUCRouted) tglUpdateMMIOMap(mmio);
@@ -4169,7 +4169,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 					uint32_t registers[][2] {{0xC4000, 0}, {0x44470, 0},
 						{0x1638A0, 0}, {0x163890, 0}, {0x163894, 0}};
 					auto base = reinterpret_cast<volatile uint8_t *>(mmio->getVirtualAddress());
-					if (base && mmio->getLength() >= 0x1638A4) {
+					if (!adlsDetected && base && mmio->getLength() >= 0x1638A4) {
 						for (auto &reg : registers)
 							reg[1] = *reinterpret_cast<volatile uint32_t *>(base + reg[0]);
 						pci->setProperty("TGLBootPortRegisters", registers, sizeof(registers));
@@ -10950,6 +10950,10 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     const uint8_t adlsClockSelectReplace[]={0x83,0xf9,0x03};
     const uint8_t adlsClockOffFind[]={0x48,0xff,0x05,0xe9,0x79,0x07,0x00,0x48,0x8b,0x8b,0x48,0x05,0x00,0x00,0x4c,0x63,0x21,0x49,0x83,0xfc,0x03};
     const uint8_t adlsClockOffReplace[]={0x48,0x8b,0x8b,0x48,0x05,0x00,0x00,0x4c,0x63,0x21,0x49,0x83,0xec,0x02,0x49,0x83,0xfc,0x03,0x0f,0x1f,0x00};
+    // PCH GMBUS9 is a real ADL-S pin. The donor's ICL-era <8 check
+    // rejects it before MMIO. The entry wrapper admits only wired pin9.
+    const uint8_t adlsClockBusFind[]={0x83,0x7d,0xcc,0x08,0x72,0x2a};
+    const uint8_t adlsClockBusReplace[]={0x83,0x7d,0xcc,0x0a,0x72,0x2a};
     const uint8_t entry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53};
     const auto symbol="__ZN31AppleIntelFramebufferController12enableClocksEP14AppleIntelPortS1_P11ClockParams";
     const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,symbol,address,size);
@@ -10958,7 +10962,8 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     struct Site {uint32_t offset;const uint8_t *find,*replace;size_t bytes;};
     const Site sites[]={{0x6CFD3,adlsClockOnFind,adlsClockOnReplace,sizeof(adlsClockOnFind)},
      {0x6D222,adlsClockSelectFind,adlsClockSelectReplace,sizeof(adlsClockSelectFind)},
-     {0x6DCA8,adlsClockOffFind,adlsClockOffReplace,sizeof(adlsClockOffFind)}};
+     {0x6DCA8,adlsClockOffFind,adlsClockOffReplace,sizeof(adlsClockOffFind)},
+     {0x53B66,adlsClockBusFind,adlsClockBusReplace,sizeof(adlsClockBusFind)}};
     for(const auto &site:sites)ready=ready && !memcmp(reinterpret_cast<void *>(address+site.offset),site.find,site.bytes);
     patcher.clearError();
     if(ready) {
@@ -14452,6 +14457,10 @@ uint32_t XE::wrapTGLRegisterRead(void *access, unsigned long reg) {
 }
 
 uint32_t XE::wrapTGLGMBus(void *controller, uint32_t bus, uint32_t speed, void *request) {
+ if(callbackXE->adlsDetected && (!callbackXE->tglHDMIDDCEligible(bus) || bus!=9)) {
+  if(request)*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(request)+0x1C)=0xE00002C2;
+  return 0xE00002C2;
+ }
 	uint64_t r[24] {}, uptime;
 	static uint32_t count {};
 	r[0] = __sync_add_and_fetch(&count, 1);

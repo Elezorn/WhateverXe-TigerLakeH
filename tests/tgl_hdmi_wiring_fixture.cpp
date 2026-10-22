@@ -73,6 +73,14 @@ int main(){
  assert(object.tglHDMIEligible(adlsConfig) && object.tglHDMIDDCEligible(9) && !object.tglHDMIDDCEligible(2));
  assert(adlsConfig[0]==3 && adlsConfig[1]==9 && adlsConfig[3]==0);
  expectUnchangedExcept(platform(),{0x70,0x74,0x78,0x7C});
+ for(unsigned bus=0;bus<=14;++bus) {
+  uint32_t request[16] {};request[1]=1;request[3]=0xA0;request[14]=128;
+  nativeGMBusCalls=0;
+  auto result=XE::wrapTGLGMBus(controller,bus,0,request);
+  assert(nativeGMBusCalls==unsigned(bus==9));
+  assert(result==(bus==9?0x91u:0xE00002C2u));
+  if(bus!=9)assert(request[7]==result);
+ }
  setup();object.adlsDetected=true;auto foreignWiring=property(2,0,2,0);IOService wrongADLS{&foreignWiring};
  assert(!XE::tglLoadHDMIWiring(&wrongADLS) && !XE::tglLoadHDMIWiring(&wrongADLS));
  // The native setup caller supplies an interior output pointer as arg0.

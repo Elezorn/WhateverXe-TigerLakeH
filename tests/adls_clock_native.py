@@ -6,7 +6,7 @@ r=Path(__file__).resolve().parents[1]
 b=bytearray(Path(sys.argv[1]).read_bytes())
 assert hashlib.sha256(b).hexdigest()=='c004fc1ac9ee4157e2e12736f40fa6639bde025a279326beeb9dd48c9b445731'
 s=(r/'WhateverXe/kern_xe.cpp').read_text()
-for name,off in [('On',0x6cfd3),('Select',0x6d222),('Off',0x6dca8)]:
+for name,off in [('On',0x6cfd3),('Select',0x6d222),('Off',0x6dca8),('Bus',0x53b66)]:
     def array(suffix):
         v=re.search(r'const uint8_t adlsClock'+name+suffix+r'\[\]=\{([^}]+)\}',s).group(1)
         return bytes(int(n,0) for n in v.split(','))
