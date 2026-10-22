@@ -137,7 +137,7 @@ void setup() {
  for (const auto &r : retained) assert(r.second==0);
  retained.clear();
  obj = XE{};
- obj.tglAUXParentMask=1u<<4;obj.tglTCWiring=TGLTCWiring::fromMasks(1u<<4,0,0); // explicit baseline fixture wiring
+ obj.tglAUXParentMask=0x1f8;obj.tglTCWiring=TGLTCWiring::fromMasks(0x1f8,0,0); // mock-qualified TC backends
  obj.tglPathPoolLock = &poolLock; obj.tglObservationController=ctl.data();
  obj.tglPortByDDI=(uintptr_t)getPort; obj.orgTGLPathLookup=(uintptr_t)lookup;
  obj.orgTGLAllocatePathAny=(uintptr_t)allocateAny; obj.orgTGLAllocatePathFixed=(uintptr_t)allocateFixed;
@@ -150,7 +150,7 @@ void setup() {
  existingPath=badPipe=failAdoption=stopCalled=false; nativeCalls=0; nativeEndResult=0;
  nativeBoundary={}; clockBoundary={}; protectedMMIO=nullptr; protectOnPowerDrop=bufferIdlePending=false;portDisables=clockDisables=0;
  std::fill(std::begin(used),std::end(used),false); std::fill(std::begin(pgRefs),std::end(pgRefs),0);
- ctl.at<void *>(0xd40)=obj.tglNoPanelPlatform; ctl.at<void *>(0xc40)=access.data(); ctl.at<void *>(0xc8)=power.data();
+ ctl.at<void *>(0xd40)=obj.tglPlatformCopy; ctl.at<void *>(0xc40)=access.data(); ctl.at<void *>(0xc8)=power.data();
  access.at<void *>(0x50)=mmio.data(); access.at<uint32_t>(0x60)=sizeof(mmio);
  for (unsigned i=0; i<9; ++i) { ports[i]={}; ports[i].at<uint32_t>(0x550)=4; ports[i].at<void *>(0x578)=access.data(); obj.tglTrainingLeases[i].ddi=i;mmio.at<uint32_t>(0x64000+0x100*i)=0x80; }
  for (auto &fb : fbs) { fb={}; fb.at<void *>(0x1d0)=ctl.data(); fb.at<void *>(0x4a40)=access.data(); }
@@ -275,7 +275,7 @@ void trainingRouteRestoration() {
  puts("route restoration: native mocks preserve FUNC; production lease restores saved configuration on all 3 pipes (no hardware ordering claim)");
 }
 void wiringAdmission() {
- setup();
+ setup();obj.tglAUXParentMask=1u<<4;
  obj.tglTCWiring=TGLTCWiring::fromMasks((1u<<3)|(1u<<4)|(1u<<5),0,0);
  assert(!XE::tglTrainingLeaseForDDI(3) && XE::tglTrainingLeaseForDDI(4) && !XE::tglTrainingLeaseForDDI(5));
  obj.tglTCWiring=TGLTCWiring::fromMasks(0,1u<<4,0);assert(!XE::tglTrainingLeaseForDDI(4));
@@ -379,7 +379,7 @@ int main(int argc, char **argv) {
  obj.tglAllocatingFB[1]=nullptr; clean();
  setup(); reserve(3); auto &l=reserve(4);
  assert(XE::tglTrainingLeaseForDDI(4)==&l);
- assert(!XE::tglTrainingLeaseForDDI(3) && !XE::tglTrainingLeaseForDDI(9) && !XE::tglTrainingLeaseForDDI(~0u));
+ assert(XE::tglTrainingLeaseForDDI(3) && !XE::tglTrainingLeaseForDDI(9) && !XE::tglTrainingLeaseForDDI(~0u));
  l.busy=true; assert(XE::tglPrepareTrainingLease(ctl.data(),l)==4 && l.busy); l.busy=false;
  // Failed hardware admission leaves another port's reservation intact.
  mmio.at<uint32_t>(0x64500)=0x80000000;
@@ -427,6 +427,18 @@ int main(int argc, char **argv) {
  assert(XE::wrapTGLTraining(ctl.data(),request,output)==0 && !obj.tglTrainingLeases[4].busy);
  assert(XE::wrapTGLTrainingBegin(ctl.data(),request)==0 && !obj.tglTrainingLeases[4].busy);
  assert(XE::wrapTGLTrainingEnd(ctl.data(),request)==0 && !obj.tglTrainingLeases[4].busy); clean();
+ // Native USB-C mode3 shares the resource pool without becoming legacy DP.
+ setup();obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.tglDPAltCandidates=8;
+ assert(!obj.tglLegacyTCEligible(3)&&!obj.tglAUXParentEligible(3));
+ assert(XE::tglTrainingLeaseForDDI(3)&&!XE::tglTrainingLeaseForDDI(4));
+ assert(XE::tglPrepareTrainingLease(ctl.data(),obj.tglTrainingLeases[3])==1); // mode4 mismatch
+ ports[3].at<uint32_t>(0x550)=3;
+ // A real panel owns FB0/pipe0: reserve only the remaining external path.
+ ctl.at<uint8_t>(0xe55)=1;used[0]=true;fbs[0].at<uint32_t>(0x49e8)=1;
+ auto &alt=reserve(3);assert(alt.pipe==1&&alt.fb!=fbs[0].data());release(3);
+ assert(used[0]&&fbs[0].at<uint32_t>(0x49e8)==1);used[0]=false;clean();
+ ports[3].at<uint32_t>(0x550)=2;
+ assert(XE::tglPrepareTrainingLease(ctl.data(),obj.tglTrainingLeases[3])==1); // no TBT
  // Nested and concurrent training must not unmute another invocation.
  TGLTrainingScopes scopes;
  auto one=scopes.enter(1), nested=scopes.enter(1), two=scopes.enter(2);

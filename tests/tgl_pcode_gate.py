@@ -6,7 +6,7 @@ import tempfile
 repo=Path(__file__).resolve().parents[1]
 source=(repo/'WhateverXe/kern_xe.cpp').read_text()
 start=source.index('static TGLPcodeGate tglPcodeGate;')
-end=source.index('// Explicit opt-in transport trial',start)
+end=source.index('struct TGLTCBootstrapState',start)
 wrappers=source.index('uint32_t XE::wrapTGLMailboxRead(')
 stop=source.index('// EDRAM hook starts after native forcewake',wrappers)
 fixture=(repo/'tests/tgl_pcode_gate_fixture.cpp').read_text().replace('// NATIVE_WRAPPERS',source[start:end]+source[wrappers:stop])

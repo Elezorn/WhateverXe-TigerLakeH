@@ -5,6 +5,7 @@ f='\n'.join(re.search(p,s,re.S).group() for p in [r'volatile uint8_t \*XE::tglCl
 tx=s[s.index('struct TGLClockOffTransaction {'):s.index('} tglClockOffTransaction;')+len('} tglClockOffTransaction;')]
 code=r'''
 #include <cassert>
+#include <initializer_list>
 template<class... T>void tglTransitionRecord(T...){ }
 #include <cstdint>
 #include <cstdio>
@@ -14,7 +15,7 @@ void *current_thread(){return (void*)1;}unsigned delays=0,writes=0,natives=0;uin
 void IODelay(unsigned n){assert(n==8);++delays;}
 struct XE {
  void *tglObservationController;uintptr_t tglClockOffCaller=1,orgTGLPathLookup,orgTGLDisableClocks;
- bool tglLegacyTCEligible(unsigned d){return d>=3&&d<=8;}
+ bool tglDPSSTMode(unsigned d,unsigned mode){return d>=3&&d<=8&&(mode==3||mode==4);}
  static volatile uint8_t *tglClockOrderTarget(void*,void*,void*,void*);
  static void wrapTGLDisableClocks(void*,void*,void*);
  static void *wrapTGLPathLookup(void*);
@@ -29,10 +30,10 @@ void *lookup(void*){return d;}void native(void*,void*,void*){++natives;}
 uint32_t &reg(unsigned n){return *reinterpret_cast<uint32_t*>(mmio+n);}
 int main(){
  unsigned cases=0;
- for(unsigned ddi=3;ddi<=8;++ddi)for(unsigned pipe=0;pipe<3;++pipe)for(unsigned fault=0;fault<5;++fault){
+ for(unsigned mode:{3u,4u})for(unsigned ddi=3;ddi<=8;++ddi)for(unsigned pipe=0;pipe<3;++pipe)for(unsigned fault=0;fault<5;++fault){
   memset(c,0,sizeof(c));memset(p,0,sizeof(p));memset(d,0,sizeof(d));memset(fb,0,sizeof(fb));memset(a,0,sizeof(a));memset(mmio,0,sizeof(mmio));
   obj.tglObservationController=c;obj.orgTGLPathLookup=(uintptr_t)lookup;obj.orgTGLDisableClocks=(uintptr_t)native;
-  cfg[0]=ddi;cfg[2]=1;put(p,0x548,cfg);put(p,0x550,uint32_t(4));put(p,0x578,a);put(c,0xc40,a);
+  cfg[0]=ddi;cfg[2]=1;put(p,0x548,cfg);put(p,0x550,mode);put(p,0x578,a);put(c,0xc40,a);
   put(d,0x3640,pipe);put(d,0x3648,p);put(d,0x32b0,fb);put(fb,0x1d0,c);put(fb,0x4a40,a);put(a,0x50,mmio);put(a,0x60,uint32_t(sizeof(mmio)));
   const unsigned clock=0x46140+4*pipe,buffer=0x64000+0x100*ddi;
   reg(clock)=(ddi+1)<<28;reg(buffer)=0x80;

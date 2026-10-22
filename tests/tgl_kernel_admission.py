@@ -18,7 +18,7 @@ struct Profile { bool ok; XELP::Family family; bool admitted() const {return ok;
 const char *version;
 bool noaccel,off;
 bool checkKernelArgument(const char *arg) {return !strcmp(arg,"-wex-noaccel")?noaccel:!strcmp(arg,"-wex-tgl-off")?off:false;}
-bool tglRequested,tglNoPanel,tglInactivePorts,tglPG1Poll,tglClockOrderRequested,tglTrainingLeaseRequested,tglProgramEnabled,tglAcceleratorRequested;
+bool tglRequested,tglInactivePorts,tglPG1Poll,tglClockOrderRequested,tglTrainingLeaseRequested,tglProgramEnabled,tglAcceleratorRequested;
 int kextIntelTGL,kextIntelTGLFb;int *currentGraphics,*currentFramebuffer;
 void select(Profile profile) { BODY }
 int main(){

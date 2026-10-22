@@ -92,6 +92,10 @@ On supported GPUs, WhateverXe also normalizes the detected Intel Management
 Engine device name to `IMEI`, as WhateverGreen does. A separate ACPI rename
 from `HECI` or `MEI` to `IMEI` is unnecessary.
 
+### Internal-panel brightness
+
+Add `SSDT-PNLF` to OpenCore to enable internal-display brightness control.
+
 ### DVMT
 
 Set **DVMT Pre-Allocated to 96MB** in the BIOS/UEFI settings where possible.
@@ -122,49 +126,47 @@ Add the following to OpenCore's `boot-args`:
 | --- | --- |
 | `-allow3d` | Enable the Apple driver's 3D path. |
 | `-disablegfxfirmware` | Disable the Apple driver's graphics-firmware loading path for the current backend. |
-| `-wex-nopanel` | Additionally required on Tiger Lake systems without an internal display. Alder Lake-N / Twin Lake currently builds an external-display topology automatically and does not use this flag. |
+
+The `-wex-nopanel` boot argument has been removed and is no longer needed.
+WEX automatically handles systems with or without an internal display.
 
 No family-selection or per-feature enable arguments are required for
 Alder Lake-N / Twin Lake.
 
-### Optional boot arguments
-
-| Argument | Purpose |
-| --- | --- |
-| `gfxrst=` | Boot framebuffer handoff: 0 automatic (default), 1 reset, 2 copy, 3 clear, 4 disable. |
-| `-wexdbg` | Enable debug logging in a debug build. |
-| `-wexoff` | Disable WhateverXe. |
-| `-wexbeta` | Bypass the plugin's OS-version check. Exact kernel/driver checks still apply. |
-| `-wex-tgl-off` | Disable the Tiger Lake path. |
-| `-wex-noaccel` | Tiger Lake framebuffer-only mode; blocks accelerator probing. |
+The supported Display 13 backend selects Y-tiled scanout automatically;
+`AAPL,GfxYTile` is not required in OpenCore. Existing values are preserved.
+Do not use the Apple driver's `-yTileDisable` argument with this backend:
+its X-tiled scanout path is unsupported. Display 12 tiling selection is unchanged.
 
 ## Tested features and known issues
 
-Tiger Lake and Alder Lake-N have been tested across all six OS families with
-dual external 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware
-H.264 encode/decode, hardware HEVC decode, display sleep/wake, Safari hardware
-video decode and Widevine playback. The common TGLCompat build has also passed
-installation and functional checks on Alder Lake-N across all six OS families.
-These checks do not establish compatibility with every codec, application or GPU
-in the table.
+| Hardware | Verified features |
+| --- | --- |
+| Tiger Lake / Alder Lake-N | Big Sur–Tahoe: dual 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware H.264 encode/decode, HEVC decode, display sleep/wake, Safari video decoding and Widevine playback |
+| Tiger Lake laptops | Big Sur–Tahoe: internal 1366×768 eDP display, brightness control, HDMI and USB-C DisplayPort Alt Mode, up to three simultaneous displays; HDMI and both USB-C ports reconnected successfully on Tahoe |
+| Alder Lake-N | Big Sur/Tahoe: automatic Y tiling without an EFI `AAPL,GfxYTile` setting |
+
+These results cover tested systems, not every GPU, display, adapter or dock.
 
 ### Known issues and limits
 
-- VA image conversion can crash with a null-pointer access.
-- DisplayPort reconnection can cause a black screen or system hang, including
-  on Sequoia and Tahoe.
-- Occasional Safari frame drops have been observed.
-- Three simultaneous displays, system sleep, higher resolutions and other
-  connector layouts require further validation. USB-C and internal display
-  support are planned below.
+- Some image-conversion operations can crash the application.
+- Reconnecting a monitor to a dedicated DisplayPort connector can leave the
+  screen black or freeze the computer. USB-C DisplayPort Alt Mode passed the
+  reconnection checks above.
+- Safari video playback may occasionally drop frames.
+- Up to three displays can be used simultaneously; a fourth display will not
+  receive an image.
+- Full system sleep/wake and resolutions above those listed above are unverified.
+  USB-C display output currently prevents part of the display hardware from
+  entering a low-power state.
 
 ## Roadmap
 
 ### Planned
 
 - Alder Lake and Raptor Lake S/H/P/U support
-- USB-C display output
-- Internal displays
+- Display 13 USB-C and eDP support
 
 ### Not Planned
 

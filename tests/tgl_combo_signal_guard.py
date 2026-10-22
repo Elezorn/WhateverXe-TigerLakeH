@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Exercise production combo entry qualification and exact native ABI bytes."""
+from pathlib import Path
+import re,sys,subprocess,tempfile
+root=Path(__file__).resolve().parents[1]
+s=(root/'WhateverXe/kern_xe.cpp').read_text()
+start=s.index('bool XE::tglProgramComboSignal(')
+fn=re.search(r'bool XE::tglProgramComboSignal\(.*?\n\}',s,re.S).group().replace('XE::tglProgramComboSignal','run')
+if len(sys.argv)>1:
+ b=Path(sys.argv[1]).read_bytes()
+ for name,at in [('pcsABI',0x60eb9),('lanesABI',0x61468),('successABI',0x61478)]:
+  expected=bytes(int(x.strip(),0) for x in re.search(name+r'\[\] \{([^}]+)',s).group(1).split(','))
+  assert b[at:at+len(expected)]==expected
+code=r'''
+#include "kern_vbt.hpp"
+#include "kern_tgl_combo_signal.hpp"
+#include <cassert>
+#include <map>
+#include <cstdio>
+struct State {
+ void *tglObservationController=nullptr;bool tglActive=true,tglComboSignalReady=true;
+ struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
+ XELP::VBT::Ports firmwarePorts;
+} state,*callbackXE=&state;
+constexpr uint32_t kIOReturnNotReady=0xe00002d8;
+std::map<unsigned,unsigned> registers;unsigned reads=0,writes=0,records=0;
+uint32_t wrapTGLRegisterRead(void *,unsigned long reg){++reads;return registers[reg];}
+void wrapTGLRegisterWrite(void *,unsigned long reg,uint32_t value){++writes;
+ if(reg==0x162694)for(unsigned n=0;n<4;++n)registers[0x162894+0x100*n]=value;
+ registers[reg]=value;
+}
+void tglTransitionRecord(unsigned stage,bool,void *,unsigned,unsigned,unsigned,const void *,unsigned){assert(stage==73);++records;}
+FUNCTION
+int main(){
+ for(unsigned bad=0;bad<22;++bad){
+  alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};uint32_t config[8]{};
+  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
+  state={};state.tglObservationController=ctl;state.firmwarePorts.status=XELP::VBT::Status::Valid;
+  state.firmwarePorts.panel.valid=true;state.firmwarePorts.panel.ddi=0;
+  store(p,0x548,config+0);store(p,0x550,1U);store(p,0x578,access+0);store(ctl,0xC40,access+0);
+  store(p,0x124,1U);store(p,0x128,10U);store(p,0x620,0x162804U);store(p,0x5C8,0x162028U);
+  store(access,0x60,0x200000U);store(access,0x50,ctl+0);
+  registers.clear();registers[0x45404]=3;registers[0x45454]=3;reads=writes=records=0;
+  if(bad==1)state.tglActive=false;
+  if(bad==2)state.tglComboSignalReady=false;
+  if(bad==3)state.xeProfile.family=XELP::Family::AlderLakeN;
+  if(bad==4)state.firmwarePorts.panel.valid=false;
+  if(bad==5)config[0]=3;
+  if(bad==6)config[2]=2;
+  if(bad==7)config[3]=1;
+  if(bad==8)p[0x117]=1;
+  if(bad==9)state.firmwarePorts.panel.ddi=1;
+  if(bad==10)state.firmwarePorts.port[0].flags=2;
+  if(bad==11)store(p,0x578,ctl+0);
+  if(bad==12)store(p,0x124,3U);
+  if(bad==13)store(p,0x128,20U);
+  if(bad==14)state.firmwarePorts.panel.hobl=true;
+  if(bad==15)store(p,0x620,0x6C804U);
+  if(bad==16)store(access,0x60,0x100000U);
+  if(bad==17)registers[0x45404]=0;
+  if(bad==18)registers[0x45454]=~0U;
+  if(bad==19)registers[0x162A9C]=~0U;
+  uint32_t result=99;
+  bool applied=run(bad==20?nullptr:p,0,0,bad==21?p:nullptr,result);
+  assert(applied==(bad==0||bad==19));assert((writes!=0)==(bad==0));
+  if(bad==0)assert(result==0&&records==1);
+  if(bad==19)assert(result==kIOReturnNotReady);
+  if(bad!=0&&bad!=17&&bad!=18&&bad!=19)assert(reads==0);
+ }
+ puts("PASS production combo guard: family, port, firmware, ownership, power and missing bank");
+}
+'''.replace('FUNCTION',fn)
+with tempfile.TemporaryDirectory() as tmp:
+ p=Path(tmp);(p/'test.cpp').write_text(code)
+ subprocess.run(['clang++','-std=c++17','-fsanitize=address,undefined','-I'+str(root/'WhateverXe'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+ subprocess.run([str(p/'test')],check=True)

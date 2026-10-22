@@ -59,6 +59,10 @@ GPUはPCI device IDから自動選択します。対応範囲内ではファー�
 
 対応GPUでは、WhateverGreenと同様に、検出されたIntel Management Engineのデバイス名も`IMEI`へ統一します。`HECI`や`MEI`から`IMEI`へのACPI renameを別途追加する必要はありません。
 
+### 内蔵パネルの輝度
+
+内蔵ディスプレイの輝度調整には、OpenCoreへ`SSDT-PNLF`を追加してください。
+
 ### DVMT
 
 BIOS/UEFIで変更できる場合は、**DVMT Pre-Allocatedを96MBに設定することを推奨します**。
@@ -84,39 +88,38 @@ OpenCoreの`boot-args`に以下を追加してください。
 | --- | --- |
 | `-allow3d` | Appleドライバの3D処理を有効にする。 |
 | `-disablegfxfirmware` | 現在のバックエンドで、Appleドライバのグラフィックスファームウェア読み込みを無効にする。 |
-| `-wex-nopanel` | 内蔵画面のないTiger Lake機で追加する。現在のAlder Lake-N / Twin Lakeは外部画面用の構成を自動生成するため、この引数を使用しない。 |
+
+`-wex-nopanel`ブート引数は廃止され、不要になりました。内蔵ディスプレイの有無は自動で判定します。
 
 Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追加する必要はありません。
 
-### 任意のブート引数
-
-| 引数 | 用途 |
-| --- | --- |
-| `gfxrst=` | 起動時framebufferの引継ぎ方式。0：自動（既定）、1：reset、2：copy、3：clear、4：無効。 |
-| `-wexdbg` | debug buildでログを有効にする。 |
-| `-wexoff` | WhateverXeを無効にする。 |
-| `-wexbeta` | プラグインのOSバージョンチェックを回避する。kernel／driverの一致条件は維持する。 |
-| `-wex-tgl-off` | Tiger Lakeの処理を無効にする。 |
-| `-wex-noaccel` | Tiger LakeのFramebuffer単独モード。Acceleratorのprobeを停止します。 |
+対応済みのDisplay 13バックエンドではYタイル出力を自動選択するため、OpenCoreの`AAPL,GfxYTile`設定は不要です。既存の値は保持します。
+このバックエンドはXタイル出力に未対応なので、Appleドライバの`-yTileDisable`引数は使用しないでください。Display 12のタイル選択は変更しません。
 
 ## 動作確認済みの機能と既知の問題
 
-Tiger LakeとAlder Lake-Nで、全6 OSにわたり、外部2画面の1920×1080・60Hz出力、Metal/MPS、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、ハードウェアHEVCデコード、画面の消灯／復帰、Safariのハードウェア動画デコード、Widevine再生を確認しています。共通TGLCompatビルドも、Alder Lake-Nの全6 OSで導入と機能を確認しています。すべてのcodec・アプリケーション・表内のGPUでの互換性を確認したものではありません。
+| ハードウェア | 確認済みの機能 |
+| --- | --- |
+| Tiger Lake / Alder Lake-N | Big Sur〜Tahoe：外部2画面の1920×1080・60Hz出力、Metal/MPS、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、HEVCデコード、画面の消灯／復帰、Safariの動画デコード、Widevine再生 |
+| Tiger Lakeラップトップ | Big Sur〜Tahoe：内蔵1366×768 eDP、輝度調整、HDMI、USB-C DisplayPort Alt Mode、最大3画面同時出力。TahoeではHDMIとUSB-Cの2端子で抜き差しも確認 |
+| Alder Lake-N | Big Sur/Tahoe：EFIの`AAPL,GfxYTile`設定なしでのYタイル自動選択 |
+
+検証した機器での結果であり、すべてのGPU・ディスプレイ・アダプター・ドックでの動作を保証するものではありません。
 
 ### 既知の問題と制限
 
-- VA画像変換でnull参照によるクラッシュが発生することがあります。
-- Sequoia・Tahoeなどで、DisplayPortの再接続により黒画面やシステムハングが発生することがあります。
-- Safariでは少数のフレーム落ちを確認しています。
-- 3画面同時出力、システムスリープ、より高い解像度や他のコネクタ構成は追加検証が必要です。USB-Cと内蔵ディスプレイへの対応は下記ロードマップに含まれます。
+- 一部の画像変換処理で、アプリケーションがクラッシュすることがあります。
+- DisplayPort専用端子でモニターを接続し直すと、黒画面になったりコンピューターが応答しなくなったりすることがあります。USB-CのDisplayPort Alt Modeでは、上記の抜き差し試験を通過しています。
+- Safariの動画再生で、ときどきコマ落ちが発生します。
+- 同時出力は最大3画面です。4画面目には映像が出ません。
+- システム全体のスリープ／復帰と、上記を超える解像度は未検証です。USB-C映像出力では現在、表示回路の一部を省電力状態へ移行させずに動作させています。
 
 ## ロードマップ
 
 ### Planned
 
 - Alder Lake／Raptor LakeのS/H/P/U対応
-- USB-C画面出力対応
-- 内蔵ディスプレイ対応
+- Display 13のUSB-C / eDP対応
 
 ### Not Planned
 

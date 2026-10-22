@@ -21,6 +21,8 @@ fixture = r'''
 #include <sys/mman.h>
 template<class T,size_t N>constexpr size_t arrsize(const T(&)[N]){return N;}
 using IOSimpleLock=std::mutex;
+IOSimpleLock *IOSimpleLockAlloc(){return new IOSimpleLock;}
+void IOSimpleLockFree(IOSimpleLock *p){delete p;}
 thread_local bool irqEnabled=true,held=false;
 unsigned IOSimpleLockLockDisableInterrupt(IOSimpleLock*l){
  bool prior=irqEnabled;irqEnabled=false;l->lock();assert(!held);held=true;return prior;
@@ -47,12 +49,12 @@ struct OSData{
 };
 // BODY
 void validate(OSSerialize&s){
- assert(s.data.size()==16+256*128);uint32_t h[4];memcpy(h,s.data.data(),16);
- assert(h[0]==1&&h[2]==256&&h[3]==128);
- for(unsigned i=0;i<256;++i){
+ assert(s.data.size()==16+1024*128);uint32_t h[4];memcpy(h,s.data.data(),16);
+ assert(h[0]==1&&h[2]==1024&&h[3]==128);
+ for(unsigned i=0;i<1024;++i){
   TGLTransitionRecord r;memcpy(&r,s.data.data()+16+128*i,128);
   if(!r.q[2])continue;
-  assert(r.q[2]<=h[1]&&(r.q[2]-1)%256==i);
+  assert(r.q[2]<=h[1]&&(r.q[2]-1)%1024==i);
   assert(r.q[1]&&r.q[3]==90&&r.q[4]==1);
   assert(r.q[6]==r.q[7]&&r.q[7]==r.q[8]);
   for(unsigned j=9;j<16;++j)assert(r.q[j]==r.q[6]);
@@ -61,7 +63,10 @@ void validate(OSSerialize&s){
 int main(){
  OSSerialize snapshot;IOSimpleLock lock;
  assert(!tglTransitionSerialize(nullptr,nullptr,&snapshot));
- tglTransitionLock=&lock;
+ tglInitTransitionTrace(false);assert(!tglTransitionLock&&!tglTransitions&&!tglTransitionFirst);
+ tglTransitionRecord(1,false,nullptr,0,0,0);assert(!tglTransitionCount);
+ failAlloc=true;tglInitTransitionTrace(true);assert(!tglTransitionLock&&!tglTransitions&&!tglTransitionFirst);
+ failAlloc=false;tglDisplayTraceEnabled=true;tglInitTransitionTrace(true);assert(tglTransitionLock);
  auto inaccessible=mmap(nullptr,4096,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0);
  assert(inaccessible!=MAP_FAILED);
  tglTransitionRecord(1,false,inaccessible,2,3,4);assert(tglTransitionCount==1);
@@ -82,15 +87,29 @@ int main(){
   tglTransitionRecord(90,true,inaccessible,i,i,i,payload,sizeof(payload));
   assert(irqEnabled&&!held);
  }};
- write(512);assert(tglTransitionSerialize(nullptr,nullptr,&snapshot));validate(snapshot);
+ write(2048);assert(tglTransitionSerialize(nullptr,nullptr,&snapshot));validate(snapshot);
  std::thread a([&]{write(4000);}),b([&]{write(4000);});
  for(unsigned i=0;i<100;++i){assert(tglTransitionSerialize(nullptr,nullptr,&snapshot));validate(snapshot);}
- a.join();b.join();assert(tglTransitionCount==8515);
+ a.join();b.join();assert(tglTransitionCount==10051);
  assert(tglTransitionSerialize(nullptr,nullptr,&snapshot));validate(snapshot);
+ assert(tglTransitionSerialize(nullptr,reinterpret_cast<void*>(1),&snapshot));
+ assert(snapshot.data.size()==16+4096*128);
+ for(unsigned i=0;i<4096;++i){
+  TGLTransitionRecord r;memcpy(&r,snapshot.data.data()+16+128*i,128);assert(r.q[2]==i+1);
+ }
  for(auto reg:{0x45400ul,0x45404ul,0x45408ul,0x4540Cul,0x45450ul,0x45454ul})assert(tglTransitionRegister(reg));
- for(auto reg:{0ul,0x45410ul,0x45451ul,0x138124ul})assert(!tglTransitionRegister(reg));
+ for(auto reg:{0x162000ul,0x162FFCuL,0x6C000ul,0x6CFFCuL,0x164284ul,0x164290ul,0xC7200ul,0xC7210ul,
+               0x45440ul,0x45444ul,0x164280ul,0x46010ul,0x46014ul,
+               0x64000ul,0x64100ul,0x46140ul,0x46144ul,0x60400ul,0x61400ul,0x60540ul,0x61540ul})
+  assert(tglTransitionRegister(reg));
+ for(auto reg:{0ul,0x45410ul,0x45451ul,0x138124ul,0x162001ul,0x163000ul,0x6D000ul,
+               0x164294ul,0xC7214ul,0x64200ul,0x64010ul})
+  assert(!tglTransitionRegister(reg));
  munmap(inaccessible,4096);
- puts("PASS: 8515 events, concurrent coherent snapshots, ring wrap, allocation failure, IRQ restore, no object/MMIO access");
+ IOFree(tglTransitions,tglTransitionSlots*sizeof(TGLTransitionRecord));
+ IOFree(tglTransitionFirst,tglTransitionFirstSlots*sizeof(TGLTransitionRecord));
+ IOSimpleLockFree(tglTransitionLock);
+ puts("PASS: 10051 events, concurrent coherent snapshots, ring wrap, allocation failure, IRQ restore, no object/MMIO access");
 }
 '''.replace('// BODY', body)
 with tempfile.TemporaryDirectory(prefix='tgl-transition-') as tmp:

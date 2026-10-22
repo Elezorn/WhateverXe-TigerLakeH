@@ -110,9 +110,6 @@
   "-wex-tgl-off": [
     "-igfxtgloff"
   ],
-  "-wex-nopanel": [
-    "-tglnopanel"
-  ],
   "-wex-tgl-prog-off": [
     "-tglprogoff"
   ],
@@ -137,5 +134,6 @@
   "-wexbeta": [
     "-wxebeta"
   ],
-  "-wex-noaccel": []
+  "-wex-noaccel": [],
+  "-wex-display-trace": []
 }

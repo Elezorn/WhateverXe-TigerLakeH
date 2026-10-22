@@ -37,7 +37,7 @@ struct Fixture {
  IOService c;IOMemoryMap map;alignas(8) uint8_t manager[0x80] {};
  std::vector<uint32_t> memory=std::vector<uint32_t>(0x140000/4);
  Fixture(){
-  tglBootstrapTrial={};tglPcodeGate={};allocations=commands=0;allocFail=false;
+  tglTCBootstrap={};tglPcodeGate={};allocations=commands=0;allocFail=false;
   timeUs=100;response=0;mmio=memory.data();map.kind=1;
   map.address=reinterpret_cast<uintptr_t>(mmio);map.length=memory.size()*4;
   *reinterpret_cast<uint8_t **>(reinterpret_cast<uint8_t *>(&c)+0xC40)=manager;
@@ -45,11 +45,11 @@ struct Fixture {
   *reinterpret_cast<uint32_t **>(manager+0x50)=mmio;
   *reinterpret_cast<uint32_t *>(manager+0x60)=map.length;
  }
- ~Fixture(){delete tglBootstrapTrial.lock;}
- void run(bool ready=true,void *controller=nullptr){tglBootstrapTrialRun(controller?controller:&c,ready);assert(tglBootstrapTrial.stage==2);}
- void rejected(unsigned reason){run();assert(tglBootstrapTrial.record[1]==reason);assert(!commands && !allocations && c.refs==1 && map.refs==1);}
+ ~Fixture(){delete tglTCBootstrap.lock;}
+ void run(bool ready=true,void *controller=nullptr){tglTCBootstrapRun(controller?controller:&c,ready);assert(tglTCBootstrap.stage==2);}
+ void rejected(unsigned reason){run();assert(tglTCBootstrap.record[1]==reason);assert(!commands && !allocations && c.refs==1 && map.refs==1);}
  void held(bool success){
-  auto &s=tglBootstrapTrial;assert(allocations==1 && c.refs==2 && map.refs==2);
+  auto &s=tglTCBootstrap;assert(allocations==1 && c.refs==2 && map.refs==2);
   assert(s.cold.total==1 && s.cold.bootstrapHeld && s.cold.owner==reinterpret_cast<uintptr_t>(&c));
   assert(s.record[1]==0 && s.record[10]==1 && s.record[12]==1 && s.record[13]==1);
   assert(s.record[4]==(success?0:6));assert(s.cold.phase==(success?TGLTCCold::Phase::Blocked:TGLTCCold::Phase::Unknown));
@@ -58,8 +58,8 @@ struct Fixture {
  }
 };
 int main(){
- {Fixture f;f.run(false);assert(tglBootstrapTrial.record[1]==10 && !allocations);}
- {Fixture f;tglBootstrapTrialRun(nullptr,true);assert(tglBootstrapTrial.stage==2 && tglBootstrapTrial.record[1]==10);}
+ {Fixture f;f.run(false);assert(tglTCBootstrap.record[1]==10 && !allocations);}
+ {Fixture f;tglTCBootstrapRun(nullptr,true);assert(tglTCBootstrap.stage==2 && tglTCBootstrap.record[1]==10);}
  {Fixture f;reinterpret_cast<uint8_t *>(&f.c)[0x918]=1;f.rejected(11);}
  {Fixture f;*reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(&f.c)+0xC40)=nullptr;f.rejected(11);}
  {Fixture f;*reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(&f.c)+0xC70)=nullptr;f.rejected(11);}
@@ -69,11 +69,11 @@ int main(){
  {Fixture f;f.map.length=0x13812F;f.rejected(12);}
  {Fixture f;f.map.address=1;f.rejected(12);}
  {Fixture f;allocFail=true;f.rejected(13);}
- {Fixture f;f.run();f.held(true);assert(commands==1 && tglPcodeGate.owner==0 && tglBootstrapTrial.record[9]==1);}
- {Fixture f;tglPcodeGate.owner=0x5678;f.run();f.held(false);assert(!commands && tglPcodeGate.owner==0x5678 && tglBootstrapTrial.record[5]==1);}
- {Fixture f;response=-1;f.run();f.held(false);assert(!commands && tglPcodeGate.owner==0 && tglBootstrapTrial.record[5]==1); /* timeout then busy retries */}
- {Fixture f;response=1;f.run();f.held(false);assert(commands==3 && tglBootstrapTrial.record[5]==3);}
- {Fixture f;response=2;f.run();f.held(false);assert(commands==3 && tglBootstrapTrial.record[5]==5);}
- {Fixture f;mmio[0x138124/4]=0xFFFFFFFF;f.run();f.held(false);assert(!commands && tglBootstrapTrial.record[5]==4);}
+ {Fixture f;f.run();f.held(true);assert(commands==1 && tglPcodeGate.owner==0 && tglTCBootstrap.record[9]==1);}
+ {Fixture f;tglPcodeGate.owner=0x5678;f.run();f.held(false);assert(!commands && tglPcodeGate.owner==0x5678 && tglTCBootstrap.record[5]==1);}
+ {Fixture f;response=-1;f.run();f.held(false);assert(!commands && tglPcodeGate.owner==0 && tglTCBootstrap.record[5]==1); /* timeout then busy retries */}
+ {Fixture f;response=1;f.run();f.held(false);assert(commands==3 && tglTCBootstrap.record[5]==3);}
+ {Fixture f;response=2;f.run();f.held(false);assert(commands==3 && tglTCBootstrap.record[5]==5);}
+ {Fixture f;mmio[0x138124/4]=0xFFFFFFFF;f.run();f.held(false);assert(!commands && tglTCBootstrap.record[5]==4);}
  puts("PASS actual opt-in bootstrap adapter: 11 admission guards, block/retain once, shared-gate contention, timeout, firmware error, exit failure, inaccessible MMIO; no automatic unblock");
 }

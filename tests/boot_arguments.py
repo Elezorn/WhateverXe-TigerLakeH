@@ -30,6 +30,7 @@ assert set(names) == used - external
 removed = [name for aliases in names.values() for name in aliases]
 assert not set(removed) & used
 assert not {"-wex-display13", "-wex-adln-native", "-wex-adln-rcs-profile"} & used
+assert "-wex-nopanel" not in used and "-tglnopanel" not in used
 assert "const bool linearTest = display13FramebufferRequested;" in xe
 init = xe[xe.index('void XE::init() {'):xe.index('void XE::deinit()')]
 assert 'BaseDeviceInfo' not in init and 'CPU_MODEL' not in init
@@ -54,7 +55,7 @@ struct XE {
  XELP::Profile xeProfile;
  bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false;
  bool display13FramebufferRequested=false, display13TraceEnabled=false;
- bool tglRequested=false, tglAcceleratorRequested=false, tglNoPanel=false;
+ bool tglRequested=false, tglAcceleratorRequested=false;
  bool tglInactivePorts=false, tglPG1Poll=false, tglClockOrderRequested=false;
  bool tglProgramEnabled=false, tglTrainingLeaseRequested=false;
  struct { bool available=false; } modDVMTCalcFix;
@@ -92,9 +93,9 @@ int main() {
   assert(!xe.adlnRequested && !xe.tglRequested && !xe.adlnNativeRequested && !adlnNativeRCSProfileRequested);
  }
  xe=boot({},0x9A498086);
- assert(xe.tglRequested && xe.tglAcceleratorRequested && xe.tglProgramEnabled && !xe.tglNoPanel);
+ assert(xe.tglRequested && xe.tglAcceleratorRequested && xe.tglProgramEnabled);
  xe=boot({"-wex-nopanel","-wex-tgl-prog-off"},0x9A408086);
- assert(xe.tglRequested && xe.tglNoPanel && !xe.tglProgramEnabled);
+ assert(xe.tglRequested && !xe.tglProgramEnabled);
  xe=boot({"-wex-tgl-off"},0x9A498086);assert(!xe.tglRequested);
  xe=boot({"-wex-noaccel"},0x9A498086);assert(xe.tglRequested && !xe.tglAcceleratorRequested);
  const char *allKernels[]={

@@ -24,7 +24,7 @@ void absolutetime_to_nanoseconds(uint64_t t,uint64_t *p){*p=t;}
 unsigned observations,nativeCalls;
 struct XE {
  // FIELDS
- bool tglActive=true;void *tglObservationController{};uintptr_t orgTGLTrainingPattern{};
+ bool tglActive=true,tglSinkFramingReady=true;void *tglObservationController{};uintptr_t orgTGLTrainingPattern{};
  static uint32_t wrapTGLTrainingPattern(void *,uint32_t);
  static void tglObserveActivation(void*,void*,void*,unsigned,bool,uint32_t){++observations;}
  static void tglTimeEvent(unsigned,unsigned,bool,unsigned,unsigned){}
@@ -57,7 +57,7 @@ void reset(unsigned d=4,unsigned p=1,unsigned pattern=1){
  object.orgTGLTrainingPattern=(uintptr_t)native;object.tglObservationController=controller;
  // Fixture-only qualification; production keeps just TC2.
  object.tglAUXParentMask=0x1F8;object.tglTCWiring={};object.tglTCWiring.valid=true;object.tglTCWiring.legacy=0x1F8;
- config[0]=ddi;config[2]=1;field(port,0x548,config);field(port,0x550,4u);
+ config[0]=ddi;config[2]=ddi<2?0:1;field(port,0x548,config);field(port,0x550,ddi<2?1u:4u);
  field(port,0x578,manager);field(port,0x124,4u);port[0x11A]=1;
  field(path,0x3648,port);field(path,0x3640,pipeID);field(path,0x32B0,fb);
  field(fb,0x1D0,controller);field(fb,0x4A40,manager);field(controller,0xC40,manager);
@@ -65,9 +65,9 @@ void reset(unsigned d=4,unsigned p=1,unsigned pattern=1){
  reg(0x45404)=0xFF;reg(0x45454)=0x3FFFF;
  // Other transcoders/ports are live and must remain untouched.
  for(unsigned i=0;i<3;++i){reg(0x46140+4*i)=0xB1234567;reg(0x60400+0x1000*i)=0xD2345678;reg(0x60540+0x1000*i)=0xC3456789;}
- for(unsigned i=3;i<=8;++i)reg(0x64000+0x100*i)=0x80000000|i;
+ for(unsigned i=0;i<=8;++i)reg(0x64000+0x100*i)=0x80000000|i;
  if(pipeID<3){reg(0x46140+4*pipeID)=0x3456;reg(0x60400+0x1000*pipeID)=0x01000020;reg(0x60540+0x1000*pipeID)=0;}
- if(ddi>=3&&ddi<=8)reg(0x64000+0x100*ddi)=0x80;
+ if(ddi<=8)reg(0x64000+0x100*ddi)=0x80;
  *IORegistryEntry::getRegistryRoot()={};
  // No FIA domain is acquired by this wrapper: any accidental diagnostic
  // read of the historical TC2 ownership register must fault.
@@ -76,20 +76,38 @@ void reset(unsigned d=4,unsigned p=1,unsigned pattern=1){
 void invoke(){assert(XE::wrapTGLTrainingPattern(path,patternID)==nativeResult);assert(nativeCalls==1&&observations==2);}
 void neighbors(){
  for(unsigned i=0;i<3;++i)if(i!=pipeID){assert(reg(0x46140+4*i)==0xB1234567);assert(reg(0x60400+0x1000*i)==0xD2345678);assert(reg(0x60540+0x1000*i)==0xC3456789);}
- for(unsigned i=3;i<=8;++i)assert(reg(0x64000+0x100*i)==(i==ddi?0x80:(0x80000000|i)));
+ for(unsigned i=0;i<=8;++i)assert(reg(0x64000+0x100*i)==(i==ddi?0x80:(0x80000000|i)));
 }
 int main(){
  mmio=static_cast<uint8_t*>(mmap(nullptr,span,PROT_READ|PROT_WRITE,MAP_ANON|MAP_PRIVATE,-1,0));assert(mmio!=MAP_FAILED);
  unsigned cases=0;
- for(unsigned d=3;d<=8;++d)for(unsigned p=0;p<3;++p)for(unsigned lanes:{1u,2u,4u})for(unsigned framing=0;framing<2;++framing)for(unsigned pat:{1u,0u,2u,3u,4u,5u}){
+ for(unsigned d:{0u,1u,3u,4u,5u,6u,7u,8u})for(unsigned p=0;p<3;++p)for(unsigned lanes:{1u,2u,4u})for(unsigned framing=0;framing<2;++framing)for(unsigned pat:{1u,0u,2u,3u,4u,5u}){
   reset(d,p,pat);field(port,0x124,lanes);port[0x11A]=framing;emitTP=true;expectPre=pat==1;
   // Give only this port's DDI power. A fixed TC2 test would fail here.
-  reg(0x45454)=3u<<(2*d);reg(0x45404)=p==2?0xFF:0x3F;
+  reg(0x45454)=3u<<(2*d);reg(0x45404)=p==2?0xFF:(d<2&&p==0?3:0x3F);
   invoke();assert(reg(0x60540+0x1000*p)==(0x80100A00|(framing<<18)));neighbors();
-  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post.size()==11&&r.post[9]==p&&r.post[10]==d);
+  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post.size()==13&&r.post[9]==p&&r.post[10]==d);
   if(pat==1){assert(r.pre.size()==22&&r.pre[1]==0&&r.pre[18]==d&&r.pre[21]==356);}
   else {assert(r.pre.empty());assert(reg(0x46140+4*p)==0x3456&&reg(0x60400+0x1000*p)==0x01000020);}
   ++cases;
+ }
+ // Normal/fast pattern transitions must agree with the sink's negotiated
+ // Alternate SR mode. Preserve unrelated bits, external ports, invalid
+ // negotiation, and unknown donor layouts; never touch another transcoder.
+ for(unsigned d:{0u,1u,3u,4u})for(unsigned p=0;p<3;++p)
+ for(unsigned pat=0;pat<6;++pat)for(unsigned sr=0;sr<3;++sr)
+ for(unsigned old=0;old<2;++old)for(unsigned known=0;known<2;++known){
+  reset(d,p,pat);port[0x118]=sr;object.tglSinkFramingReady=known;
+  reg(0x60540+0x1000*p)=0x80100300|(old<<6);
+  invoke();const bool change=d<2&&known&&sr<2;
+  assert(reg(0x60540+0x1000*p)==(0x80140300|((change?sr:old)<<6)));
+  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post[11]==change&&r.post[12]==sr);neighbors();
+ }
+ // DP-alt keeps its native mode3 and lane count while sharing route ordering.
+ for(unsigned d:{3u,4u})for(unsigned p=0;p<3;++p)for(unsigned lanes:{1u,2u,4u}) {
+  reset(d,p);object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);object.tglDPAltCandidates=1U<<d;
+  field(port,0x550,3u);field(port,0x124,lanes);emitTP=true;expectPre=true;
+  invoke();neighbors();assert(reg(0x60540+0x1000*p)==0x80140A00);
  }
  // Invalid wiring, backend, identities, pipe, mode: no wrapper MMIO at all.
  for(unsigned kind=0;kind<16;++kind){
@@ -118,15 +136,15 @@ int main(){
  }
  // Power absence is checked before touching the route/TP/buffer banks, both
  // before pattern1 and after native success. Includes PW4 on transcoder C.
- for(unsigned d=3;d<=8;++d)for(unsigned p=0;p<3;++p)for(unsigned kind=0;kind<6;++kind){
-  reset(d,p);reg(0x45454)=3u<<(2*d);reg(0x45404)=p==2?0xFF:0x3F;
+ for(unsigned d:{0u,1u,3u,4u,5u,6u,7u,8u})for(unsigned p=0;p<3;++p)for(unsigned kind=0;kind<6;++kind){
+  reset(d,p);reg(0x45454)=3u<<(2*d);reg(0x45404)=p==2?0xFF:(d<2&&p==0?3:0x3F);
   switch(kind){
    case 0:reg(0x45454)&=~(1u<<(2*d));break;
    case 1:reg(0x45454)&=~(2u<<(2*d));break;
    case 2:reg(0x45454)=0xFFFFFFFF;break;
    case 3:reg(0x45404)=0xFFFFFFFF;break;
-   case 4:reg(0x45404)&=~(p==2?0x40:0x10);break;
-   case 5:reg(0x45404)&=~(p==2?0x80:0x20);break;
+   case 4:reg(0x45404)&=~(p==2?0x40:(d<2&&p==0?1:0x10));break;
+   case 5:reg(0x45404)&=~(p==2?0x80:(d<2&&p==0?2:0x20));break;
   }
   protect(0x60000,0x68000,PROT_NONE);invoke();auto &r=*IORegistryEntry::getRegistryRoot();assert(r.pre[1]==5&&r.post.empty());
  }
@@ -148,5 +166,5 @@ int main(){
  }
  reset(4,1,2);port[0x11A]=2;reg(0x61540)=0x80000000;invoke();assert(reg(0x61540)==0x80000000);
  protect(0,span,PROT_READ|PROT_WRITE);munmap(mmio,span);
- printf("PASS actual training wrapper: %u port/pipe/lane/pattern/framing cases; 16 no-MMIO admission guards, 108 guarded power failures, native order/error, active-neighbor preservation, no FIA access; mock backend qualification only\n",cases);
+ printf("PASS actual training wrapper: %u port/pipe/lane/pattern/framing cases; 16 no-MMIO admission guards, combo/TC power failures, native order/error, active-neighbor preservation, no FIA access; mock backend qualification only\n",cases);
 }

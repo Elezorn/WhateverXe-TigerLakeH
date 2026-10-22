@@ -37,7 +37,8 @@ struct KernelPatcher {static constexpr int KernelID=0;uintptr_t solveSymbol(int,
 namespace XeDataAccess {void processKernel(KernelPatcher &){assert(published);events.push_back(7);}}
 struct Graphics {bool off=false;void switchOff(){off=true;}} graphics;
 struct XeHost {
- bool active=false;enum {FB_DETECT,FB_RESET,FB_COPY,FB_ZEROFILL,FB_NONE,FB_TOTAL};uint32_t resetFramebuffer=FB_NONE;
+ bool active=false,backlightEnabled=false;enum {FB_DETECT,FB_RESET,FB_COPY,FB_ZEROFILL,FB_NONE,FB_TOTAL};uint32_t resetFramebuffer=FB_NONE;
+ IOPCIDevice *backlightGPU=nullptr;
  struct vc_info{};vc_info consoleVinfo;bool gotConsoleVinfo=false;
  struct XE {void processKernel(KernelPatcher &,DeviceInfo *){events.push_back(8);}} xe;
  void processKernel(KernelPatcher &);
@@ -52,6 +53,7 @@ for(unsigned firmware=0;firmware<2;++firmware)for(unsigned me=0;me<5;++me)for(un
  events.clear();published=false;publish=test!=1;identity=(test==2 || test>=4)?0x12348086:0x9a498086;deviceProperty=test>=4?&fake:nullptr;fake.value=test==4?0x46D2:0xFFFF;graphics.off=false;
  hasModel=test==3;modelWrites=0;
  DeviceInfo::value.videoBuiltin=test==0?nullptr:&gpu;XeHost host;host.processKernel(patcher);
+ assert(host.backlightEnabled==(test==3 && !firmware));
  const bool normalize=(test==3 || test==4) && me!=4;
  assert(mei.renames==(normalize && me!=1?1U:0U));
  if(normalize)assert(mei.name && !strcmp(mei.name,"IMEI"));

@@ -10,6 +10,7 @@
 struct IOService;
 #define arrsize(a) (sizeof(a)/sizeof((a)[0]))
 #define SYSLOG(...)
+#define FunctionCast(fn,address) reinterpret_cast<decltype(&fn)>(address)
 constexpr uint32_t tglConnectionEvents=7,tglConnectionCapacity=64;
 struct TGLConnectionRecord { uint64_t q[32]; };
 TGLConnectionRecord tglConnectionFirst[7][64] {},tglConnectionLast[7][64] {};
@@ -27,11 +28,16 @@ struct IORegistryEntry {
 };
 void tglAUXRecord(void *,uint32_t,bool,uint32_t,uint32_t,uint32_t) {}
 uint32_t providerProbe(void *);
+uint32_t nativeHPD(void *) {return 1;}
 struct XE {
  uint32_t tglModularProbed=0;
+ uint64_t tglPlatformCopy[0x1c0/8] {};
  bool tglActive=true;
+ struct {uint32_t hdmi=0;} tglHDMIWiring;
  void *tglObservationController=nullptr;
  uintptr_t xelpProviderProbe=reinterpret_cast<uintptr_t>(providerProbe);
+ uintptr_t orgTGLHPDState=reinterpret_cast<uintptr_t>(nativeHPD);
+ static uint32_t wrapTGLHPDState(void *);
  bool xelpBindProbe(void*) {return xelpProviderProbe!=0;}
  // TC_WIRING_FIELDS
  static void tglRecordStartOrder(unsigned,void*,unsigned=9,uint64_t=0,uint64_t=0,uint64_t=0) {} static uint32_t wrapTGLProbePort(void *); };
@@ -63,6 +69,16 @@ int main(int argc,char **) {
  *reinterpret_cast<uint32_t **>(port+0x548)=config;
  *reinterpret_cast<uint8_t **>(port+0x578)=access;
  *reinterpret_cast<uint8_t **>(access+0x50)=mmio;
+ // Panel and external combo ports reach the provider and native HPD.
+ // Wiring never suppresses panel discovery; the provider classifies the port.
+ *reinterpret_cast<uint8_t **>(port+0x578)=nullptr;
+ for(unsigned mask:{0u,1u,2u,3u}) for(unsigned ddi:{0u,1u}) {
+  object.tglHDMIWiring.hdmi=mask;config[0]=ddi;
+  assert(XE::wrapTGLProbePort(port)==1);
+  assert(XE::wrapTGLHPDState(port)==1);
+ }
+ object.tglHDMIWiring.hdmi=0;config[0]=4;
+ *reinterpret_cast<uint8_t **>(port+0x578)=access;
  auto &length=*reinterpret_cast<uint32_t *>(access+0x60);length=size;
  auto &hpd=*reinterpret_cast<uint32_t *>(mmio+0xC4000);hpd=0;
  if(argc>1) tglConnectionLock=nullptr;
@@ -145,6 +161,21 @@ int main(int argc,char **) {
  assert(XE::wrapTGLProbePort(nullptr)==0);
  object.tglActive=false;assert(XE::wrapTGLProbePort(mmio)==0);object.tglActive=true;
  *reinterpret_cast<uint32_t **>(port+0x548)=nullptr;assert(XE::wrapTGLProbePort(port)==0);
+ // Boot-connected DP-alt uses HPD transport bits without touching FIA.
+ assert(mprotect(mmio+0x160000,0x10000,PROT_NONE)==0);
+ alignas(8) uint8_t controller[0xd00] {};
+ object.tglObservationController=controller;object.tglDPAltCandidates=0x18;
+ *reinterpret_cast<void **>(controller+0xc40)=access;
+ *reinterpret_cast<void **>(port+0x578)=access;
+ for(unsigned ddi:{3u,4u})for(unsigned status=0;status<8;++status) {
+  auto cp=reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(object.tglPlatformCopy)+0x20+24*ddi);
+  cp[0]=ddi;*reinterpret_cast<uint32_t **>(port+0x548)=cp;
+  hpd=(status&1)?1U<<(24+ddi-3):0;
+  *reinterpret_cast<uint32_t *>(mmio+0x44470)=((status&2)?1U<<(16+ddi-3):0)|((status&4)?1U<<(ddi-3):0);
+  object.tglTCAutoCandidates=0;object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);
+  assert(XE::wrapTGLProbePort(port)==(status==2?3u:0u));
+  assert(!object.tglLegacyTCEligible(ddi));
+ }
  munmap(mmio,size);
  printf("PASS: real probe with protected inactive FIA, 32 TC2 states, boundary/invalid guards; 14 real memory-only observer records; %u FIA classification geometries; qualification unchanged\n",geometries);
  assert(cases==32);
