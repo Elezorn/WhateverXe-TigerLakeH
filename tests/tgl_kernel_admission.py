@@ -13,10 +13,10 @@ code=r'''
 #include "kern_xelp_os.hpp"
 #include <cassert>
 #include <cstdio>
-namespace XELP { enum class Family {TigerLake,Other}; }
+namespace XELP { enum class Family {TigerLake,Other,AlderLakeS}; }
 struct Profile { bool ok; XELP::Family family; bool admitted() const {return ok;} };
 const char *version;
-bool noaccel,off;
+bool noaccel,off,adlsDetected;
 bool checkKernelArgument(const char *arg) {return !strcmp(arg,"-wex-noaccel")?noaccel:!strcmp(arg,"-wex-tgl-off")?off:false;}
 bool tglRequested,tglInactivePorts,tglPG1Poll,tglClockOrderRequested,tglTrainingLeaseRequested,tglProgramEnabled,tglAcceleratorRequested;
 int kextIntelTGL,kextIntelTGLFb;int *currentGraphics,*currentFramebuffer;
@@ -35,10 +35,11 @@ const char *versions[]={
 "Darwin Kernel Version 23.6.0: unqualified",
 "Darwin Kernel Version 24.6.0: unqualified"};
 unsigned cases=0;
-for(unsigned k=0;k<11;++k)for(unsigned n=0;n<2;++n)for(unsigned o=0;o<2;++o)for(unsigned physical=0;physical<2;++physical)for(unsigned family=0;family<2;++family){
+for(unsigned k=0;k<11;++k)for(unsigned n=0;n<2;++n)for(unsigned o=0;o<2;++o)for(unsigned physical=0;physical<2;++physical)for(unsigned family=0;family<3;++family){
 version=versions[k];noaccel=n;off=o;currentGraphics=currentFramebuffer=nullptr;
-select({bool(physical),family?XELP::Family::TigerLake:XELP::Family::Other});
-bool expected=physical&&family&&!o&&(k<7);
+adlsDetected=family==2;
+select({bool(physical),family==2?XELP::Family::AlderLakeS:family?XELP::Family::TigerLake:XELP::Family::Other});
+bool expected=physical&&family&&!o&&(k<7)&&(family!=2 || k==1);
 assert(tglRequested==expected);assert(tglAcceleratorRequested==(expected&&!n));
 assert((currentFramebuffer==&kextIntelTGLFb)==expected);++cases;
 }printf("PASS: %u actual TGL admission cases, including Tahoe acceleration, Sequoia acceleration, Sonoma acceleration, Ventura acceleration, noaccel and unknown-kernel rejection\n",cases);

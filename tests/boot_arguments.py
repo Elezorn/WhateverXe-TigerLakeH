@@ -53,7 +53,7 @@ static int kextIntelTGLFb, kextAppleIntelTGLCompat, kextIntelTGL;
 static struct { void onKextLoadForce(int *) {} } lilu;
 struct XE {
  XELP::Profile xeProfile;
- bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false;
+ bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false, adlsDetected=false;
  bool display13FramebufferRequested=false, display13TraceEnabled=false;
  bool tglRequested=false, tglAcceleratorRequested=false;
  bool tglInactivePorts=false, tglPG1Poll=false, tglClockOrderRequested=false;

@@ -3732,6 +3732,7 @@ void XE::init() {
 
 void XE::selectProfile(const XELP::Profile &profile) {
     xeProfile=profile;
+    adlsDetected=profile.admitted() && profile.family==XELP::Family::AlderLakeS;
     adlnNativeRCSProfileRequested=false;
     adlnRequested=profile.admitted() && profile.family==XELP::Family::AlderLakeN &&
         profile.display==XELP::Display::XeLPD && profile.gt==XELP::GT::ADLNSmall;
@@ -3749,7 +3750,8 @@ void XE::selectProfile(const XELP::Profile &profile) {
         }
         return;
     }
-    tglRequested=profile.admitted() && profile.family==XELP::Family::TigerLake &&
+    tglRequested=profile.admitted() && (profile.family==XELP::Family::TigerLake ||
+        (adlsDetected && XELP::kernelOS(version)==XELP::OS::BigSur)) &&
         !checkKernelArgument("-wex-tgl-off");
     tglInactivePorts=tglPG1Poll=tglClockOrderRequested=tglTrainingLeaseRequested=tglRequested;
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
@@ -4034,7 +4036,10 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 bool XE::xelpBindProbe(void *controller) {
     if(!xelpProviderProbe || !xelpProviderConfigureProbe || !xeProfile.admitted())return false;
     XELP::ProbeConfig config;config.profile=xeProfile;
-    if(xeProfile.display==XELP::Display::XeD) {
+    if(adlsDetected) {
+        if(!tglHDMIWiringApplied || !adlsHDMIWiring.valid || adlsHDMIWiring.selected!=8)return false;
+        config.combo=config.comboBackend=8;
+    } else if(xeProfile.display==XELP::Display::XeD) {
         if(!tglHDMIWiringApplied || !tglTCWiringLoaded || !tglTCWiring.valid)return false;
         config.combo=tglHDMIWiring.hdmi;config.comboBackend=7;
         config.legacy=tglTCProbeMask();config.typeC=tglTCWiring.typeC;config.excluded=tglTCWiring.excluded;
@@ -4075,6 +4080,48 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	// This must precede tglLoadHDMIWiring, tglPrepareMMIOUC and TGL FIA reads.
 	auto physicalGPU = OSDynamicCast(IOPCIDevice, info->videoBuiltin);
 	selectProfile(XELP::deviceProfile(physicalGPU));
+    if(xeProfile.family==XELP::Family::AlderLakeS && xeProfile.identity==0x46908086 &&
+       xeProfile.revision==0x0C && !xeProfile.overridden() && physicalGPU &&
+       XELP::kernelOS(version)==XELP::OS::BigSur && (physicalGPU->configRead16(4)&2)) {
+        // Gen12 forcewake/fuse coordinates are shared with the existing reader.
+        // Its ADL-N profile verdict is not used to admit ADL-S. No engine,
+        // GGTT, display, PLL or reset programming is performed here.
+        auto map=physicalGPU->mapDeviceMemoryWithRegister(0x10,kIOMapInhibitCache);
+        if(map && map->getVirtualAddress() && map->getLength()==0x1000000) {
+            struct IO {
+                volatile uint8_t *base;
+                bool readable(uint32_t o) const {return o<=0xFFFFFC;}
+                uint32_t read(uint32_t o) {return *reinterpret_cast<volatile uint32_t *>(base+o);}
+                void write(uint32_t o,uint32_t v) {*reinterpret_cast<volatile uint32_t *>(base+o)=v;}
+                void delay() {IODelay(100);}
+            } io {reinterpret_cast<volatile uint8_t *>(map->getVirtualAddress())};
+            uint32_t edram=UINT32_MAX;
+            auto gt=AlderLakeN::readGT(io,true,&edram);
+            adlsNativeReady=AlderLakeS::GT::decode(xeProfile.identity,xeProfile.revision,gt.fuses,adlsGT) &&
+                (gt.status==AlderLakeN::GTStatus::Complete || gt.status==AlderLakeN::GTStatus::ProfileMismatch) &&
+                gt.requestedMask==3 && gt.releasedMask==3 && !gt.releaseFailedMask && edram==0;
+            physicalGPU->setProperty("ADLSGTQualified",adlsNativeReady);
+            physicalGPU->setProperty("ADLSGTBoot",&gt,sizeof(gt));
+            physicalGPU->setProperty("ADLSEDRAM",edram,32);
+            uint32_t registers[][2] {
+                {0x42000,0},{0x45404,0},{0x45450,0},{0x45454,0},
+                {0x46010,0},{0x46014,0},{0x46018,0},{0x46030,0},
+                {0x164280,0},{0x164284,0},{0x164288,0},{0x16428C,0},{0x164290,0},{0x1642BC,0},
+                {0xC4000,0},{0xC4030,0},{0xC4034,0},{0xC5014,0},
+                {0x64000,0},{0x64100,0},{0x64300,0},{0x64400,0},
+                {0x70008,0},{0x71008,0},{0x72008,0},
+                {0x60000,0},{0x6000C,0},{0x60400,0},{0x60404,0},
+                {0x70180,0},{0x70188,0},{0x7018C,0},{0x70190,0},{0x7019C,0},{0x701A4,0},
+                {0x1082C0,0},{0x1082C4,0}
+            };
+            for(auto &reg:registers)reg[1]=io.read(reg[0]);
+            physicalGPU->setProperty("ADLSDisplayBoot",registers,sizeof(registers));
+            SYSLOG("igfx","ADL-S boot readout status=%u fuses=%x/%x/%x/%x/%x release=%x/%x",
+                static_cast<unsigned>(gt.status),gt.fuses[0],gt.fuses[1],gt.fuses[2],gt.fuses[3],gt.fuses[4],
+                gt.releasedMask,gt.releaseFailedMask);
+        }
+        if(map)map->release();
+    }
     if(!xeProfile.admitted())return;
     xelpSelectedGPU=physicalGPU;xelpSelectedProfile=xeProfile;
 	if (adlnDetected) {
@@ -4114,7 +4161,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 			// Preserve firmware power/ownership; no MMIO writes. The guarded20G
             // route first qualifies the shared writable BAR map. All-ones FIA
             // reads are unavailable, not connected ports.
-			if (pci->configRead16(4) & 2) {
+			if (!adlsDetected && (pci->configRead16(4) & 2)) {
 				auto mmio = pci->mapDeviceMemoryWithRegister(0x10,
                     tglMMIOUCRouted ? 0 : kIOMapReadOnly | kIOMapInhibitCache);
                 if (tglMMIOUCRouted) tglUpdateMMIOMap(mmio);
@@ -8985,7 +9032,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				}
 				// ADL-N and explicit overrides must reach the real selector2
 				// comparison regardless of the physical ID's signed ordering.
-				if (skuReady && (adlnDetected || xeProfile.overridden())) {
+				if (skuReady && (adlnDetected || adlsDetected || xeProfile.overridden())) {
 					static const uint8_t findSplit[] {0x7F,0x15}, replaceSplit[] {0x90,0x90};
 					auto split=reinterpret_cast<uint8_t *>(address+0x23C25);
 					skuReady=!memcmp(split,findSplit,sizeof(findSplit));
@@ -9075,7 +9122,8 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// native subslice count and publish the separately admitted L3 capacity.
 			uint8_t urbReplaceAlderLakeN[] {0x83,0xFE,0x01,0x75,0x59,0x83,0xFA,0x04,0x75,0x54,0x41,0xC7,0x87,0x64,0x11,0x00,0x00,0x04,0x00,0x00,0x00};
 			if (adlnDetected) { urbReplaceAlderLakeN[7]=adlnNativeSubslices;urbReplaceAlderLakeN[17]=adlnL3Banks; }
-			const auto urbReplacement = xeProfile.gt==XELP::GT::ADLNSmall ? urbReplaceAlderLakeN :
+            if(adlsDetected) {urbReplaceAlderLakeN[7]=adlsGT.nativeSubslices;urbReplaceAlderLakeN[17]=adlsGT.l3Banks;}
+			const auto urbReplacement = (xeProfile.gt==XELP::GT::ADLNSmall || xeProfile.gt==XELP::GT::ADLSSmall) ? urbReplaceAlderLakeN :
 				(xeProfile.gt==XELP::GT::TGLG4 ? urbReplaceG4 : urbReplace);
 			auto gpuInfo=patcher.solveSymbol<mach_vm_address_t>(index,
 				"__ZN16IntelAccelerator10getGPUInfoEv",address,size);
@@ -10395,6 +10443,18 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				if (ready) tglPG1FuseReadCaller = fn + 0x2C7;
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLPG1PollReady", ready);
 			}
+            if(adlsDetected) {
+                const auto symbol="__ZN17AppleIntelPortHAL4initEP10PortConfig";
+                const uint8_t entry[]={0x55,0x48,0x89,0xE5,0x41,0x56,0x53,0x49,0x89,0xFE};
+                const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,symbol,address,size);
+                const bool known=fn==address+0x5F058 && size>0x5F9F4 &&
+                    !memcmp(reinterpret_cast<void *>(fn),entry,sizeof(entry));
+                patcher.clearError();
+                KernelPatcher::RouteRequest route(symbol,wrapADLSPortInit,orgADLSPortInit);
+                adlsPortInitReady=known && patcher.routeMultiple(index,&route,1,address,size);
+                IORegistryEntry::getRegistryRoot()->setProperty("ADLSPortInitReady",adlsPortInitReady);
+                patcher.clearError();
+            }
 			{
 				KernelPatcher::RouteRequest routes[] {
 					{"__ZN17AppleIntelPortHAL14enableComboPhyEv", wrapTGLEnableCombo, orgTGLEnableCombo},
@@ -10901,7 +10961,7 @@ bool XE::wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, O
 // explicit profile or a mismatched donor connector must not be partly applied.
 bool XE::wrapTGLGetOSInformation(void *controller) {
  const auto r=FunctionCast(wrapTGLGetOSInformation,callbackXE->orgTGLGetOSInformation)(controller);
- if(r)tglBeginTCColdProtection(controller);
+ if(r && !callbackXE->adlsDetected)tglBeginTCColdProtection(controller);
  auto self=callbackXE;
  if(!r)return r;
  auto c=static_cast<uint8_t *>(controller);
@@ -10924,13 +10984,14 @@ bool XE::wrapTGLGetOSInformation(void *controller) {
  }
  auto copy=reinterpret_cast<uint8_t *>(self->tglPlatformCopy);
  if(copy!=platform)memcpy(copy,platform,sizeof(self->tglPlatformCopy));
- if(!self->tglHDMIWiringLoaded || !self->tglHDMIWiring.supported(self->tglHDMIBackendMask,self->tglHDMIB) ||
-    !self->tglHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy))) {
+ const bool wiringApplied=self->adlsDetected ? self->adlsHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy)) :
+    self->tglHDMIWiring.supported(self->tglHDMIBackendMask,self->tglHDMIB) && self->tglHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy));
+ if(!self->tglHDMIWiringLoaded || !wiringApplied) {
   IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiringGuardFailed",true);return false;
  }
  auto config=reinterpret_cast<uint32_t *>(copy+0x20);
  platform=copy;self->tglHDMIWiringApplied=true;
- IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiringApplied",self->tglHDMIWiring.hdmi,32);
+ IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiringApplied",self->adlsDetected?self->adlsHDMIWiring.selected:self->tglHDMIWiring.hdmi,32);
  // Preserve the existing TC2 machine's diagnostic names for old collectors.
  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIBTopologyApplied",bool(self->tglHDMIWiring.hdmi&2));
  if(self->tglHDMIWiring.hdmi&2)IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIBPortConfig",config+6,24);
@@ -10981,6 +11042,17 @@ bool XE::tglLoadTCWiring(IOService *provider) {
 // overrides firmware. Only unambiguous firmware TMDS uses an admitted backend.
 bool XE::tglLoadHDMIWiring(IOService *provider) {
  auto self=callbackXE;
+ if(self->adlsDetected) {
+  if(!self->tglHDMIWiringLoaded) {
+   self->tglHDMIWiringLoaded=true;
+   self->tglHDMIB=false;
+   // The legacy five-word property addresses TGL Combo A/B/C, not ADL-S.
+   if(provider && provider->getProperty("tgl-hdmi-wiring"))return false;
+   self->adlsHDMIWiring=AlderLakeS::HDMI::fromFirmware(self->firmwarePorts);
+   self->tglHDMIB=self->adlsHDMIWiring.valid && self->adlsHDMIWiring.selected==8;
+  }
+  return self->tglHDMIB;
+ }
  if(self->tglHDMIWiringLoaded)return self->tglHDMIWiring.supported(self->tglHDMIBackendMask,self->tglHDMIB);
  self->tglHDMIWiringLoaded=true;
  auto property=provider?provider->getProperty("tgl-hdmi-wiring"):nullptr;
@@ -10995,6 +11067,9 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
 }
 
 bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
+ if(callbackXE->adlsDetected && (!callbackXE->adlsNativeReady || !callbackXE->adlsDisplayHooksReady)) {
+  that->setProperty("ADLSFramebufferPrerequisitesMissing",true);return false;
+ }
  tglRecordStartOrder(3,that);
  if(tglTransitionLock)if(auto live=OSSerializer::forTarget(nullptr,tglTransitionSerialize)) {
   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeTransitionLive",live);live->release();
@@ -11114,6 +11189,7 @@ uint32_t XE::wrapTGLLaneMask(void *port) {
 }
 
 bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
+ if(callbackXE->adlsDetected && (!callbackXE->adlsNativeReady || !callbackXE->adlsDisplayHooksReady))return false;
  if (callbackXE->adlnDetected && adlnNativeRCSProfileRequested && !adlnNativeRCSProfileReady) {
   SYSLOG("igfx", "AlderLakeN native RCS profile qualification rejected accelerator start");
   return false;
@@ -11510,6 +11586,7 @@ void XE::tglObserveAccelerator(IOService *that, uint32_t stage, bool done, uint6
 }
 
 IOService *XE::wrapTGLAcceleratorProbe(IOService *that, IOService *provider, SInt32 *score) {
+ if(callbackXE->adlsDetected && (!callbackXE->adlsNativeReady || !callbackXE->adlsDisplayHooksReady))return nullptr;
  if (!callbackXE->tglAcceleratorRequested) return nullptr;
 	auto pci = OSDynamicCast(IOPCIDevice, provider);
 	const uint32_t identity = pci ? pci->configRead32(0) : 0;
@@ -15634,9 +15711,37 @@ uint32_t XE::wrapTGLLightUpTMDS(void *controller, void *fb, void *path, const vo
 // The 20A2314a donor nevertheless initializes DDI2 at 0x160000 (EHL PHY C).
 // r44's exact return PC 0x5a843 proves that this third call caused its panic.
 // Keep PHY A, including its shared reference role, and PHY B entirely native.
+bool XE::wrapADLSPortInit(void *port,uint32_t *config) {
+    const bool result=FunctionCast(wrapADLSPortInit,callbackXE->orgADLSPortInit)(port,config);
+    if(!result || !callbackXE->adlsDetected || !config || config[0]!=3)return result;
+    auto bytes=static_cast<uint8_t *>(port);
+    const bool ready=callbackXE->adlsPortInitReady && callbackXE->adlsHDMIWiring.matches(config) &&
+        config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(callbackXE->tglPlatformCopy)+0x68) &&
+        *reinterpret_cast<uint32_t **>(bytes+0x548)==config &&
+        AlderLakeS::comboBRegisters(reinterpret_cast<uint32_t *>(bytes+0x580),0x128/4);
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLSComboBPortReady",ready);
+    return ready;
+}
+
 void XE::wrapTGLEnableCombo(void *port) {
 	auto b = static_cast<uint8_t *>(port);
 	auto config = *reinterpret_cast<uint32_t **>(b + 0x548);
+    if(callbackXE->adlsDetected) {
+        if(!config || !callbackXE->adlsPortInitReady)return;
+        if(config[0]==0) {FunctionCast(wrapTGLEnableCombo,callbackXE->orgTGLEnableCombo)(port);return;}
+        // The donor's power-engine startup enumerates Combo slots0..2.
+        // ADL-S Combo B belongs to physical TC1, constructed separately.
+        if(config[0]==1 && callbackXE->tglPortByDDI)
+            port=reinterpret_cast<void *(*)(uint32_t)>(callbackXE->tglPortByDDI)(3);
+        else if(config[0]!=3)return;
+        b=static_cast<uint8_t *>(port);
+        config=b?*reinterpret_cast<uint32_t **>(b+0x548):nullptr;
+        if(config && callbackXE->adlsHDMIWiring.matches(config) &&
+           *reinterpret_cast<uint32_t *>(b+0x5B8)==0x6C10C)
+            FunctionCast(wrapTGLEnableCombo,callbackXE->orgTGLEnableCombo)(port);
+        else IORegistryEntry::getRegistryRoot()->setProperty("ADLSComboBInitRejected",true);
+        return;
+    }
 	const bool absent = callbackXE->tglActive && config && config[0] == 2 &&
 		*reinterpret_cast<uint32_t *>(b + 0x5B8) == 0x16010C;
 	uint64_t r[20] {}, uptime;

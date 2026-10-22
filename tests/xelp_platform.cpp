@@ -12,10 +12,10 @@ struct IO {
  uint32_t read(uint32_t r){reads.push_back(r);return regs.at(r);}
 };
 int main() {
- for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,255U}) {
+ for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,12U,255U}) {
   const auto p=identify((id<<16)|0x8086,rev);
   const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4;
-  assert(p.admitted()==(tgl || (adln && rev==0)));
+  assert(p.admitted()==(tgl || (adln && rev==0) || (id==0x4690 && rev==12)));
   assert(!adln || p.display==Display::XeLPD);
   assert(!identify((id<<16)|0x1234,rev).admitted());
  }
@@ -51,6 +51,15 @@ int main() {
   const uint32_t v[]={d,d+1,2,0,0x800,0x202};__builtin_memcpy(r,v,sizeof(v));
   assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(r),r)==(d<2?1U:0U));}
  assert(io.reads.empty());auto other=b;other.access=3;assert(!b.sameBinding(other));assert(b.sameBinding(b));
+ c={};c.profile=identify(0x46908086,12);c.combo=c.comboBackend=8;b.config=c;assert(c.valid());
+ for(unsigned d=0;d<9;++d){auto r=reinterpret_cast<uint32_t *>(platform+0x20+24*d);
+  const uint32_t v[]={d,9,2,0,0x800,0x202};memcpy(r,v,sizeof(v));
+  assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(r),r)==(d==3?1U:0U));}
+ assert(io.reads.empty()); // ADL-S must never probe TGL FIA for its Combo TC1.
+ for(unsigned bad=0;bad<5;++bad){auto x=c;if(bad==0)x.combo=1;if(bad==1)x.comboBackend=0x79;
+  if(bad==2)x.legacy=8;if(bad==3)x.typeC=8;if(bad==4)x.profile.revision=0;assert(!x.valid());}
+ assert(!identify(0x46D18086,12,0x46908086).admitted());
+ assert(!identify(0x46908086,12,0x46808086).admitted());
  // CPU association and power-consumer accounting are independent of transport.
  NativePorts ports {platform,(1U<<0)|(1U<<4)|(1U<<6)};
  assert(ports.bound(platform+0x20+24*4,4));assert(!ports.bound(platform+0x20+24*3,4));

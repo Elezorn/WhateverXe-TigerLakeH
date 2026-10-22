@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include "kern_tgl_hdmi_wiring.hpp"
 #include "kern_vbt.hpp"
+#include "kern_alderlake_s.hpp"
 #include "kern_xelp_donor.hpp"
 struct OSObject {virtual ~OSObject()=default;};
 struct OSData:OSObject {std::vector<uint8_t> data;void *getBytesNoCopy(){return data.data();}uint32_t getLength(){return data.size();}};
@@ -26,6 +27,7 @@ void clock_get_uptime(uint64_t *p){*p=0;}void absolutetime_to_nanoseconds(uint64
 void *current_thread(){return reinterpret_cast<void *>(1);}
 struct XE {
  bool tglHDMIB=true,tglStolenMemoryReady=false;
+ bool adlsDetected=false;
  struct {uint32_t fStolenMemorySize=0;} framebufferPatch;
  XELP::VBT::Ports firmwarePorts;
  // FIELDS
@@ -60,6 +62,19 @@ void expectUnchangedExcept(const uint8_t *after,std::initializer_list<unsigned> 
  assert(!memcmp(after,expected.data(),sizeof(original)));
 }
 int main(){
+ // ADL-S uses the same real entry points, while preserving the physical
+ // TC1 record and converting its PHY classification from Dekel to Combo.
+ setup();object.adlsDetected=true;
+ object.firmwarePorts.status=XELP::VBT::Status::Valid;object.firmwarePorts.present=8;
+ object.firmwarePorts.port[3]={0x60d2,1,2};
+ reinterpret_cast<uint32_t *>(original+0x68)[1]=9;IOService adlsProvider;
+ assert(XE::tglLoadHDMIWiring(&adlsProvider));assert(XE::wrapTGLGetOSInformation(controller));
+ auto adlsConfig=reinterpret_cast<uint32_t *>(platform()+0x68);
+ assert(object.tglHDMIEligible(adlsConfig) && object.tglHDMIDDCEligible(9) && !object.tglHDMIDDCEligible(2));
+ assert(adlsConfig[0]==3 && adlsConfig[1]==9 && adlsConfig[3]==0);
+ expectUnchangedExcept(platform(),{0x70,0x74,0x78,0x7C});
+ setup();object.adlsDetected=true;auto foreignWiring=property(2,0,2,0);IOService wrongADLS{&foreignWiring};
+ assert(!XE::tglLoadHDMIWiring(&wrongADLS) && !XE::tglLoadHDMIWiring(&wrongADLS));
  // The native setup caller supplies an interior output pointer as arg0.
  // Any object/config dereference on an unqualified caller must fault here.
  setup();

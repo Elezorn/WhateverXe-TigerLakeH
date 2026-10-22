@@ -15,6 +15,7 @@
 #include "kern_display13_hdmi_wiring.hpp"
 #include "kern_xelp_platform.hpp"
 #include "kern_vbt.hpp"
+#include "kern_alderlake_s.hpp"
 #include "kern_xelp_donor.hpp"
 
 #include "kern_dvmt.hpp"
@@ -75,6 +76,11 @@ private:
 	bool tglActive {false};
 	bool adlnRequested {false};
 	bool adlnDetected {false};
+    bool adlsDetected {},adlsNativeReady {},adlsDisplayHooksReady {};
+    bool adlsPortInitReady {};
+    mach_vm_address_t orgADLSPortInit {};
+    static bool wrapADLSPortInit(void *port,uint32_t *config);
+    AlderLakeS::GT adlsGT;
     XELP::Profile xeProfile;
     XELP::VBT::Ports firmwarePorts;
     void xelpReadFirmware(IOPCIDevice *pci);
@@ -279,11 +285,12 @@ private:
 	static bool wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value);
 	bool tglHDMIB {false};
  TGLHDMIWiring tglHDMIWiring;
+ AlderLakeS::HDMI adlsHDMIWiring;
  bool tglHDMIWiringLoaded {},tglHDMIWiringExplicit {},tglHDMIWiringApplied {};
  uint32_t tglHDMIBackendMask {3}; // TGL-U combo PHY A/B; C is absent
  static bool tglLoadHDMIWiring(IOService *provider);
- bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && tglHDMIWiring.matches(config);}
- bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && tglHDMIWiring.usesDDC(pin);}
+ bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && (adlsDetected?adlsHDMIWiring.matches(config):tglHDMIWiring.matches(config));}
+ bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && (adlsDetected?adlsHDMIWiring.usesDDC(pin):tglHDMIWiring.usesDDC(pin));}
 
 	bool tglGMBusReady {false};
 	mach_vm_address_t orgTGLGMBus {};

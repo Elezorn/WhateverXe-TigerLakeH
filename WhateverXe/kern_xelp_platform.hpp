@@ -16,7 +16,8 @@ struct Profile {
     bool overridden() const {return identity!=effectiveIdentity;}
     bool admitted() const {return (identity&0xFFFF)==0x8086 && revision<=255 &&
         donor==Donor::C004FC1A && gt!=GT::Unknown &&
-        (family!=Family::AlderLakeN || revision==0);}
+        (family!=Family::AlderLakeN || revision==0) &&
+        (family!=Family::AlderLakeS || (identity==0x46908086 && revision==0x0C && !overridden()));}
 };
 inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) {
     Profile p;p.identity=physical;p.revision=revision;p.effectiveIdentity=effective;
@@ -70,6 +71,11 @@ struct ProbeConfig {
     bool valid() const {
         if(abi!=3 || bytes!=sizeof(ProbeConfig) || !profile.admitted() ||
            !same(profile,identify(profile.identity,profile.revision,profile.effectiveIdentity)))return false;
+        // Initial ADL-S transport is fixed HDMI on physical TC1/Combo B.
+        // Its TC label grants neither Type-C nor Dekel register access.
+        if(profile.family==Family::AlderLakeS)
+            return profile.display==Display::XeD && combo==8 && comboBackend==8 &&
+                !legacy && !typeC && !excluded && !legacyBackend;
         if((combo&~7U) || ((legacy|typeC|excluded|legacyBackend)&~0x1F8U) ||
            (comboBackend&~7U) || (legacy&typeC) || (legacy&excluded) || (typeC&excluded))return false;
         if(profile.display==Display::XeD)return comboBackend==7;
