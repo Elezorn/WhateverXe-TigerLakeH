@@ -79,7 +79,7 @@ bool used[4] {}, existingPath, badPipe, failAdoption, stopCalled;
 int pgRefs[8] {};
 std::atomic<unsigned> nativeCalls {0};
 std::function<void()> nativeBoundary;
-uint32_t nativeEndResult;
+uint32_t nativeEndResult,nativeTrainingResult;
 void *protectedMMIO;
 bool protectOnPowerDrop, bufferIdlePending;
 std::atomic<unsigned> portDisables{0}, clockDisables{0};
@@ -128,7 +128,7 @@ void disableClocks(void *, void *port, void *) {
 }
 void nativeStop(void *, IOService *) { stopCalled=true; }
 uint32_t beginEnd(void *, void *) { ++nativeCalls; if(nativeBoundary) nativeBoundary(); return nativeEndResult; }
-uint32_t train(void *, void *, void *) { ++nativeCalls; if(nativeBoundary) nativeBoundary(); return 0; }
+uint32_t train(void *, void *, void *) { ++nativeCalls; if(nativeBoundary) nativeBoundary(); return nativeTrainingResult; }
 bool allocateResources(void *, uint32_t, uint32_t) {
  ++nativeCalls;
  if(nativeBoundary) nativeBoundary();
@@ -150,7 +150,7 @@ void setup() {
  obj.orgTGLTrainingBegin=(uintptr_t)beginEnd; obj.orgTGLTrainingEnd=(uintptr_t)beginEnd;
  obj.orgTGLTraining=(uintptr_t)train; obj.orgTGLAllocatePathResources=(uintptr_t)allocateResources;
  ctl={}; access={}; power={}; mmio={};
- existingPath=badPipe=failAdoption=stopCalled=false; nativeCalls=0; nativeEndResult=0;
+ existingPath=badPipe=failAdoption=stopCalled=false; nativeCalls=0; nativeEndResult=nativeTrainingResult=0;
  nativeBoundary={}; clockBoundary={}; protectedMMIO=nullptr; protectOnPowerDrop=bufferIdlePending=false;portDisables=clockDisables=0;
  std::fill(std::begin(used),std::end(used),false); std::fill(std::begin(pgRefs),std::end(pgRefs),0);
  ctl.at<void *>(0xd40)=obj.tglPlatformCopy; ctl.at<void *>(0xc40)=access.data(); ctl.at<void *>(0xc8)=power.data();
@@ -345,6 +345,71 @@ void endCompletion() {
  }
  puts("End completion: all 3 pipes retain failed cleanup and return Busy; retries consume native End once, training/adoption blocked, later End/Begin finishes; native error/commit semantics preserved");
 }
+
+void routeLifecycleMatrix() {
+ unsigned sequences=0;
+ for(unsigned mode:{1u,3u,4u})for(unsigned ddi=0;ddi<9;++ddi)for(unsigned pipe=0;pipe<3;++pipe)
+ for(unsigned initial=0;initial<3;++initial) {
+  if(mode==1 ? (ddi!=0&&ddi!=3&&ddi!=4) : ddi<3)continue;
+  setup();
+  if(mode==1){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=1U<<ddi;}
+  if(mode==3){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.tglDPAltCandidates=1U<<ddi;}
+  ports[ddi].at<uint32_t>(0x550)=mode;
+  for(unsigned i=0;i<pipe;++i)used[i]=true;
+  const unsigned func=0x60400+pipe*0x1000,tp=0x60540+pipe*0x1000,buffer=0x64000+ddi*0x100;
+  const uint32_t savedFunc=initial?0x02030006:0,savedTP=initial?0x00040300:0;
+  mmio.at<uint32_t>(func)=savedFunc;mmio.at<uint32_t>(tp)=savedTP;
+  uint32_t request[20]={ddi+1},output[20]={};
+  if(initial==2) {
+   // An inherited native scanout remains owned by native. A training call
+   // must not borrow its pipe/power or restore over its register state.
+   existingPath=true;mmio.at<uint32_t>(func)|=0x80000000;
+   mmio.at<uint32_t>(tp)|=0x80000000;mmio.at<uint32_t>(buffer)=0x80000000;
+   assert(XE::wrapTGLTrainingBegin(ctl.data(),request)==0);
+   assert(XE::wrapTGLTraining(ctl.data(),request,output)==0);
+   request[2]=1;assert(XE::wrapTGLTrainingEnd(ctl.data(),request)==0);request[2]=0;
+   assert(!obj.tglTrainingLeases[ddi].path && !obj.tglTrainingLeases[ddi].powerOwned);
+   assert(mmio.at<uint32_t>(func)==(savedFunc|0x80000000));
+   for(int refs:pgRefs)assert(!refs);
+   // Model the native owner's completed disconnect; not an OS sleep/wake.
+   existingPath=false;mmio.at<uint32_t>(func)=savedFunc;mmio.at<uint32_t>(tp)=savedTP;mmio.at<uint32_t>(buffer)=0x80;
+  }
+  auto &lease=obj.tglTrainingLeases[ddi];
+  // Repeat without resetting controller, pool or mode. Successful training,
+  // native failure and delayed abort completion all precede a reconnection.
+  for(unsigned cycle=0;cycle<4;++cycle) {
+   const auto generation=lease.generation;
+   assert(XE::wrapTGLTrainingBegin(ctl.data(),request)==0);
+   nativeTrainingResult=cycle==1?0xe00002bc:0;
+   assert(XE::wrapTGLTraining(ctl.data(),request,output)==nativeTrainingResult);
+   assert(lease.path && lease.pipe==pipe && lease.generation==generation+1);
+   assert(lease.powerOwned && !lease.busy && pgRefs[lease.pg]==1);
+   assert(mmio.at<uint32_t>(func)==savedFunc);
+   if(cycle==2) {
+    mmio.at<uint32_t>(buffer)=0;
+    assert(XE::wrapTGLTrainingEnd(ctl.data(),request)==kIOReturnBusy);
+    const auto calls=nativeCalls.load();
+    assert(lease.endCleanupPending && lease.powerOwned);
+    assert(XE::wrapTGLTrainingEnd(ctl.data(),request)==kIOReturnBusy && nativeCalls==calls);
+    assert(XE::wrapTGLTraining(ctl.data(),request,output)==kIOReturnBusy && nativeCalls==calls);
+    mmio.at<uint32_t>(buffer)=0x80;
+    assert(XE::wrapTGLTrainingEnd(ctl.data(),request)==0 && nativeCalls==calls);
+   } else assert(XE::wrapTGLTrainingEnd(ctl.data(),request)==0);
+   assert(!lease.path && !lease.busy && !lease.powerOwned && !lease.endCleanupPending);
+   assert(mmio.at<uint32_t>(func)==savedFunc && mmio.at<uint32_t>(tp)==savedTP);
+   for(int refs:pgRefs)assert(!refs);
+   for(unsigned i=0;i<pipe;++i)assert(used[i]);
+  }
+  // Stop closes admission even when another training request arrives later.
+  XE::wrapTGLControllerStop(ctl.data(),nullptr);
+  const auto calls=nativeCalls.load();
+  assert(XE::wrapTGLTraining(ctl.data(),request,output)==kIOReturnBusy && nativeCalls==calls);
+  for(unsigned i=0;i<pipe;++i)used[i]=false;
+  clean();++sequences;
+ }
+ assert(sequences==135);
+ puts("PASS 135 actual-wrapper route/pipe/initial-state sequences: 540 train/abort/reconnect cycles, inherited ownership and stop admission (not OS sleep/wake)");
+}
 int main(int argc, char **argv) {
  if(argc==2) {
   if(!strcmp(argv[1],"end")) { endCompletion(); return 0; }
@@ -353,7 +418,7 @@ int main(int argc, char **argv) {
   if(!strcmp(argv[1],"arbitration")) { samePortArbitration(); return 0; }
   return 2;
  }
- observerPowerDrop(); samePortArbitration(); shutdownStatus(); endCompletion(); trainingRouteRestoration(); wiringAdmission();
+ observerPowerDrop(); samePortArbitration(); shutdownStatus(); endCompletion(); trainingRouteRestoration(); wiringAdmission(); routeLifecycleMatrix();
  unsigned orders=0;
  int in[3]={3,4,5};
  do {
