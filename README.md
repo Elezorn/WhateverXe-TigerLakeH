@@ -168,8 +168,9 @@ These results cover tested systems, not every GPU, display, adapter or dock.
 - Alder Lake and Raptor Lake S/H/P/U support. Development support for Alder Lake-S
   `4690` currently covers Big Sur single-display HDMI or fixed DP with Metal and
   OpenGL acceleration. It requires unreleased companion graphics changes and is
-  not supported by the published graphics pkg. USB-C, hotplug, sleep/wake and
-  other macOS versions remain unqualified.
+  not supported by the published graphics pkg. Fixed DP reconnection has been
+  tested, but display recovery can be delayed. USB-C, sleep/wake and other
+  macOS versions remain unqualified.
 - Display 13 USB-C and eDP support
 
 ### Not Planned

@@ -11000,7 +11000,8 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     adlsDisplayHooksReady=ready && adlsPowerReady && adlsPortInitReady && orgTGLEnableCombo && tglPortByDDI &&
      orgTGLGetOSInformation && orgTGLRegisterWrite && orgTGLRegisterRead && hpdOK &&
      (!adlsDPWiring || (tglTrainingLeaseReady && tglSinkFramingReady && tglComboSignalReady &&
-       tglComboAUXLifetimeReady && tglAUXParentReady && tglTCNativeFunctions.complete()));
+       tglComboAUXLifetimeReady && tglAUXParentReady && tglTCNativeFunctions.complete() &&
+       tglModeResultReady && tglNativeLegacyHPDCaller));
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayHooksReady",adlsDisplayHooksReady);
    }
    tglRecordStartOrder(1,nullptr);
@@ -13675,6 +13676,16 @@ uint32_t XE::wrapTGLSetPortMode(void *port, uint32_t mode) {
  if(mode==3 && traceDDI<9 && (self->tglDPAltCandidates&(1U<<traceDDI)) &&
     !tglDPAltColdReady(self->tglObservationController))return kIOReturnNotReady;
  auto caller = __builtin_return_address(0);
+ // The donor's HPD dispatch classifies physical TC2 as Dekel mode4.
+ // Our firmware-qualified fixed DP uses Combo C mode1, as at boot.
+ const auto requestedMode=mode;
+ mode=AlderLakeS::DP::hotplugMode(self->adlsDetected && self->adlsDPWiring && self->tglModeResultReady,
+  traceConfig,reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(self->tglPlatformCopy)+0x80),
+  reinterpret_cast<uintptr_t>(caller),self->tglNativeLegacyHPDCaller,mode);
+ if(mode!=requestedMode) {
+  uint32_t record[]={traceDDI,requestedMode,mode};
+  IORegistryEntry::getRegistryRoot()->setProperty("ADLSDPHotplugMode",record,sizeof(record));
+ }
  if(!self->tglTCModeAllowed(traceDDI,mode) &&
     self->tglRegisterLegacyHPD(traceDDI,mode,reinterpret_cast<uintptr_t>(caller))) {
   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeTCDPRegistered",

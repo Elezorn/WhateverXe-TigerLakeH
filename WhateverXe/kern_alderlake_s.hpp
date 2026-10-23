@@ -109,6 +109,10 @@ struct DP {
         const uint32_t expected[]={4,10,1,0,0x400,0x201};
         return c && !memcmp(c,expected,sizeof(expected));
     }
+    static uint32_t hotplugMode(bool qualified,const uint32_t *config,const uint32_t *bound,
+                                uintptr_t caller,uintptr_t hpdCaller,uint32_t requested) {
+        return qualified && config==bound && matches(config) && hpdCaller && caller==hpdCaller && requested==4 ? 1 : requested;
+    }
     static bool apply(void *platform,size_t bytes) {
         if(!platform || bytes<0x1C0)return false;
         auto p=static_cast<uint8_t *>(platform);

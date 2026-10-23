@@ -35,6 +35,16 @@ int main() {
     firmware.port[4]={0x60d6,8,3,0x20,0xc0,0};
     firmware.port[5]={0x68c6,9,0,0x30,0xc0,0};
     assert(DP::qualified(firmware));
+    const uint32_t dpConfig[]={4,10,1,0,0x400,0x201};
+    assert(DP::hotplugMode(true,dpConfig,dpConfig,0x100,0x100,4)==1);
+    assert(DP::hotplugMode(false,dpConfig,dpConfig,0x100,0x100,4)==4);
+    assert(DP::hotplugMode(true,dpConfig,nullptr,0x100,0x100,4)==4);
+    assert(DP::hotplugMode(true,dpConfig,dpConfig,0x101,0x100,4)==4);
+    assert(DP::hotplugMode(true,dpConfig,dpConfig,0,0,4)==4);
+    for(unsigned m:{0u,1u,2u,3u})assert(DP::hotplugMode(true,dpConfig,dpConfig,0x100,0x100,m)==m);
+    for(unsigned n=0;n<6;++n){uint32_t bad[6];memcpy(bad,dpConfig,sizeof(bad));bad[n]^=1;
+        assert(DP::hotplugMode(true,bad,bad,0x100,0x100,4)==4);}
+
     for(unsigned i=0;i<6;++i){auto bad=firmware;reinterpret_cast<uint32_t *>(&bad.port[4])[i]^=1;assert(!DP::qualified(bad));}
     auto dupe=firmware;dupe.port[5].aux=0x20;assert(!DP::qualified(dupe));
     auto h=HDMI::fromFirmware(firmware);assert(h.valid && h.selected==8 && h.pin[3]==9);
