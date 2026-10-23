@@ -123,6 +123,7 @@ private:
     bool xelpBindProbe(void *controller);
 	bool display13FBTopologyHooksReady {false};
 	Display13OutputWiring adlnOutputWiring;
+ mach_vm_address_t adlnComboPLLFractionCaller {};
 	uint64_t adlnPlatform[0x1C0/8] {};
 	IOService *adlnTopologyController {};
 	mach_vm_address_t orgAlderLakeNGetOSInformation {},orgAlderLakeNPortState {};

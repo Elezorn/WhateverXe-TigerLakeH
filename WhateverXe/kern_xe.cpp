@@ -5992,6 +5992,10 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
 		0x49,0x8B,0x7D,0x00,0x48,0x8B,0x07,0xFF,0x90,0x30,0x01,0x00,0x00,
 		0x90,0x90,0x90,0x90,0x90,0x90,0x90};
     const uint8_t busEntry[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56};
+    // Same nominal CFGCR0 write as the Display12 adapter. ADL-P/N also
+    // requires WA 22010492432 when the physical reference is 38.4 MHz.
+    const uint8_t fractionWrite[] {0x89,0xfa,0x49,0x8b,0xbd,0x40,0x0c,0x00,0x00,0x48,0x8b,0x07,
+        0x48,0x8b,0x75,0xb8,0xff,0x90,0x30,0x01,0x00,0x00};
     const uint8_t readEntry[] {0x55,0x48,0x89,0xE5,0x53,0x50};
 	const uint8_t resetBefore[] {0xBE,0x04,0x51,0x0C,0x00,0xBA,0x01,0x00,0x00,0x00,0xFF,0x90,0x30,0x01,0x00,0x00};
 	const uint8_t resetAfter[] {0xBE,0x04,0x51,0x0C,0x00,0xBA,0x00,0x00,0x00,0x80,0xFF,0x90,0x30,0x01,0x00,0x00};
@@ -6021,8 +6025,9 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
         "__ZN31AppleIntelRegisterAccessManager14ReadRegister32Em",address,size);patcher.clearError();
     auto write=patcher.solveSymbol<mach_vm_address_t>(index,
         "__ZN31AppleIntelRegisterAccessManager15WriteRegister32Emj",address,size);patcher.clearError();
-	if(!adlnDetected || !adlnKernelReady || !display13FBABIReady || size<=0x9A118 ||
+	if(!adlnDetected || !adlnKernelReady || !display13FBABIReady || !display13FBClockReadoutHooksReady || size<=0x9A118 ||
 		clocks!=address+0x6CE10 || bus!=address+0x53A7C ||
+        memcmp(reinterpret_cast<void *>(address+0x6D95D),fractionWrite,sizeof(fractionWrite)) ||
         memcmp(reinterpret_cast<void *>(bus),busEntry,sizeof(busEntry)) ||
         read!=address+0x5E344 || write!=address+0x5EB5C ||
         memcmp(reinterpret_cast<void *>(read),readEntry,sizeof(readEntry)) ||
@@ -6058,7 +6063,9 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
     };
     const bool ready=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
     IORegistryEntry::getRegistryRoot()->setProperty("N97FBGMBusObservationReady",ready);
-    return ready && processDisplay13FramebufferColor(patcher,index,address,size);
+    const bool complete=ready && processDisplay13FramebufferColor(patcher,index,address,size);
+    adlnComboPLLFractionCaller=complete ? address+0x6D973 : 0;
+    return complete;
 }
 uint32_t XE::wrapDisplay13GMBus(IOService *controller,uint32_t bus,uint32_t speed,void *request) {
     static uint32_t count {}; const auto call=__sync_add_and_fetch(&count,1);
@@ -6318,6 +6325,15 @@ void XE::wrapAlderLakeNGamma10(void *path,void *transaction,uint32_t control) {
 }
 
 void XE::wrapDisplay13GMBusWrite(void *access,uint64_t reg,uint32_t value) {
+    // DISPLAY13_COMBO_FRACTION: qualified nominal writer, physical reference,
+    // retained controller/manager. No MMIO or other port's PLL inference.
+    if(callbackXE->adlnDetected && callbackXE->xeProfile.display==XELP::Display::XeLPD &&
+       callbackXE->adlnComboPLLFractionCaller && reinterpret_cast<uintptr_t>(__builtin_return_address(0))==callbackXE->adlnComboPLLFractionCaller) {
+        auto controller=reinterpret_cast<uint8_t *>(callbackXE->adlnTopologyController);
+        if(controller && access && *reinterpret_cast<void **>(controller+0xC40)==access)
+            TGLComboPLLFraction::adjust(*reinterpret_cast<uint32_t *>(controller+0xEA8),reg,value);
+    }
+    // DISPLAY13_COMBO_FRACTION_END
     // This route also carries direct native cursor writes, outside the WM
     // trigger queue. Apply Display 13's slot WA only to our proven owner.
     if(reg==0x70080 || reg==0x71080 || reg==0x72080) {
