@@ -91,7 +91,7 @@ struct TGLComboSignal {
             (read(base+0x28)&0xFCU)==laneMask;
         for(unsigned n=0;n<4;++n) {
             ok&=(read(base+0x888+0x100*n)&0xB8FFU)==(((swing&8)<<12)|((swing&7)<<11)|0x98U);
-            ok&=(read(base+0x890+0x100*n)&0x3FFFFU)==((post1<<12)|cursor);
+            ok&=(read(base+0x890+0x100*n)&0x8003FFFFU)==((dw4[n]&0x80000000U)|(post1<<12)|cursor);
             ok&=(read(base+0x89C+0x100*n)&0x7F000000U)==(scalar<<24);
         }
         return ok;

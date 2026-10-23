@@ -52,6 +52,16 @@ int main() {
   for(unsigned n=0;n<4;++n)assert(bool(regs[s.base+0x890+0x100*n]&0x80000000U)==
     (rate!=30 && (n==1 || n==2 || (lanes==4 && n==3))));
  }
+ // A PHY that drops only the loadgen clear must not report success.
+ {
+  TGLComboSignal hbr3;assert(hbr3.selectADLS(3,4,30,0,0));
+  std::map<unsigned,unsigned> regs;
+  assert(!hbr3.program([&](unsigned r){return regs[r];},[&](unsigned r,unsigned value){
+   if(r==hbr3.base+0x694)for(unsigned n=0;n<4;++n)regs[hbr3.base+0x894+0x100*n]=value;
+   for(unsigned n=0;n<4;++n)if(r==hbr3.base+0x890+0x100*n)value|=0x80000000U;
+   regs[r]=value;
+  }));
+ }
  TGLComboSignal s;assert(s.select(0,1,10,false,false,0,0));
  assert(s.swing==0xA&&s.scalar==0x32&&s.cursor==0x3F&&!s.post1);
  // Silent dropped coefficient write must not report successful programming.
