@@ -17,6 +17,7 @@
 #include "kern_xelp_platform.hpp"
 #include "kern_vbt.hpp"
 #include "kern_alderlake_s.hpp"
+#include "kern_xelp_panel_pwm.hpp"
 #include "kern_xelp_donor.hpp"
 #include "kern_xelp_display_contract.hpp"
 
@@ -82,7 +83,14 @@ private:
 	bool adlnDetected {false};
     bool adlsDetected {},adlsNativeReady {},adlsDisplayHooksReady {};
     bool adlsPortInitReady {},tglHPDHookReady {};
-    bool adlsPLLTableReady {},adlsClockReady {},adlsPowerReady {};
+    bool adlsPLLTableReady {},adlsClockReady {},adlsPowerReady {},adlsPanelPWMReady {};
+ XELP::PanelPWM adlsPanelPWM;
+ mach_vm_address_t orgADLSLightUpEDP {},orgADLSPanelBacklight {};
+ static bool adlsPanelPWMTarget(void *controller,void *&access,void *&power);
+ static bool adlsCapturePanelPWM(void *controller);
+ static uint32_t wrapADLSLightUpEDP(void *controller,void *fb,void *path,const void *timing);
+ static uint32_t wrapADLSPanelBacklight(void *controller,uint32_t brightness);
+ static void wrapADLSPanelPWMEnable(void *access);
     mach_vm_address_t orgADLSPowerPG {};
     static uint8_t *adlsPowerTarget(void *power);
     static void wrapADLSPowerPG(void *power,bool enable,uint32_t requested);
@@ -418,6 +426,7 @@ private:
   auto routes=tglTCWiring.sstRoutes(tglAUXParentMask,
    tglTCAutoCandidates&__atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE),tglDPAltCandidates);
   routes.combo=adlsDetected ? (adlsWiring.valid?adlsWiring.dp:0) : tglComboDPMask;
+  routes.panel=adlsDetected && adlsWiring.valid ? adlsWiring.panel : 0;
   return routes;
  }
  bool tglDPSSTEligible(uint32_t ddi) const {return tglSSTRoutes().eligible(ddi);}

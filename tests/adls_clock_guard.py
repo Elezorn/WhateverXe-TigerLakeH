@@ -52,6 +52,12 @@ int main(){
   assert(XE::adlsClockTarget(ctl,port,nullptr));
   state.adlsWiring.valid=false;assert(!XE::adlsClockTarget(ctl,port,nullptr));
  }
+ state={};state.adlsClockReady=true;state.tglObservationController=ctl;state.adlsWiring.valid=true;state.adlsWiring.panel=1;
+ const uint32_t panel[]={0,0,0,0,2,0x18};auto panelConfig=reinterpret_cast<uint32_t*>(state.tglPlatformCopy+0x20);memcpy(panelConfig,panel,sizeof(panel));
+ at<void*>(port,0x548)=panelConfig;at<void*>(port,0x578)=access;at<void*>(ctl,0xc40)=access;
+ at<uint32_t>(port,0x5b8)=0x16210c;at<uint32_t>(access,0x60)=0x200000;
+ assert(XE::adlsClockTarget(ctl,port,nullptr));
+ state.adlsWiring.panel=0;assert(!XE::adlsClockTarget(ctl,port,nullptr));
  puts("PASS ADL-S runtime clock guard: exact owner, immutable TC1/TC2 configurations, mapped Combo B/C and no shared port");
 }'''.replace('FUNCTION',function)
 with tempfile.TemporaryDirectory(prefix='adls-clock-guard-') as d:

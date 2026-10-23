@@ -138,6 +138,27 @@ int main(){
   uint32_t result=99;assert(run(p,0,0,nullptr,result)==(bad==0));
   assert((writes!=0)==(bad==0));if(!bad)assert(!result && records==1 && registers[base+0x89c]==0x35000000);
  }
+ // ADL-S panel uses the same programming sequence with panel electrical
+ // policy, never the TGL table or the external-DP policy by accident.
+ for(unsigned rate:{6U,10U,20U,30U})for(unsigned low=0;low<2;++low)for(unsigned hobl=0;hobl<2;++hobl) {
+  alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};
+  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
+  state={};state.adlsDetected=true;state.xeProfile.family=XELP::Family::AlderLakeS;
+  state.tglObservationController=ctl;auto &v=state.firmwarePorts;v.status=XELP::VBT::Status::Valid;v.present=1;v.port[0]={0x78C6,10,0,0x40,0,0};
+  v.panel.valid=true;v.panel.ddi=0;v.panel.backlightValid=true;v.panel.pwmPresent=true;v.panel.backlightType=2;v.panel.lowSwing=low;v.panel.hobl=hobl;
+  state.adlsWiring=AlderLakeS::Wiring::fromFirmware(v);assert(state.adlsWiring.panel==1);
+  auto config=reinterpret_cast<uint32_t*>(state.tglPlatformCopy+0x20);const uint32_t record[]={0,0,0,0,2,0x18};memcpy(config,record,sizeof(record));
+  store(p,0x548,config);store(p,0x550,1U);store(p,0x578,access+0);store(ctl,0xC40,access+0);
+  store(p,0x124,2U);store(p,0x128,rate);store(p,0x620,0x162804U);store(p,0x5C8,0x162028U);
+  store(access,0x60,0x200000U);store(access,0x50,ctl+0);
+  registers.clear();registers[0x45404]=3;registers[0x45454]=3;reads=writes=records=0;
+  uint32_t result=99;assert(run(p,0,0,nullptr,result)&&!result&&records==1);
+  XELP::ComboPolicy expected;assert(expected.select(XELP::ComboPolicy::Platform::ADLS,rate,true,low,false,0,0));
+  assert((registers[0x16289C]>>24&127)==expected.coefficients.scalar);
+  assert((registers[0x162890]&0x3ffff)==(expected.coefficients.post1<<12|expected.coefficients.cursor));
+  assert(!(registers[0x162028]&12));
+  state.adlsWiring.panel=0;writes=0;assert(!run(p,0,0,nullptr,result)&&!writes);
+ }
  puts("PASS production combo guard: family, port, firmware, ownership, power and missing bank");
 }
 '''.replace('FUNCTION',fn)

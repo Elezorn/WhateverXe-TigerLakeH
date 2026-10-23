@@ -16,6 +16,8 @@ if len(sys.argv)>1:
   assert b[at:at+len(key)+1]==key+b'\0'
 code=r'''
 #include "kern_xelp_panel_power.hpp"
+#include "kern_alderlake_s.hpp"
+#include "kern_xelp_panel_pwm.hpp"
 #include "kern_tgl_tc_native.hpp"
 #include <cassert>
 #include <cstdio>
@@ -39,7 +41,8 @@ struct KernelPatcher {
 };
 struct XE {
  static XE *callbackXE;
- bool tglActive=true,tglPanelTimingReady=true;
+ bool tglActive=true,tglPanelTimingReady=true,adlsDetected=false;
+ AlderLakeS::Wiring adlsWiring;XELP::PanelPWM adlsPanelPWM;
  uintptr_t orgTGLPanelTiming=0,orgTGLRegisterRead=0,orgTGLPanelConfig=0;
  uint32_t tglPanelTimingBIOS[3]{};bool tglPanelTimingBIOSValid=false;
  XELP::VBT::Ports firmwarePorts;
@@ -114,7 +117,7 @@ int main(int argc,char **argv){
   XE s;setup(s);auto &p=s.firmwarePorts.panel;
   switch(n){
    case 0:s.tglActive=false;break;case 1:s.tglPanelTimingReady=false;break;case 2:s.tglObservationController=nullptr;break;
-   case 3:s.xeProfile.family=XELP::Family::AlderLakeS;break;case 4:p.controller=1;break;case 5:p.backlightType=5;break;
+   case 3:s.xeProfile.family=XELP::Family::AlderLakeN;break;case 4:p.controller=1;break;case 5:p.backlightType=5;break;
    case 6:p.backlightValid=false;break;case 7:s.tglTCNativeFunctions.qualified=false;break;case 8:owner=nullptr;break;
    case 9:s.orgTGLRegisterRead=0;break;case 10:ctl[0x918]=1;break;case 11:at<void*>(ctl,0xd0)=port;break;
    case 12:at<void*>(ctl,0xd40)=nullptr;break;case 13:port[0x117]=1;break;case 14:at<void*>(port,0x548)=ctl;break;
@@ -138,7 +141,8 @@ int main(int argc,char **argv){
  // Optional exact native hwSetPanelPowerConfig replay. Only its property
  // callsite, imported services and virtual register writer are replaced; the encoding/masking,
  // property conversions, defaults, cached fields and write order are real donor code.
- if(argc>1){
+ for(unsigned platform=0;platform<2;++platform)if(argc>1){
+  propertyCalls=0;
   std::ifstream f(argv[1],std::ios::binary);std::vector<uint8_t>b((std::istreambuf_iterator<char>(f)),{});assert(b.size()>0xde4e0);
   const auto stubs=unsigned((b.size()+4095)&~4095U);const size_t length=stubs+4096;
   auto mem=(uint8_t*)mmap(nullptr,length,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);assert(mem!=MAP_FAILED);memcpy(mem,b.data(),b.size());
@@ -155,6 +159,11 @@ int main(int argc,char **argv){
   XE s;setup(s);at<void*>(access,0)=vtable;s.orgTGLPanelConfig=(uintptr_t)nativeConfig;
   s.orgTGLPanelTiming=(uintptr_t)(mem+0x4848c);at<void*>(ctl,0xc60)=&provider;
   const uint32_t milliseconds[]={300,100,600,90,800};for(unsigned i=0;i<5;++i)properties[i].value=milliseconds[i];
+  if(platform){
+   s.adlsDetected=true;s.xeProfile.family=XELP::Family::AlderLakeS;
+   s.adlsWiring=AlderLakeS::Wiring::fromFirmware(s.firmwarePorts);assert(s.adlsWiring.panel==1);
+   const uint32_t record[]={0,0,0,0,2,0x18};memcpy(reinterpret_cast<uint8_t*>(s.tglPlatformCopy)+0x20,record,sizeof(record));
+  }
   const auto config=XE::wrapTGLPanelConfig;
   control=0xabcd0080;at<uint32_t>(ctl,0xd80)=control;
   on=4000U<<16|1200;off=8000U<<16|1100;

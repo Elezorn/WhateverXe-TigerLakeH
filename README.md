@@ -187,7 +187,12 @@ installation or update location.
   `0C` with the qualified fuse configuration. Other port layouts have CPU-test
   coverage but are not hardware-qualified. A USB-C connector exposed by VBT
   as fixed DP on Combo PHY A has also been tested. This does not qualify
-  Type-C/TBT-managed routes. Sleep/wake remains unqualified.
+  Type-C/TBT-managed routes. Development eDP routing also composes a
+  VBT-qualified DDI A panel with native PPS0 and PWM controller 0, including
+  panel timing, signal settings and firmware-derived PWM period/polarity.
+  CPU tests and exact-donor replay cover this path; ADL-S eDP has not been
+  tested on hardware. PPS1 and AUX-controlled backlights remain unsupported.
+  Sleep/wake remains unqualified.
 - Display 13 USB-C and eDP support
 
 ### Not Planned

@@ -115,5 +115,41 @@ int main() {
     assert(!comboRegisters(3,registers,sizeof(registers)/4)); // no repeated or foreign table
     memcpy(registers,saved,sizeof(saved));registers[4]=0x64400;
     assert(!comboRegisters(3,registers,sizeof(registers)/4));
+    // Compose a firmware-qualified native panel with every external B/C
+    // assignment. Panel remains kind0 and never gets external hotplug mode.
+    for(unsigned assignment=0;assignment<9;++assignment) {
+        XELP::VBT::Ports v;v.status=XELP::VBT::Status::Valid;v.present=1;
+        v.port[0]={0x78C6,10,0,0x40,0,0};v.panel.valid=true;v.panel.ddi=0;
+        v.panel.backlightValid=true;v.panel.pwmPresent=true;v.panel.backlightType=2;
+        unsigned code=assignment;
+        for(unsigned d:{3U,4U}){unsigned kind=code%3;code/=3;if(!kind)continue;
+            v.present|=1U<<d;v.port[d]={kind==1?0x60D2U:0x60D6U,kind==1?d-2:d+4,d-1,kind==1?0:(d-2)*0x10,0,0};}
+        auto panel=Wiring::fromFirmware(v);assert(panel.panel==1 && panel.selected()==v.present && !panel.excluded);
+        alignas(8) uint8_t platform[0x1c0]{};platform[0x12]=9;
+        const uint32_t nativePanel[]={0,0,0,0,2,0x18};memcpy(platform+0x20,nativePanel,sizeof(nativePanel));
+        for(unsigned d:{3U,4U}){const uint32_t rec[]={d,d+6,1,1,0x400,0x201};memcpy(platform+0x20+24*d,rec,sizeof(rec));}
+        for(unsigned mode:{1U,4U,~0U}) {
+            *reinterpret_cast<uint32_t *>(platform+0x190)=mode;
+            uint8_t saved[sizeof(platform)];memcpy(saved,platform,sizeof(saved));
+            assert(!panel.apply(platform,sizeof(platform)) && !memcmp(saved,platform,sizeof(saved)));
+        }
+        for(unsigned mode:{0U,2U,3U}) {
+            *reinterpret_cast<uint32_t *>(platform+0x190)=mode;
+            assert(panel.apply(platform,sizeof(platform)) && !*reinterpret_cast<uint32_t *>(platform+0x190));
+            // Restore the native external predecessors for the next application.
+            for(unsigned d:{3U,4U}){const uint32_t rec[]={d,d+6,1,1,0x400,0x201};memcpy(platform+0x20+24*d,rec,sizeof(rec));}
+        }
+        assert(panel.apply(platform,sizeof(platform)));auto c=reinterpret_cast<uint32_t*>(platform+0x20);
+        assert(panel.boundPanel(platform,c) && panel.boundSST(platform,c) && !panel.boundDP(platform,c));
+        assert(!memcmp(c,nativePanel,sizeof(nativePanel)) && panel.hotplugMode(true,c,platform,1,1,4)==4);
+        for(unsigned field=0;field<6;++field){c[field]^=1;assert(!panel.boundPanel(platform,c));c[field]^=1;}
+        for(unsigned bad=0;bad<8;++bad){auto invalid=v;
+            if(bad==0)invalid.panel.controller=1;if(bad==1)invalid.panel.backlightType=5;
+            if(bad==2)invalid.panel.delays[0]=8192;if(bad==3)invalid.panel.delays[4]=30001;
+            if(bad==4)invalid.panel.ddi=3;if(bad==5)invalid.port[0].aux=0x10;
+            if(bad==6)invalid.unmapped=1;if(bad==7)invalid.panel.backlightValid=false;
+            assert(!Wiring::fromFirmware(invalid).panel);
+        }
+    }
     puts("PASS ADL-S physical DDI/Combo PHY/HPD/PLL/DDC coordinates and ambiguous HDMI rejection");
 }

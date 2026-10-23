@@ -56,7 +56,7 @@ int main(int argc,char **argv){
  auto disable=(void(*)(void*,void*,void*))(image+0x6dae6);
  unsigned cases=0;
  for(unsigned ddi:{0u,3u,4u})for(unsigned ref=0;ref<=2;++ref)for(unsigned p:{2u,3u,5u,7u})for(unsigned k:{1u,2u,3u})for(unsigned q:{1u,3u}) {
-  config[0]=ddi;config[1]=ddi?ddi+6:1;
+  config[0]=ddi;config[1]=config[2]==0?0:ddi?ddi+6:1;
   AlderLakeS::Port route;AlderLakeS::PLL pll;assert(AlderLakeS::Port::resolve(ddi,route));assert(AlderLakeS::PLL::resolve(route.phy,pll));
   fault=0;events.clear();delays=errors=0;at<uint32_t>(ctl,0xea8)=ref;
   mmio={{pll.enable,0},{pll.cfg0,0},{pll.cfg1,0},{0x164280,0x01e07400}};
@@ -79,8 +79,10 @@ int main(int argc,char **argv){
  // Real external DP Combo C uses physical TC2, dedicated DPLL2 and selector2.
  config[0]=4;config[1]=10;config[2]=1;config[4]=0x400;config[5]=0x201;
  at<uint8_t>(port,0x114)=1;
- for(unsigned ddi:{0u,3u,4u})for(unsigned ref=0;ref<=2;++ref)for(unsigned rate:{6u,10u,20u,30u}) {
-  config[0]=ddi;config[1]=ddi?ddi+6:1;
+ for(unsigned kind:{0u,1u})for(unsigned ddi:{0u,3u,4u})for(unsigned ref=0;ref<=2;++ref)for(unsigned rate:{6u,10u,20u,30u}) {
+  if(kind==0 && ddi!=0)continue;config[2]=kind;
+  config[4]=kind?0x400:2;config[5]=kind?0x201:0x18;
+  config[0]=ddi;config[1]=config[2]==0?0:ddi?ddi+6:1;
   AlderLakeS::Port route;AlderLakeS::PLL pll;assert(AlderLakeS::Port::resolve(ddi,route));assert(AlderLakeS::PLL::resolve(route.phy,pll));
   fault=0;events.clear();delays=errors=0;at<uint32_t>(ctl,0xea8)=ref;at<uint32_t>(port,0x128)=rate;
   mmio={{pll.enable,0},{pll.cfg0,0},{pll.cfg1,0},{0x164280,0x01e07400}};

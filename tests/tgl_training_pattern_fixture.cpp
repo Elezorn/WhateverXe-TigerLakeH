@@ -110,6 +110,17 @@ int main(){
   assert(!r.post[11]); // No eDP Alternate SR on external Combo DP, including A.
   ++cases;
  }
+ // ADL-S panel composes with every native pipe/lane/training pattern and
+ // negotiated Alternate SR, without requiring a lease for an external port.
+ for(unsigned p=0;p<3;++p)for(unsigned lanes:{1U,2U,4U})for(unsigned framing=0;framing<2;++framing)
+ for(unsigned pat=0;pat<6;++pat)for(unsigned sr=0;sr<2;++sr) {
+  reset(0,p,pat);object.adlsDetected=true;object.adlsWiring.valid=true;object.adlsWiring.panel=1;
+  object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);
+  field(port,0x124,lanes);port[0x11A]=framing;port[0x118]=sr;emitTP=true;expectPre=pat==1;
+  reg(0x45454)=3;reg(0x45404)=p==2?0xFF:p==1?0x3F:3;
+  invoke();neighbors();assert(reg(0x60540+0x1000*p)==(0x80100A00|(framing<<18)|(sr<<6)));
+  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post[11]&&r.post[12]==sr);++cases;
+ }
  // Normal/fast pattern transitions must agree with the sink's negotiated
  // Alternate SR mode. Preserve unrelated bits, external ports, invalid
  // negotiation, and unknown donor layouts; never touch another transcoder.

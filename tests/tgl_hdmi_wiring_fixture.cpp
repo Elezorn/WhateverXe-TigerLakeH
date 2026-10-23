@@ -84,6 +84,20 @@ int main(){
  }
  setup();object.adlsDetected=true;auto foreignWiring=property(2,0,2,0);IOService wrongADLS{&foreignWiring};
  assert(!XE::tglLoadHDMIWiring(&wrongADLS) && !XE::tglLoadHDMIWiring(&wrongADLS));
+ // Panel + external HDMI/DP use the real firmware loader and topology copy.
+ for(unsigned kind:{1U,2U})for(unsigned tcon:{0U,2U,3U}) {
+  setup();object.adlsDetected=true;auto &v=object.firmwarePorts;
+  v.status=XELP::VBT::Status::Valid;v.present=9;v.port[0]={0x78c6,10,0,0x40,0,0};
+  v.panel.valid=true;v.panel.ddi=0;v.panel.backlightValid=true;v.panel.pwmPresent=true;v.panel.backlightType=2;
+  v.port[3]={kind==1?0x60d2U:0x60d6U,kind==1?1U:7U,2,kind==1?0U:0x10U,0,0};
+  reinterpret_cast<uint32_t *>(original+0x68)[1]=9;*reinterpret_cast<uint32_t *>(original+0x190)=tcon;
+  IOService provider;assert(XE::tglLoadHDMIWiring(&provider)&&object.adlsWiring.panel==1);
+  assert(XE::wrapTGLGetOSInformation(controller));
+  assert(object.adlsWiring.boundPanel(platform(),reinterpret_cast<uint32_t *>(platform()+0x20)));
+  assert(object.adlsWiring.matches(reinterpret_cast<uint32_t *>(platform()+0x68)));
+  assert(!*reinterpret_cast<uint32_t *>(platform()+0x190));
+  expectUnchangedExcept(platform(),{0x70,0x74,0x78,0x7c,0x190});
+ }
  // The native setup caller supplies an interior output pointer as arg0.
  // Any object/config dereference on an unqualified caller must fault here.
  setup();

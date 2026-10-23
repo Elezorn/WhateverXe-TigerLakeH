@@ -65,6 +65,12 @@ int main() {
   if(bad==2)x.legacy=8;if(bad==3)x.typeC=8;if(bad==4)x.profile.revision=0;assert(!x.valid());}
  assert(!identify(0x46D18086,12,0x46908086).admitted());
  assert(!identify(0x46908086,12,0x46808086).admitted());
+ // Panel mode requires selected Combo A and the exact native panel record.
+ c.combo=1;b.config=c;auto panel=reinterpret_cast<uint32_t*>(platform+0x20);
+ const uint32_t panelRecord[]={0,0,0,0,2,0x18};memcpy(panel,panelRecord,sizeof(panelRecord));
+ assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(panel),panel)==1 && io.reads.empty());
+ for(unsigned field=0;field<6;++field){panel[field]^=1;assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(panel),panel));panel[field]^=1;}
+ c.combo=8;b.config=c;assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(panel),panel));
  // CPU association and power-consumer accounting are independent of transport.
  NativePorts ports {platform,(1U<<0)|(1U<<4)|(1U<<6)};
  assert(ports.bound(platform+0x20+24*4,4));assert(!ports.bound(platform+0x20+24*3,4));

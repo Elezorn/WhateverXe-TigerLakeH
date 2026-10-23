@@ -28,11 +28,12 @@ start=s.index('uint32_t XE::tglPanelDepthPort(')
 end=s.index('uint32_t XE::wrapTGLPortDDC(',start)
 code=r'''
 #include "kern_tgl_panel_depth.hpp"
+#include "kern_alderlake_s.hpp"
 #include <cassert>
 #include <cstring>
 #include <cstdio>
 using mach_vm_address_t=uintptr_t;
-namespace XELP {enum class Family {TigerLake,Other};}
+
 unsigned calls=0,published=0;uint64_t record[5];
 struct Root {void setProperty(const char *,void *p,size_t n){assert(n==40);memcpy(record,p,n);++published;}} root;
 struct IORegistryEntry {static Root *getRegistryRoot(){return &root;}};
@@ -40,7 +41,8 @@ void *tglAUXLock=&root;
 void IOSimpleLockLock(void *){} void IOSimpleLockUnlock(void *){}
 struct Ports {struct Port {bool internal(){return true;}bool dp(){return true;}} port[2];unsigned present=1;bool valid(){return true;}};
 struct XE {
- bool tglActive=true,tglPanelDepthReady=true;
+ bool tglActive=true,tglPanelDepthReady=true,adlsDetected=false;
+ AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  void *tglObservationController=nullptr;
  struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  Ports firmwarePorts;mach_vm_address_t orgTGLModeTiming;
@@ -67,12 +69,22 @@ int main(){
  for(unsigned test=0;test<7;++test){
   put(timing,0x8A,uint16_t(2));unsigned before=published;
   state.tglActive=test!=0;state.tglPanelDepthReady=test!=1;
-  state.xeProfile.family=test==2?XELP::Family::Other:XELP::Family::TigerLake;
+  state.xeProfile.family=test==2?XELP::Family::Unknown:XELP::Family::TigerLake;
   cfg[2]=test==3?2:0;cfg[0]=test==4?2:0;port[0x117]=test==5;
   put(port,0x578,test==6?nullptr:access);
   XE::wrapTGLModeTiming(ctl,fb,timing);
   assert(published==before && *reinterpret_cast<uint16_t *>(timing+0x8A)==2);
  }
+ // Same depth contract on qualified ADL-S panel; retained record is required.
+ state.tglActive=state.tglPanelDepthReady=true;state.adlsDetected=true;
+ state.xeProfile.family=XELP::Family::AlderLakeS;port[0x117]=0;put(port,0x578,access);
+ state.adlsWiring.valid=true;state.adlsWiring.panel=1;
+ const uint32_t panelRecord[]={0,0,0,0,2,0x18};memcpy(state.tglPlatformCopy+0x20,panelRecord,sizeof(panelRecord));
+ put(port,0x548,static_cast<void*>(state.tglPlatformCopy+0x20));
+ put(timing,0x8A,uint16_t(2));auto before=published;
+ XE::wrapTGLModeTiming(nullptr,fb,timing);assert(published==before+1 && *reinterpret_cast<uint16_t*>(timing+0x8A)==1);
+ state.adlsWiring.panel=0;put(timing,0x8A,uint16_t(2));before=published;
+ XE::wrapTGLModeTiming(nullptr,fb,timing);assert(published==before && *reinterpret_cast<uint16_t*>(timing+0x8A)==2);
  puts("PASS: production owner/port guards and unused-controller argument");
 }
 '''.replace('PRODUCTION',s[start:end])

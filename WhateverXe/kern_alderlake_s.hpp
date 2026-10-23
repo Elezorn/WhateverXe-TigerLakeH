@@ -5,6 +5,7 @@
 #define KERN_ALDERLAKE_S_HPP
 #include <stdint.h>
 #include "kern_vbt.hpp"
+#include "kern_xelp_panel_power.hpp"
 
 namespace AlderLakeS {
 constexpr uint32_t PortMask=0x79; // A, TC1, TC2, TC3, TC4
@@ -62,9 +63,9 @@ inline uint32_t gmbus(uint32_t vbtPin) {
 // Immutable firmware-derived routing shared by startup, clocks, training and
 // hotplug. Unsupported or ambiguous routes stay excluded; never guess a port.
 struct Wiring {
-    uint32_t hdmi {},dp {},excluded {},pin[XELP::PortCount] {};
+    uint32_t hdmi {},dp {},excluded {},pin[XELP::PortCount] {},panel {};
     bool valid {};
-    uint32_t selected() const {return hdmi|dp;}
+    uint32_t selected() const {return hdmi|dp|panel;}
     bool hasDP(uint32_t d) const {return valid && d<XELP::PortCount && (dp&(1U<<d));}
     bool matches(const uint32_t *c,bool wantDP) const {
         if(!valid || !c || c[0]>=XELP::PortCount ||
@@ -72,12 +73,18 @@ struct Wiring {
         return c[1]==pin[c[0]] && c[2]==(wantDP?1U:2U) && !c[3] &&
             c[4]==(wantDP?0x400U:0x800U) && c[5]==(wantDP?0x201U:0x202U);
     }
-    bool matches(const uint32_t *c) const {return matches(c,false) || matches(c,true);}
+    bool matchesPanel(const uint32_t *c) const {
+        const uint32_t expected[]={0,0,0,0,2,0x18};
+        return valid && panel==1 && !(panel&(hdmi|dp)) && c && !memcmp(c,expected,sizeof(expected));
+    }
+    bool matches(const uint32_t *c) const {return matches(c,false) || matches(c,true) || matchesPanel(c);}
     bool bound(const void *platform,const uint32_t *c) const {
         return platform && matches(c) && c==reinterpret_cast<const uint32_t *>(
             static_cast<const uint8_t *>(platform)+0x20+24*c[0]);
     }
     bool boundDP(const void *platform,const uint32_t *c) const {return matches(c,true) && bound(platform,c);}
+    bool boundPanel(const void *platform,const uint32_t *c) const {return matchesPanel(c) && bound(platform,c);}
+    bool boundSST(const void *platform,const uint32_t *c) const {return boundDP(platform,c) || boundPanel(platform,c);}
     bool usesDDC(uint32_t bus) const {
         if(!valid)return false;
         for(unsigned d=0;d<XELP::PortCount;++d)if((hdmi&(1U<<d)) && pin[d]==bus)return true;
@@ -98,9 +105,13 @@ struct Wiring {
         return ready && boundDP(platform,c) && hpdCaller && caller==hpdCaller && requested==4 ? 1 : requested;
     }
     bool apply(void *platform,size_t bytes) const {
-        if(!valid || !selected() || (selected()&~ComboBackendMask) || !platform || bytes<0x1C0)return false;
+        if(!valid || !selected() || (panel&~1U) || (panel&(hdmi|dp)) || (selected()&~ComboBackendMask) || !platform || bytes<0x1C0)return false;
         auto p=static_cast<uint8_t *>(platform);
         if(p[0x12]!=9)return false;
+        // The exact donor's platform tail selects no TCON / Camellia / Banksia.
+        // VBT-qualified PWM uses native PPS, not an Apple TCON protocol.
+        const auto tcon=*reinterpret_cast<const uint32_t *>(p+0x190);
+        if(panel && tcon!=0 && tcon!=2 && tcon!=3)return false;
         // Check every selected predecessor before mutating any record.
         for(unsigned d=0;d<XELP::PortCount;++d)if(selected()&(1U<<d)) {
             const uint32_t expected[]={d,d>=3?d+6:d+1,1,d>=3?1U:0U,0x400,0x201};
@@ -109,15 +120,22 @@ struct Wiring {
                (d || memcmp(p+0x20,panel,sizeof(panel))))return false;
         }
         for(unsigned d=0;d<XELP::PortCount;++d)if(selected()&(1U<<d)) {
-            auto c=reinterpret_cast<uint32_t *>(p+0x20+24*d);const bool isDP=dp&(1U<<d);
+            auto c=reinterpret_cast<uint32_t *>(p+0x20+24*d);
+            if(panel&(1U<<d)){const uint32_t nativePanel[]={0,0,0,0,2,0x18};memcpy(c,nativePanel,sizeof(nativePanel));continue;}
+            const bool isDP=dp&(1U<<d);
             c[1]=pin[d];c[2]=isDP?1:2;c[3]=0;c[4]=isDP?0x400:0x800;c[5]=isDP?0x201:0x202;
         }
+        if(panel)*reinterpret_cast<uint32_t *>(p+0x190)=0;
         return true;
     }
     static Wiring fromFirmware(const XELP::VBT::Ports &ports) {
         Wiring out;
         if(!ports.valid())return out;
         out.excluded=ports.present;
+        if(XELP::PanelPower::nativePPS0(ports,XELP::Family::AlderLakeS)) {
+            const uint32_t zero[5]={};
+            if(XELP::PanelPower::select(ports.panel,zero,0,0,0).valid){out.panel=1;out.excluded&=~1U;}
+        }
         for(unsigned d=0;d<XELP::PortCount;++d) {
             if(!(ports.present&ComboBackendMask&(1U<<d)))continue;
             const auto &p=ports.port[d];Port port;

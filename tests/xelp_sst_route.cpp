@@ -68,5 +68,13 @@ int main() {
             assert(w.sstRoutes(0,0,0).external(d,4).valid()==false);
         }
     }
+    // Panel AUX owns core power, but the panel path never becomes an
+    // external training-lease candidate. Mixed external ports stay separate.
+    for(unsigned d=0;d<2;++d) {
+        Display12SSTRoutes routes{0x18,0,0,1U<<d};
+        auto p=routes.fixed(d);assert(p.panel && p.auxParentPG==1 && !routes.eligible(d));
+        assert(routes.fixed(3).auxParentPG==3 && routes.eligible(3));
+        routes.combo|=1U<<d;assert(!routes.fixed(d).valid());
+    }
     std::printf("PASS %u SST routes across 4^9 transport assignments, all pipes/modes; ambiguous selection and backend intersection\n",checked);
 }

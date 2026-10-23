@@ -65,6 +65,7 @@ struct DisplayContract {
   ComboAUXGate=1ULL<<55,
   PanelDepth=1ULL<<56,
   PanelTiming=1ULL<<57,
+  PanelPWM=1ULL<<58,
  };
  Mask required {},available {};
  Mask missing() const {return required&~available;}
@@ -96,8 +97,9 @@ struct DisplayContract {
   if(r.alt)required|=Alt12;
   return {required,installed};
  }
- static DisplayContract adls(Mask installed,bool dp) {
-  return {PlatformADLS|(dp?Training12|Combo12|Fixed12:0),installed};
+ static DisplayContract adls(Mask installed,bool dp,bool panel=false) {
+  return {PlatformADLS|(dp?Training12|Combo12|Fixed12:0)|
+   (panel?Combo12|PanelDepth|PanelTiming|PanelPWM|AUXParent|PowerGet|PowerPut:0),installed};
  }
  static DisplayContract display13(Mask installed) {return {Backend13,installed};}
  static const char *name(Mask bit) {
@@ -160,6 +162,7 @@ struct DisplayContract {
    case ComboAUXGate:return "ComboAUXGate";
    case PanelDepth:return "PanelDepth";
    case PanelTiming:return "PanelTiming";
+   case PanelPWM:return "PanelPWM";
    default:return "Unknown";
   }
  }

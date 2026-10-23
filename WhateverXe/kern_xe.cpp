@@ -10127,6 +10127,33 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     // PANEL_TIMING_INSTALL_END
    }
 
+   if(adlsDetected) {
+    // ADLS_PANEL_PWM_INSTALL: preflight the native lifecycle and PWM enable site.
+    const char *light="__ZN31AppleIntelFramebufferController10LightUpEDPEP21AppleIntelFramebufferP21AppleIntelDisplayPathPK29IODetailedTimingInformationV2";
+    const char *brightness="__ZN31AppleIntelFramebufferController14hwSetBacklightEj";
+    const uint8_t lightEntry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x50,0x49,0x89,0xcf};
+    const uint8_t brightnessEntry[]={0x55,0x48,0x89,0xe5,0x41,0x56,0x53,0x48,0xff,0x05,0x90,0x44,0x09,0x00};
+    const uint8_t enable[]={0xbe,0x50,0x82,0x0c,0x00,0xba,0x00,0x00,0x00,0x80,0xff,0x90,0x30,0x01,0x00,0x00};
+    const auto lightFn=patcher.solveSymbol(index,light,address,size);
+    const auto brightnessFn=patcher.solveSymbol(index,brightness,address,size);
+    const bool known=size>=0x508c4 && lightFn==address+0x5063e && brightnessFn==address+0x4a56a &&
+     !memcmp(reinterpret_cast<void *>(lightFn),lightEntry,sizeof(lightEntry)) &&
+     !memcmp(reinterpret_cast<void *>(brightnessFn),brightnessEntry,sizeof(brightnessEntry)) &&
+     !memcmp(reinterpret_cast<void *>(address+0x507e9),enable,sizeof(enable));
+    KernelPatcher::RouteRequest routes[] {{light,wrapADLSLightUpEDP,orgADLSLightUpEDP},
+     {brightness,wrapADLSPanelBacklight,orgADLSPanelBacklight}};
+    if(known && patcher.routeMultiple(index,routes,2,address,size)) {
+     uint8_t bridge[]={0x48,0xb8,0,0,0,0,0,0,0,0,0xff,0xd0,0x90,0x90,0x90,0x90};
+     const auto handler=reinterpret_cast<uintptr_t>(wrapADLSPanelPWMEnable);memcpy(bridge+2,&handler,sizeof(handler));
+     patcher.routeBlock(address+0x507e9,bridge,sizeof(bridge));
+     adlsPanelPWMReady=patcher.getError()==KernelPatcher::Error::NoError &&
+      !memcmp(reinterpret_cast<void *>(address+0x507e9),bridge,sizeof(bridge));
+    }
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLSPanelPWMReady",adlsPanelPWMReady);
+    patcher.clearError();
+    // ADLS_PANEL_PWM_INSTALL_END
+   }
+
 			if (tglActive) {
 				// TGL/Xe-LP has no dedicated eDP transcoder. Keep the allocated
 				// pipe (or getTranscoderOffset's pipe argument), including when
@@ -11019,7 +11046,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     }
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSLanePowerReady",adlsPowerReady);
     // Native startup remains closed if any required ADL-S adapter is absent.
-    const auto contract=XELP::DisplayContract::adls(display12Available(),adlsWiring.dp!=0);
+    const auto contract=XELP::DisplayContract::adls(display12Available(),adlsWiring.dp!=0,adlsWiring.panel!=0);
     adlsDisplayHooksReady=contract.ready();
     uint64_t contractRecord[]={1,contract.required,contract.available,contract.missing()};
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayStartupContract",contractRecord,sizeof(contractRecord));
@@ -11052,7 +11079,8 @@ void XE::tglApplyPanelTiming(void *controller,bool apply) {
  auto port=static_cast<uint8_t *>(s->tglTCNativeFunctions.portByDDI(ddi));
  const auto cfg=reinterpret_cast<const uint32_t *>(reinterpret_cast<const uint8_t *>(s->tglPlatformCopy)+0x20+24*ddi);
  if(!port || port[0x117] || *reinterpret_cast<const uint32_t **>(port+0x548)!=cfg ||
-    cfg[0]!=ddi || cfg[2]!=0 || cfg[3]!=0 || *reinterpret_cast<uint32_t *>(port+0x550)!=1)return;
+    cfg[0]!=ddi || cfg[2]!=0 || cfg[3]!=0 || *reinterpret_cast<uint32_t *>(port+0x550)!=1 ||
+    (s->adlsDetected && !s->adlsWiring.boundPanel(s->tglPlatformCopy,cfg)))return;
  auto access=*reinterpret_cast<uint8_t **>(c+0xC40);
  auto power=*reinterpret_cast<uint8_t **>(c+0xC8);
  if(!access || !power || *reinterpret_cast<void **>(power+0x10)!=controller || power[0x18] ||
@@ -11087,6 +11115,72 @@ uint32_t XE::wrapTGLPanelTiming(void *controller) {
  const auto result=FunctionCast(wrapTGLPanelTiming,callbackXE->orgTGLPanelTiming)(controller);
  if(!result)tglApplyPanelTiming(controller,true);
  return result;
+}
+
+// ADL-S native PWM panel adapter. The panel lifecycle remains synchronous
+// and donor-owned; only its period, polarity and duty arithmetic are replaced.
+bool XE::adlsPanelPWMTarget(void *controller,void *&access,void *&power) {
+ auto s=callbackXE;auto c=static_cast<uint8_t *>(controller);access=power=nullptr;
+ if(!s->adlsDetected || s->xeProfile.family!=XELP::Family::AlderLakeS || !s->adlsPanelPWMReady || !s->tglActive || !c || c!=s->tglObservationController ||
+    !s->tglTCNativeFunctions.complete() || *s->tglTCNativeFunctions.controllerSlot!=controller ||
+    !XELP::PanelPower::nativePPS0(s->firmwarePorts,s->xeProfile.family) || c[0x918] ||
+    *reinterpret_cast<void **>(c+0xD0) || *reinterpret_cast<void **>(c+0xD40)!=s->tglPlatformCopy ||
+    !s->orgTGLRegisterRead || !s->orgTGLRegisterWrite)return false;
+ auto port=static_cast<uint8_t *>(s->tglTCNativeFunctions.portByDDI(0));
+ if(!port || port[0x117] || *reinterpret_cast<uint32_t *>(port+0x550)!=1 || !s->adlsWiring.boundPanel(s->tglPlatformCopy,*reinterpret_cast<uint32_t **>(port+0x548)))return false;
+ auto a=*reinterpret_cast<uint8_t **>(c+0xC40);auto p=*reinterpret_cast<uint8_t **>(c+0xC8);
+ if(!a || !p || *reinterpret_cast<void **>(p+0x10)!=controller || p[0x18] ||
+    *reinterpret_cast<void **>(p+0x78)!=a || *reinterpret_cast<void **>(port+0x578)!=a ||
+    !*reinterpret_cast<void **>(a+0x50) || *reinterpret_cast<uint32_t *>(a+0x60)<0xC825C)return false;
+ access=a;power=p;return true;
+}
+bool XE::adlsCapturePanelPWM(void *controller) {
+ auto s=callbackXE;void *access,*power;
+ if(!adlsPanelPWMTarget(controller,access,power))return false;
+ if(s->adlsPanelPWM.valid())return true;
+ auto &f=s->tglTCNativeFunctions;f.getPG(power,1);
+ const auto read=[&](uint32_t reg){return FunctionCast(wrapTGLRegisterRead,s->orgTGLRegisterRead)(access,reg);};
+ const auto wells=read(0x45404),fuse=read(0x42000);
+ if(wells!=~0U && fuse!=~0U && (wells&1) && (fuse&0x01000000)) {
+  const auto period=read(0xC8254),control=read(0xC8250);
+  const auto &p=s->firmwarePorts.panel;
+  s->adlsPanelPWM=XELP::PanelPWM::select(period,control,period?0:read(0xC2014),p.pwmHz,p.activeLowPWM);
+ }
+ f.putPG(power,1);return s->adlsPanelPWM.valid();
+}
+uint32_t XE::wrapADLSLightUpEDP(void *controller,void *fb,void *path,const void *timing) {
+ auto s=callbackXE;
+ if(s->adlsDetected && s->adlsWiring.panel) {
+  if(!adlsCapturePanelPWM(controller))return kIOReturnNotReady;
+  *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(controller)+0xE60)=s->adlsPanelPWM.period;
+ }
+ return FunctionCast(wrapADLSLightUpEDP,s->orgADLSLightUpEDP)(controller,fb,path,timing);
+}
+uint32_t XE::wrapADLSPanelBacklight(void *controller,uint32_t brightness) {
+ auto s=callbackXE;
+ if(!s->adlsDetected || !s->adlsWiring.panel)
+  return FunctionCast(wrapADLSPanelBacklight,s->orgADLSPanelBacklight)(controller,brightness);
+ void *access,*power;uint32_t duty;
+ if(!adlsCapturePanelPWM(controller) || !adlsPanelPWMTarget(controller,access,power) ||
+    !s->adlsPanelPWM.duty(brightness,duty))return kIOReturnNotReady;
+ auto &f=s->tglTCNativeFunctions;f.getPG(power,1);
+ const auto wells=FunctionCast(wrapTGLRegisterRead,s->orgTGLRegisterRead)(access,0x45404);
+ const auto fuse=FunctionCast(wrapTGLRegisterRead,s->orgTGLRegisterRead)(access,0x42000);
+ const bool ready=wells!=~0U && fuse!=~0U && (wells&1) && (fuse&0x01000000);
+ if(ready) {
+  wrapTGLRegisterWrite(access,0xC8258,duty);
+  *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(controller)+0xE58)=brightness;
+ }
+ f.putPG(power,1);return ready?0:kIOReturnNotReady;
+}
+void XE::wrapADLSPanelPWMEnable(void *access) {
+ auto s=callbackXE;uint32_t value=0x80000000;
+ if(s->adlsDetected && s->adlsWiring.panel) {
+  void *expected,*power;
+  if(!s->adlsPanelPWM.valid() || !adlsPanelPWMTarget(s->tglObservationController,expected,power) || access!=expected)return;
+  value|=s->adlsPanelPWM.polarity;
+ }
+ wrapTGLRegisterWrite(access,0xC8250,value);
 }
 
 bool XE::wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value) {
@@ -11194,7 +11288,7 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
    if(provider && provider->getProperty("tgl-hdmi-wiring"))return false;
    self->adlsWiring=AlderLakeS::Wiring::fromFirmware(self->firmwarePorts);
    self->tglHDMIB=self->adlsWiring.valid && self->adlsWiring.selected();
-   uint32_t routes[]={self->adlsWiring.hdmi,self->adlsWiring.dp,self->adlsWiring.excluded,AlderLakeS::ComboBackendMask};
+   uint32_t routes[]={self->adlsWiring.hdmi,self->adlsWiring.dp,self->adlsWiring.excluded,AlderLakeS::ComboBackendMask,self->adlsWiring.panel};
    IORegistryEntry::getRegistryRoot()->setProperty("ADLSFirmwareRoutes",routes,sizeof(routes));
   }
   return self->tglHDMIB;
@@ -11259,6 +11353,7 @@ XELP::DisplayContract::Mask XE::display12Available() const {
  if(tglComboAUXGateReady)a|=C::ComboAUXGate;
  if(tglPanelDepthReady)a|=C::PanelDepth;
  if(tglPanelTimingReady)a|=C::PanelTiming;
+ if(adlsPanelPWMReady)a|=C::PanelPWM;
  return a;
 }
 
@@ -11350,6 +11445,7 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  }
  // A reused controller address must not inherit another start's PPS snapshot.
  callbackXE->tglPanelTimingBIOSValid=false;
+ callbackXE->adlsPanelPWM={};
 	callbackXE->tglObservationController = that;
  if (checkKernelArgument("-disablegfxfirmware")) {
   auto live=OSSerializer::forTarget(nullptr,tglIRQLiveSerialize);
@@ -14716,12 +14812,13 @@ uint32_t XE::tglPanelDepthPort(void *port) {
  auto s=callbackXE;auto p=static_cast<uint8_t *>(port);
  auto c=static_cast<uint8_t *>(s->tglObservationController);
  if(!p || !c || !s->tglActive || !s->tglPanelDepthReady || !tglAUXLock ||
-    s->xeProfile.family!=XELP::Family::TigerLake)return 9;
+    (s->xeProfile.family!=XELP::Family::TigerLake && !s->adlsDetected))return 9;
  auto cfg=*reinterpret_cast<uint32_t **>(p+0x548);
  if(!cfg || cfg[0]>1 || cfg[2]!=0 || cfg[3]!=0 || p[0x117] ||
     *reinterpret_cast<void **>(p+0x578)!=*reinterpret_cast<void **>(c+0xC40) ||
     !s->firmwarePorts.valid() || !(s->firmwarePorts.present&(1U<<cfg[0])) ||
     !s->firmwarePorts.port[cfg[0]].internal() || !s->firmwarePorts.port[cfg[0]].dp())return 9;
+ if(s->adlsDetected && !s->adlsWiring.boundPanel(s->tglPlatformCopy,cfg))return 9;
  return cfg[0];
 }
 void XE::wrapTGLModeTiming(void *controller,void *fb,void *timing) {
@@ -16720,8 +16817,9 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 		(self->xeProfile.family!=XELP::Family::TigerLake && !self->adlsDetected) || !self->firmwarePorts.valid())return false;
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
 	const auto &panel=self->firmwarePorts.panel;
-	const bool adls=self->adlsDetected && self->adlsWiring.boundDP(self->tglPlatformCopy,config);
+	const bool adls=self->adlsDetected && self->adlsWiring.boundSST(self->tglPlatformCopy,config);
  const bool fixed=!self->adlsDetected && TGLComboDP::bound(self->tglComboDPMask,self->tglPlatformCopy,config);
+ if(self->adlsDetected && !adls)return false;
     XELP::Display12SSTRoute route;
     const XELP::Display12SSTRoutes routes{adls?self->adlsWiring.dp:fixed?self->tglComboDPMask:0,0,0};
     if(!config || !routes.resolve(config[0],config[2],*reinterpret_cast<uint32_t *>(p+0x550),route) ||
@@ -16733,7 +16831,7 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	TGLComboSignal selected;
 	const auto lanes=*reinterpret_cast<uint32_t *>(p+0x124);
 	const auto rate=*reinterpret_cast<uint32_t *>(p+0x128);
-	if(!(adls ? selected.selectADLS(config[0],lanes,rate,swing,emphasis):
+	if(!(adls ? selected.selectADLS(config[0],lanes,rate,swing,emphasis,route.panel,panel.lowSwing):
         selected.select(config[0],lanes,rate,panel.lowSwing,panel.hobl,swing,emphasis,
             XELP::ComboPolicy::tigerLake(self->xeProfile.identity),!fixed)))return false;
 	// The native fields identify this very bank. No guessed framebuffer index
@@ -17078,8 +17176,9 @@ void XE::tglComboAUXReference(void *port,bool acquire) {
 	if(!p || !ctl || !s->tglActive || !s->tglComboAUXLifetimeReady || !f.complete() ||
 		(s->xeProfile.family!=XELP::Family::TigerLake && !s->adlsDetected) || *f.controllerSlot!=ctl)return;
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
-	const bool adls=s->adlsDetected && s->adlsWiring.boundDP(s->tglPlatformCopy,config);
+	const bool adls=s->adlsDetected && s->adlsWiring.boundSST(s->tglPlatformCopy,config);
  const bool fixed=!s->adlsDetected && TGLComboDP::bound(s->tglComboDPMask,s->tglPlatformCopy,config);
+ if(s->adlsDetected && !adls)return;
     if(!config || (config[0]>1 && !adls))return;
 	const auto ddi=config[0];
 	auto &owner=s->tglComboAUXOwners[ddi];

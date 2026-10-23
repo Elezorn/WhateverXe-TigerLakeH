@@ -49,10 +49,11 @@ void check(){
 }
 int main(){
  unsigned cases=0;
- for(unsigned mask:{1U,8U,16U,9U,17U,24U,25U}) {
+ for(unsigned panel=0;panel<2;++panel)for(unsigned mask:{1U,8U,16U,9U,17U,24U,25U}) {
   std::vector<unsigned> order;for(unsigned d=0;d<5;++d)if(mask&(1U<<d))order.push_back(d);
   do {auto release=order;std::sort(release.begin(),release.end());do {
    reset(mask);
+   if(panel && (mask&1)){state.adlsWiring.panel=1;state.adlsWiring.dp&=~1U;assert(!state.tglDPSSTEligible(0));}
    for(auto d:order){
     ref(power,0x54+4*d)=1; // inherited firmware ref
     for(unsigned n=0;n<2;++n){calls.clear();XE::wrapTGLEnableAUXPower(power,d);

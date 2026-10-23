@@ -42,13 +42,13 @@ struct TGLComboSignal {
     }
     // The platform adapter chooses coordinates; electrical policy contains no
     // physical DDI, donor field or board-specific connector condition.
-    bool selectADLS(uint32_t ddi,uint32_t count,uint32_t rate,uint32_t voltage,uint32_t emphasis) {
+    bool selectADLS(uint32_t ddi,uint32_t count,uint32_t rate,uint32_t voltage,uint32_t emphasis,bool panel=false,bool lowSwing=false) {
         if(count!=1 && count!=2 && count!=4)return false;
         AlderLakeS::Port route;
         if(!AlderLakeS::Port::resolve(ddi,route) || !(AlderLakeS::ComboBackendMask&(1U<<ddi)))return false;
         XELP::ComboPolicy policy;
-        if(!policy.select(XELP::ComboPolicy::Platform::ADLS,rate,false,false,false,voltage,emphasis))return false;
-        base=route.phyBase();lanes=count;linkRate=rate;low=false;assign(policy);return true;
+        if(!policy.select(XELP::ComboPolicy::Platform::ADLS,rate,panel,lowSwing,false,voltage,emphasis))return false;
+        base=route.phyBase();lanes=count;linkRate=rate;low=panel && lowSwing;assign(policy);return true;
     }
     void assign(const XELP::ComboPolicy &p) {
         level=p.level;swing=p.coefficients.swing;scalar=p.coefficients.scalar;

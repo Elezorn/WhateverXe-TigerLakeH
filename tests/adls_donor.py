@@ -31,6 +31,7 @@ for at in range(0x5f0c0,0x5f269,17):
 afields[0x648]=struct.unpack_from('<I',donor,0x5f270)[0]
 aphy=[afields.get(off,0) for off in range(0x580,0x6a8,4)]
 ports=list(struct.unpack_from('<54I',donor,0x9a928))
+assert ports[:6]==[0,0,0,0,2,0x18]
 assert ports[18:24]==[3,9,1,1,0x400,0x201]
 code='''#include "kern_alderlake_s.hpp"
 #include <cassert>
@@ -53,6 +54,13 @@ int main() {
  const auto wiring=AlderLakeS::Wiring::fromFirmware(firmware);
  assert(wiring.apply(platform,sizeof(platform)));
  assert(wiring.matches(reinterpret_cast<uint32_t *>(platform+0x68)));
+ memcpy(platform+0x20,ports,sizeof(ports));
+ firmware.present|=1;firmware.port[0]={0x78c6,10,0,0x40,0,0};
+ firmware.panel.valid=true;firmware.panel.ddi=0;firmware.panel.backlightValid=true;
+ firmware.panel.pwmPresent=true;firmware.panel.backlightType=2;
+ const auto panel=AlderLakeS::Wiring::fromFirmware(firmware);
+ assert(panel.panel==1 && panel.apply(platform,sizeof(platform)));
+ assert(!memcmp(platform+0x20,ports,24) && panel.boundPanel(platform,reinterpret_cast<uint32_t *>(platform+0x20)));
  puts("PASS exact donor Combo A/B/C register tables and firmware connector adaptation");
 }'''.replace('APHY',','.join(map(str,aphy))).replace('CPHY',','.join(map(str,cphy))).replace('PHY',','.join(map(str,phy))).replace('PORTS',','.join(map(str,ports)))
 with tempfile.TemporaryDirectory(prefix='adls-donor-') as tmp:

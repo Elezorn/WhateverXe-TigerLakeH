@@ -7,7 +7,7 @@ static void faults(C c) {
  assert(c.required && c.ready());
  // Every dependency must independently close admission. An unrelated failed
  // operation must not disable this route. Reinstalling restores admission.
- for(unsigned i=0;i<58;++i) {
+ for(unsigned i=0;i<59;++i) {
   auto broken=c;auto bit=1ULL<<i;broken.available&=~bit;
   assert(broken.missing()==(c.required&bit));
   assert(broken.ready()==!(c.required&bit));
@@ -40,10 +40,15 @@ int main() {
  }
  auto adlsHDMI=C::adls(~0ULL,false),adlsDP=C::adls(~0ULL,true);
  faults(adlsHDMI);faults(adlsDP);
+ auto adlsPanel=C::adls(~0ULL,false,true),adlsMixed=C::adls(~0ULL,true,true);
+ faults(adlsPanel);faults(adlsMixed);
+ assert(adlsMixed.required==(adlsPanel.required|adlsDP.required));
+ assert((adlsPanel.required&(C::AUXParent|C::PanelDepth|C::PanelTiming))==(C::AUXParent|C::PanelDepth|C::PanelTiming));
+ assert(!(adlsPanel.required&C::Lease));
  assert((adlsDP.required&adlsHDMI.required)==adlsHDMI.required);
  assert((adlsDP.required&C::Training12)==C::Training12);
  assert(!(adlsDP.required&(C::NativeFIA|C::AltFIA)));
  auto d13=C::display13(~0ULL);faults(d13);
  assert(d13.required==(C::Power13|C::Clock13|C::MemoryGroup13|C::IRQ13|C::WMLayout13|C::Output13|C::Topology13));
- printf("PASS %u route combinations, union composition and 3886 single-operation failures/restores\n",cases);
+ printf("PASS %u route combinations, union composition and 4071 single-operation failures/restores\n",cases);
 }

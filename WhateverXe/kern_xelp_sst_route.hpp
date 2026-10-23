@@ -32,7 +32,7 @@ struct Display12SSTRoute {
 // Keeping the three transports separate prevents TC-numbered Combo ports from
 // accidentally acquiring Dekel/FIA semantics.
 struct Display12SSTRoutes {
-    uint32_t combo {}, legacy {}, alt {};
+    uint32_t combo {}, legacy {}, alt {}, panel {};
     Display12SSTRoute external(uint32_t ddi,uint32_t mode) const {
         Display12SSTRoute r;
         if(ddi>=9)return r;
@@ -54,6 +54,11 @@ struct Display12SSTRoutes {
         return r;
     }
     Display12SSTRoute fixed(uint32_t ddi) const {
+        if(ddi<2 && (panel&(1U<<ddi))) {
+            if((combo|legacy|alt)&(1U<<ddi))return {};
+            Display12SSTRoute r;
+            if(resolve(ddi,0,1,r)){r.auxParentPG=1;return r;}
+        }
         const auto r=external(ddi,1);
         return r.valid()?r:external(ddi,4);
     }

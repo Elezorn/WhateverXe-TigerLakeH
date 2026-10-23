@@ -8,10 +8,12 @@ namespace XELP {
 struct PanelPower {
  // The current donor has one panel and addresses PPS/PWM controller 0.
  // This qualification does not claim PPS1, AUX backlight or panel admission
- // on another platform; those need their own register/lifecycle adapters.
+ // outside the native Combo panel coordinates; each needs its own adapter.
  static bool nativePPS0(const VBT::Ports &v,Family family) {
   const auto &p=v.panel;
-  if(family!=Family::TigerLake || !v.valid() || v.unmapped || !p.valid || p.ddi>=2 ||
+  const bool backend=(family==Family::TigerLake && p.ddi<2) ||
+                     (family==Family::AlderLakeS && p.ddi==0);
+  if(!backend || !v.valid() || v.unmapped || !p.valid ||
      !p.backlightValid || !p.pwmPresent || p.backlightType!=2 || p.controller)return false;
   const auto &port=v.port[p.ddi];const auto aux=p.ddi?0x10U:0x40U;
   if(!(v.present&(1U<<p.ddi)) || !port.internal() || !port.dp() ||

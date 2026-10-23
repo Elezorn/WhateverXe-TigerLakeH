@@ -32,7 +32,7 @@ void XeHost::processKernel(KernelPatcher &patcher) {
  const bool published=gpu && WIOKit::awaitPublishing(gpu);
  const auto profile=published ? XELP::deviceProfile(gpu) : XELP::Profile {};
  active=profile.admitted();
- backlightEnabled=active && profile.family==XELP::Family::TigerLake &&
+ backlightEnabled=active && (profile.family==XELP::Family::TigerLake || profile.family==XELP::Family::AlderLakeS) &&
   info->firmwareVendor!=DeviceInfo::FirmwareVendor::Apple;
  backlightGPU=backlightEnabled ? gpu : nullptr;
  if(published) {

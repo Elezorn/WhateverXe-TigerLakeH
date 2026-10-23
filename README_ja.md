@@ -135,7 +135,10 @@ Safariのインストール先や更新による配置変更に依存せずData�
   GPUの適用対象は、確認済みのfuse構成を持つ `4690` revision `0C` に限定しています。
   別のポート配置はCPUテストで確認していますが、実機では未検証です。
   VBT上でCombo PHY Aの固定DPとして扱われるUSB-C端子でも実表示を確認しています。
-  これはType-C/TBT管理経路の動作確認ではありません。消灯／復帰は未検証です。
+  これはType-C/TBT管理経路の動作確認ではありません。開発版のeDP経路は、VBTで確認したDDI Aのpanelを
+  native PPS0／PWM controller 0に接続し、panel timing、信号設定、firmware由来のPWM周期・極性を適用します。
+  この経路はCPU試験と実donor再生で検証していますが、ADL-S eDPの実機検証は未実施です。
+  PPS1とAUX制御のbacklightは未対応です。消灯／復帰は未検証です。
 - Display 13のUSB-C / eDP対応
 
 ### Not Planned

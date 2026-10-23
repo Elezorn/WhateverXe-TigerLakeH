@@ -23,8 +23,8 @@ uint32_t wrapTGLRegisterRead(void *,unsigned long reg){++reads;return regs[reg];
 void tglTransitionRecord(unsigned stage,bool,void *,unsigned,unsigned,unsigned,const void *,unsigned){assert(stage==74);}
 FUNCTION
 int main(){
- for(unsigned testDDI:{0u,1u,3u,4u})for(unsigned kind=0;kind<3;++kind)for(unsigned bad=0;bad<15;++bad){
- const bool adls=kind==1,fixed=kind==2;if(adls?testDDI==1:testDDI>1)continue;
+ for(unsigned testDDI:{0u,1u,3u,4u})for(unsigned kind=0;kind<4;++kind)for(unsigned bad=0;bad<15;++bad){
+ const bool adls=kind==1||kind==3,fixed=kind==2;const bool panel=kind==3;if(panel && testDDI!=0)continue;if(adls?testDDI==1:testDDI>1)continue;
  alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},power[0x100]{},access[0x100]{};uint32_t local[6]{};uint32_t *config=local;
  unsigned ddi=testDDI,mask=3U<<(2*ddi),buffer=0x64000+256*ddi;
  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
@@ -32,13 +32,14 @@ int main(){
   state.adlsDetected=true;state.adlsWiring.valid=true;state.adlsWiring.dp=1U<<ddi;state.adlsWiring.pin[ddi]=ddi?ddi+6:1;state.xeProfile.family=XELP::Family::AlderLakeS;
   config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);const uint32_t c[]={ddi,ddi?ddi+6:1,1,0,0x400,0x201};memcpy(config,c,sizeof(c));
  }
+ if(panel){state.adlsWiring.dp=0;state.adlsWiring.panel=1;const uint32_t c[]={0,0,0,0,2,0x18};memcpy(config,c,sizeof(c));}
  if(fixed) {
   state.tglComboDPMask=1U<<ddi;config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);
   const uint32_t c[]={ddi,ddi+1,1,0,0x400,0x201};memcpy(config,c,sizeof(c));
  } else if(!adls)config[0]=ddi;
  state.tglObservationController=ctl;void *global=ctl;
  state.tglTCNativeFunctions.controllerSlot=&global;
- state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.present=1U<<ddi;state.firmwarePorts.port[ddi].type=(adls||fixed)?0x60d6:0x1806;
+ state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.present=1U<<ddi;state.firmwarePorts.port[ddi].type=(adls&&!panel||fixed)?0x60d6:0x1806;
  store(p,0x548,config+0);store(p,0x550,1U);store(p,0x578,access+0);store(p,0x590,buffer);
  store(ctl,0xC8,power+0);store(ctl,0xC40,access+0);store(power,0x10,ctl+0);store(power,0x78,access+0);
  store(access,0x60,0x200000U);store(access,0x50,ctl+0);
