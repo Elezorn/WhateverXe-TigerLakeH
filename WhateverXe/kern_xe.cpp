@@ -210,6 +210,10 @@ static bool xelpSelectedDevice(IOPCIDevice *pci) {
 static bool xelpAlderLakeNDevice(IOPCIDevice *pci) {
     return xelpSelectedProfile.family==XELP::Family::AlderLakeN && xelpSelectedDevice(pci);
 }
+static bool xelpDisplay13Device(IOPCIDevice *pci) {
+    return XELP::displayAdapter(xelpSelectedProfile.family)==XELP::DisplayAdapter::ADLN &&
+        xelpSelectedProfile.display==XELP::Display::XeLPD && xelpSelectedDevice(pci);
+}
 // Detailed read-only display evidence is opt-in; control and first-fault
 // receipts remain active in the ordinary AlderLakeN profile.
 static bool display13TraceEnabled;
@@ -3740,13 +3744,15 @@ void XE::selectProfile(const XELP::Profile &profile) {
         profile.display==XELP::Display::XeLPD && profile.gt==XELP::GT::ADLNSmall;
     adlnDetected=adlnRequested;
     modDVMTCalcFix.available=profile.admitted();
+    const bool nativeOS=XELP::kernelOS(version)!=XELP::OS::Unknown && XELP::kernelOS(version)!=XELP::OS::Donor;
+    display13FramebufferRequested=profile.admitted() && profile.display==XELP::Display::XeLPD &&
+        XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLN && nativeOS;
+    display13TraceEnabled=display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
+    if(display13FramebufferRequested)currentFramebuffer=&kextIntelTGLFb;
     if(adlnRequested) {
-        adlnKernelReady=XELP::kernelOS(version)!=XELP::OS::Unknown && XELP::kernelOS(version)!=XELP::OS::Donor;
+        adlnKernelReady=nativeOS;
         adlnNativeRequested=adlnKernelReady;
-        display13FramebufferRequested=adlnKernelReady;
         adlnNativeRCSProfileRequested=adlnNativeRequested && !checkKernelArgument("-wex-adln-kernel-ctx");
-        display13TraceEnabled=display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
-        if(display13FramebufferRequested || adlnNativeRequested)currentFramebuffer=&kextIntelTGLFb;
         if(adlnNativeRequested) {
             tglRequested=tglAcceleratorRequested=true;currentGraphics=&kextIntelTGL;
         }
@@ -4209,11 +4215,11 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
         if(adlnRequested)IORegistryEntry::getRegistryRoot()->setProperty("N97FBSharedProbeAvailable",xelpProviderProbe && xelpProviderConfigureProbe);
         return true;
     }
-	// Keep AlderLakeN accelerator patching outside the large framebuffer patch frame.
-	// An early return inside processKextFull still allocates that frame.
+	// Display dispatch is independent of the selected Render implementation.
+	// Keep both adapters outside the large Display12 framebuffer patch frame.
+	if(display13FramebufferRequested && currentFramebuffer && currentFramebuffer->loadIndex==index)
+		return processDisplay13Framebuffer(patcher,index,address,size);
 	if (adlnRequested || adlnDetected) {
-		if (adlnDetected && adlnKernelReady && display13FramebufferRequested && currentFramebuffer && currentFramebuffer->loadIndex==index)
-			return processDisplay13Framebuffer(patcher,index,address,size);
 		if (!adlnDetected || !adlnNativeRequested || !currentGraphics || currentGraphics->loadIndex != index) return false;
 		// Matching is persistent. A rejected bootstrap must not leave the
 		// original 46D1-incompatible donor probe reachable and panic before SSH.
@@ -4680,7 +4686,7 @@ static Display13FBMemory::Readout display13FBInspectMemory(IOService *fb,bool bo
 	auto pci=controller ? OSDynamicCast(IOPCIDevice,controller->getProvider()) : nullptr;
 	if(pipe>=3 || !fb || !pci || !c.bridge.begun || c.bridge.state.faulted || c.memoryFaulted ||
 		!c.map || c.map->getLength()!=0x1000000 || !c.map->getVirtualAddress() ||
-		!xelpAlderLakeNDevice(pci) ||
+		!xelpDisplay13Device(pci) ||
 		!xelpMemoryMatches(pci) || !(pci->configRead16(4)&2))return r;
 	auto aperture=pci->getDeviceMemoryWithRegister(0x18);
 	if(!aperture || aperture->getLength()!=0x10000000 ||
@@ -4788,7 +4794,7 @@ bool XE::processDisplay13Framebuffer(KernelPatcher &patcher,size_t index,mach_vm
 		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x28,0x48,0xff,0x05,0xb6,0x6b,0x08,0x00},
 		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x38,0x49,0x89,0xf6,0x49,0x89,0xfd,0x48}
 	};
-	bool known=adlnKernelReady && adlnDetected && size>0x5C4D2;
+	bool known=display13FramebufferRequested && size>0x5C4D2;
 	for(unsigned i=0;i<arrsize(offsets);++i) {
 		const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,symbols[i],address,size);
 		known=known && fn==address+offsets[i] && !memcmp(reinterpret_cast<void *>(fn),prefixes[i],sizeof(prefixes[i]));
@@ -5197,7 +5203,7 @@ bool XE::processDisplay13FramebufferWatermarks(KernelPatcher &patcher,size_t ind
 		{0x3645,6,{0x81,0xE1,0xFF,0x07,0x00,0x00},{0x81,0xE1,0xFF,0x0F,0x00,0x00}},
 		{0x38F1,6,{0x81,0xE6,0xFF,0x07,0x00,0x00},{0x81,0xE6,0xFF,0x0F,0x00,0x00}},
 	};
-	bool known=adlnDetected && adlnKernelReady && display13FBDBUFHooksReady && size>0x3D85;
+	bool known=display13FramebufferRequested && display13FBDBUFHooksReady && size>0x3D85;
 	for(auto &e:entries) {
 		const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,e.symbol,address,size);
 		known=known && fn==address+e.offset && !memcmp(reinterpret_cast<void *>(fn),e.bytes,sizeof(e.bytes));
@@ -5306,7 +5312,7 @@ bool XE::processDisplay13FramebufferIRQ(KernelPatcher &patcher,size_t index,mach
 		{0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x38,0x48,0xFF,0x05,0xCE,0x33,0x07,0x00},
 		{0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x28,0x48,0xFF,0x05,0xAE,0x37,0x07,0x00},
 	};
-	bool known=adlnKernelReady && adlnDetected && size>0x75D44;
+	bool known=display13FramebufferRequested && size>0x75D44;
 	for(unsigned i=0;i<arrsize(offsets);++i) {
 		const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,symbols[i],address,size);
 		known=known && fn==address+offsets[i] && !memcmp(reinterpret_cast<void *>(fn),entries[i],sizeof(entries[i]));
@@ -5812,7 +5818,7 @@ void XE::wrapDisplay13FBMemoryInit(IOService *controller) {
 	const auto systemMapper=reinterpret_cast<uintptr_t>(IOMapper::gSystem);
 	const bool physicalOptions=mapperOptions==kIOMemoryMapperNone || (!mapperOptions && !systemMapper);
 	bool valid=s->display13FBGTTHooksReady && !g.controller && !g.faulted && pci && native && access &&
-		xelpAlderLakeNDevice(pci) && xelpMemoryMatches(pci) &&
+		xelpDisplay13Device(pci) && xelpMemoryMatches(pci) &&
 		(pci->configRead16(4)&2) && native->getLength()==0x1000000 && native->getVirtualAddress() &&
 		access->getMetaClass()->getClassSize()>=0x68 &&
 		Display13FBMemory::field<uintptr_t>(access,0x50)==native->getVirtualAddress() &&
@@ -6048,7 +6054,7 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
         "__ZN31AppleIntelRegisterAccessManager14ReadRegister32Em",address,size);patcher.clearError();
     auto write=patcher.solveSymbol<mach_vm_address_t>(index,
         "__ZN31AppleIntelRegisterAccessManager15WriteRegister32Emj",address,size);patcher.clearError();
-	if(!adlnDetected || !adlnKernelReady || !display13FBABIReady || !display13FBClockReadoutHooksReady || size<=0x9A118 ||
+	if(!display13FramebufferRequested || !display13FBABIReady || !display13FBClockReadoutHooksReady || size<=0x9A118 ||
 		clocks!=address+0x6CE10 || bus!=address+0x53A7C ||
         memcmp(reinterpret_cast<void *>(address+0x6D95D),fractionWrite,sizeof(fractionWrite)) ||
         memcmp(reinterpret_cast<void *>(bus),busEntry,sizeof(busEntry)) ||
@@ -6101,7 +6107,7 @@ bool XE::processDisplay13FramebufferAUX(KernelPatcher &patcher,size_t index,mach
   "__ZN17AppleIntelPortHAL13runAUXCommandEN14AppleIntelPort11AUX_CommandEPjjb"};
  const uint32_t offsets[]={0x1CC72,0x1CEB0,0x1D2B6,0x61748};
  const uint8_t entry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53};
- if(!adlnDetected || !display13FBABIReady || !display13FBPowerReferencesReady || size<0x138BB0)return false;
+ if(!display13FramebufferRequested || !display13FBABIReady || !display13FBPowerReferencesReady || size<0x138BB0)return false;
  for(unsigned i=0;i<4;++i) {
   auto fn=patcher.solveSymbol<mach_vm_address_t>(index,names[i],address,size);patcher.clearError();
   if(fn!=address+offsets[i] || memcmp(reinterpret_cast<void *>(fn),entry,sizeof(entry)))return false;
@@ -6121,7 +6127,7 @@ bool XE::processDisplay13FramebufferAUX(KernelPatcher &patcher,size_t index,mach
 // hence mode0 is allowed; a DDI/main-link lease is deliberately not required.
 bool XE::display13AUXReady(void *port,bool command) {
  auto s=callbackXE;auto &c=display13FBPower;auto object=static_cast<OSObject *>(port);
- if(!s->adlnDetected || s->xeProfile.display!=XELP::Display::XeLPD || !s->display13FBAUXHooksReady ||
+ if(!s->display13FramebufferRequested || s->xeProfile.display!=XELP::Display::XeLPD || !s->display13FBAUXHooksReady ||
     !object || object->getMetaClass()->getClassSize()<0x5AC || !c.controller ||
     c.controller!=s->adlnTopologyController || !s->display13AUXControllerSlot ||
     *reinterpret_cast<void **>(s->display13AUXControllerSlot)!=c.controller || !adlnWriterMappingBound() ||
@@ -6192,7 +6198,7 @@ bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach
  const char *enable="__ZN17AppleIntelPortHAL10enablePortEv",*disable="__ZN17AppleIntelPortHAL11disablePortEv";
  const uint8_t enableEntry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x53,0x50,0x49,0x89,0xff};
  const uint8_t disableEntry[]={0x55,0x48,0x89,0xe5,0x53,0x50,0x48,0x89,0xfb};
- if(!adlnDetected || !display13FBABIReady || !display13FBPowerReferencesReady || size<0x955C8)return false;
+ if(!display13FramebufferRequested || !display13FBABIReady || !display13FBPowerReferencesReady || size<0x955C8)return false;
  const auto p=patcher.solveSymbol<mach_vm_address_t>(index,pattern,address,size);patcher.clearError();
  const auto s=patcher.solveSymbol<mach_vm_address_t>(index,signal,address,size);patcher.clearError();
  const auto e=patcher.solveSymbol<mach_vm_address_t>(index,enable,address,size);patcher.clearError();
@@ -6219,7 +6225,7 @@ bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach
 // require its retained platform record and BAR association before sampling it.
 uint8_t *XE::display13SSTPort(void *port) {
  auto s=callbackXE;auto &c=display13FBPower;auto object=static_cast<OSObject *>(port);
- if(!s->adlnDetected || s->xeProfile.display!=XELP::Display::XeLPD || !s->display13FBSSTHooksReady ||
+ if(!s->display13FramebufferRequested || s->xeProfile.display!=XELP::Display::XeLPD || !s->display13FBSSTHooksReady ||
     !object || object->getMetaClass()->getClassSize()<0x624 || !c.controller ||
     c.controller!=s->adlnTopologyController || !adlnWriterMappingBound() ||
     c.clockFaulted || c.memoryFaulted || c.clockStopped || !s->adlnOutputWiring.described())return nullptr;
@@ -6602,7 +6608,7 @@ void XE::wrapAlderLakeNGamma10(void *path,void *transaction,uint32_t control) {
 void XE::wrapDisplay13GMBusWrite(void *access,uint64_t reg,uint32_t value) {
     // DISPLAY13_COMBO_FRACTION: qualified nominal writer, physical reference,
     // retained controller/manager. No MMIO or other port's PLL inference.
-    if(callbackXE->adlnDetected && callbackXE->xeProfile.display==XELP::Display::XeLPD &&
+    if(callbackXE->display13FramebufferRequested && callbackXE->xeProfile.display==XELP::Display::XeLPD &&
        callbackXE->adlnComboPLLFractionCaller && reinterpret_cast<uintptr_t>(__builtin_return_address(0))==callbackXE->adlnComboPLLFractionCaller) {
         auto controller=reinterpret_cast<uint8_t *>(callbackXE->adlnTopologyController);
         if(controller && access && *reinterpret_cast<void **>(controller+0xC40)==access)
@@ -6657,7 +6663,7 @@ void XE::wrapDisplay13GMBusWrite(void *access,uint64_t reg,uint32_t value) {
     const bool arbitrationRegister=reg==0x70008 || reg==0x71008 || reg==0x72008 ||
         reg==0x70180 || reg==0x71180 || reg==0x72180;
     const auto writerBase=__atomic_load_n(&display.arbitrationWriterBase,__ATOMIC_ACQUIRE);
-    if(arbitrationRegister && callbackXE->adlnDetected && callbackXE->adlnNativeReady && access==display.access &&
+    if(arbitrationRegister && callbackXE->display13FramebufferRequested && callbackXE->adlnNativeReady && access==display.access &&
        display.engineEnabled && writerBase && Display13FBMemory::field<uintptr_t>(access,0x50)==writerBase) {
         for(unsigned pipe=0;pipe<3;++pipe) {
             const auto bank=0x1000*pipe;
@@ -6786,7 +6792,7 @@ bool XE::wrapAlderLakeNComputeLanes(OSObject *port,const void *timing,uint32_t b
 bool XE::processDisplay13FramebufferABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
 	// OS/donor ABI corrections are shared with Display12. Keep hardware
 	// routing and topology in the selected Display13 backend.
-	if(!adlnDetected || !adlnKernelReady || size<=0xCCCD8)return false;
+	if(!display13FramebufferRequested || size<=0xCCCD8)return false;
 	const bool surface=tglInstallSonomaSurfaceABI(patcher,index,address,size,true);
 	const bool nvram=xelpInstallNVRAMABI(patcher,index,address,size);
 	auto table=patcher.solveSymbol<mach_vm_address_t>(index,"__ZTV17AppleIntelPortHAL",address,size);
@@ -6820,7 +6826,7 @@ bool XE::processDisplay13FramebufferABI(KernelPatcher &patcher,size_t index,mach
 bool XE::wrapDisplay13FramebufferInit(IOService *fb,IOService *controller,uint32_t index) {
 	auto pci=controller ? OSDynamicCast(IOPCIDevice,controller->getProvider()) : nullptr;
 	if(!callbackXE->display13FBABIReady || !fb || !pci || index>=3 ||
-		!xelpAlderLakeNDevice(pci) ||
+		!xelpDisplay13Device(pci) ||
 		controller->getMetaClass()->getClassSize()<0x1C20 || fb->getMetaClass()->getClassSize()<0x4B90)return false;
 	if(!FunctionCast(wrapDisplay13FramebufferInit,callbackXE->orgDisplay13FramebufferInit)(fb,controller,index))return false;
 	auto manager=Display13FBMemory::field<OSObject *>(controller,0xC40);
@@ -6860,7 +6866,7 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
         wiring?wiring->getLength():0,s->firmwarePorts,3);
     if(!Display13FBTopology::supportedWiring(s->adlnOutputWiring))return false;
  const auto contract=XELP::DisplayContract::display13(s->display13Available(),s->adlnOutputWiring.dp!=0);
- const bool ready=s->adlnDetected && s->adlnKernelReady && contract.ready() && pci && xelpAlderLakeNDevice(pci);
+ const bool ready=s->display13FramebufferRequested && contract.ready() && pci && xelpDisplay13Device(pci);
  uint64_t contractRecord[]={1,contract.required,contract.available,contract.missing()};
  that->setProperty("WEXDisplayStartupContract",contractRecord,sizeof(contractRecord));
  if(!contract.ready())for(uint64_t bit=1;bit;bit<<=1)if(contract.missing()&bit)
@@ -7510,7 +7516,7 @@ Display13Clock::Readout XE::adlnClockReadout(IOService *controller) {
 	Display13Clock::Readout r;
 	auto pci=controller ? OSDynamicCast(IOPCIDevice,controller->getProvider()) : nullptr;
 	if(callbackXE->display13FBClockReadoutHooksReady && pci &&
-		xelpAlderLakeNDevice(pci) && (pci->configRead16(4)&2) &&
+		xelpDisplay13Device(pci) && (pci->configRead16(4)&2) &&
 		controller->getMetaClass()->getClassSize()>=0xEAC &&
 		*reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(controller)+0xC60)==pci &&
 		*reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(controller)+0xC40)) {
@@ -8818,7 +8824,7 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 	auto pci=service ? OSDynamicCast(IOPCIDevice,service->getProvider()) : nullptr;
 	if(callbackXE->display13FBPowerReferencesReady && !c.controller && power && pci && !c.clockFaulted &&
 		c.clock.status==Display13Clock::Status::Complete &&
-		xelpAlderLakeNDevice(pci) && (pci->configRead16(4)&2) &&
+		xelpDisplay13Device(pci) && (pci->configRead16(4)&2) &&
 		Display13Power::objectAssociations(power,static_cast<OSObject *>(power)->getMetaClass()->getClassSize(),
 			controller,service->getMetaClass()->getClassSize())) {
 		auto bar=pci->getDeviceMemoryWithRegister(0x10);
@@ -12506,7 +12512,7 @@ void XE::wrapTGLHostIRQEnable(void *bridge) {
   // Native owner enables primary/display IRQ under its existing interrupt lock.
   // Later enableController skips duplicate setup in mode0; FD4 makes this call
   // idempotent. Never forge bridge flags, completion stamps, or CSB identities.
-  if(callbackXE->adlnDetected)wrapDisplay13FBEnableIRQ(static_cast<IOService *>(controller));
+  if(callbackXE->display13FramebufferRequested)wrapDisplay13FBEnableIRQ(static_cast<IOService *>(controller));
   else wrapTGLFBEnableIRQ(controller);
  }
  tglFBIRQEnd(r,0);

@@ -46,7 +46,7 @@ struct Display13FBSSTIO {
 bool adlnWriterMappingBound(){return bound;}
 uintptr_t display13FBExpectedOwner(void*){return 0;}
 struct XE {
- bool adlnDetected=true,display13FBSSTHooksReady=true;XELP::Profile xeProfile;
+ bool display13FramebufferRequested=true,display13FBSSTHooksReady=true;XELP::Profile xeProfile;
  Display13OutputWiring adlnOutputWiring;void *adlnPlatform=nullptr,*adlnTopologyController=nullptr;
  uintptr_t orgDisplay13TrainingPattern=0,orgDisplay13SignalLevels=0;
  uintptr_t orgDisplay13EnablePort=0,orgDisplay13DisablePort=0;
@@ -204,7 +204,7 @@ int main(int argc,char **argv){
   if(fault==12)c.clockStopped=true;if(fault==13)put(f.port,0x548,reinterpret_cast<void *>(1));
   if(fault==14)f.port[0x117]=1;if(fault==15)put(f.port,0x578,static_cast<void *>(f.ctl));
   if(fault==16)put(f.path,0x3640,0U);if(fault==17)put(f.plane,0x7C,0U);
-  if(fault==18)state.adlnDetected=false;if(fault==19)state.display13FBSSTHooksReady=false;
+  if(fault==18)state.display13FramebufferRequested=false;if(fault==19)state.display13FBSSTHooksReady=false;
   if(fault==20)map.drop=0x46144;if(fault==21)map.drop=0x61400;
   if(fault==22)map.regs[0x46144]=0x10000000;
   if(fault==23)map.regs[0x61400]=0x88000000;

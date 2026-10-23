@@ -88,7 +88,7 @@ int main(int argc,char **argv){
  for(unsigned bad=0;bad<21;++bad){
   Fixture f(0,0,0);Map map;auxSetup(f,map,0,false,0);auto &c=display13FBPower;Display13FBPowerIO io{&map};
   assert(c.bridge.getAUX(io,0).status==Display13Power::Status::Complete);
-  if(bad==0)state.adlnDetected=false;if(bad==1)state.display13FBAUXHooksReady=false;
+  if(bad==0)state.display13FramebufferRequested=false;if(bad==1)state.display13FBAUXHooksReady=false;
   if(bad==2)state.xeProfile.display=XELP::Display::XeD;if(bad==3)state.adlnTopologyController=nullptr;
   if(bad==4)state.display13AUXControllerSlot=0;if(bad==5)bound=false;
   if(bad==6)c.bridge.state.faulted=true;if(bad==7)c.bridge.state.suspended=true;

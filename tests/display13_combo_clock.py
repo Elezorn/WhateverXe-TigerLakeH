@@ -22,7 +22,7 @@ code=r'''
 #include <sys/mman.h>
 struct IOService;
 struct State {
- bool adlnDetected=true;struct {XELP::Display display=XELP::Display::XeLPD;}xeProfile;
+ bool display13FramebufferRequested=true;struct {XELP::Display display=XELP::Display::XeLPD;}xeProfile;
  uintptr_t adlnComboPLLFractionCaller=0x1000;IOService *adlnTopologyController=nullptr;
 }state,*callbackXE=&state;
 uint32_t adjust(void *access,uint64_t reg,uint32_t value,uintptr_t caller) {GUARD return value;}
@@ -48,7 +48,7 @@ void delay(unsigned n){assert(n==1);++delays;}void error(const char*,...){++erro
 int main(int argc,char**argv){
  state.adlnTopologyController=reinterpret_cast<IOService *>(ctl);field<void*>(ctl,0xc40)=access;field<uint32_t>(ctl,0xea8)=2;
  for(unsigned bad=0;bad<9;++bad){State saved=state;
-  if(bad==0)state.adlnDetected=false;if(bad==1)state.xeProfile.display=XELP::Display::XeD;
+  if(bad==0)state.display13FramebufferRequested=false;if(bad==1)state.xeProfile.display=XELP::Display::XeD;
   if(bad==2)state.adlnComboPLLFractionCaller=0;if(bad==3)state.adlnTopologyController=nullptr;
   if(bad==4)field<uint32_t>(ctl,0xea8)=1;if(bad==8)field<void*>(ctl,0xc40)=port;
   assert(adjust(bad==5?nullptr:access,bad==6?0x164288:0x164284,0x1c001a5,bad==7?0x1001:0x1000)==0x1c001a5);

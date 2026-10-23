@@ -69,8 +69,10 @@ int main(int argc,char **argv) {
  xelpSelectedGPU=&pci;xelpSelectedProfile=config.profile;
  assert(xelpSelectedDevice(&pci)==config.profile.admitted());
  assert(xelpAlderLakeNDevice(&pci)==(adln && !rejected));
+ assert(xelpDisplay13Device(&pci)==(adln && !rejected));
  IOPCIDevice foreignPCI;foreignPCI.identity=pci.identity;foreignPCI.revision=pci.revision;foreignPCI.property=pci.property;
  assert(!xelpSelectedDevice(&foreignPCI));
+ assert(!xelpDisplay13Device(&foreignPCI));
  config.combo=3;config.comboBackend=adln?3:7;config.legacy=adln?0:0x1F8;config.legacyBackend=adln?0:0x1F8;
  if(adls){config.combo=8;config.comboBackend=0x19;config.legacy=config.legacyBackend=0;}
  if(adls && !rejected){assert(hardwareAllowed(&controller));assert(!tglProbePort(&port));}

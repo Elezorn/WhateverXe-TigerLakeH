@@ -112,7 +112,9 @@ private:
     uint32_t adlnNativeSubslices {}, adlnL3Banks {}, adlnNativeEUs {};
 	bool adlnKernelReady {false};
 	bool adlnNativeRequested {false};
-	bool adlnNativeReady {false};
+	// Shared platform preflight: GT fuses, reserved GGTT/GOP, mapper,
+    // aperture and native boot policy. Both Render and Display consume it.
+    bool adlnNativeReady {false};
 	bool display13FramebufferRequested {false};
 	bool display13FBPowerReferencesReady {false};
 	bool display13FBClockReadoutHooksReady {false};
