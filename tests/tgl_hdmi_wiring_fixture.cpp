@@ -28,7 +28,7 @@ void clock_get_uptime(uint64_t *p){*p=0;}void absolutetime_to_nanoseconds(uint64
 void *current_thread(){return reinterpret_cast<void *>(1);}
 struct XE {
  bool tglHDMIB=true,tglStolenMemoryReady=false;
- uint32_t tglComboDPMask=0;bool adlsDetected=false;
+ uint32_t tglComboDPMask=0;bool adlsDisplaySelected=false;
  struct {uint32_t fStolenMemorySize=0;} framebufferPatch;
  XELP::VBT::Ports firmwarePorts;
  // FIELDS
@@ -65,7 +65,7 @@ void expectUnchangedExcept(const uint8_t *after,std::initializer_list<unsigned> 
 int main(){
  // ADL-S uses the same real entry points, while preserving the physical
  // TC1 record and converting its PHY classification from Dekel to Combo.
- setup();object.adlsDetected=true;
+ setup();object.adlsDisplaySelected=true;
  object.firmwarePorts.status=XELP::VBT::Status::Valid;object.firmwarePorts.present=8;
  object.firmwarePorts.port[3]={0x60d2,1,2};
  reinterpret_cast<uint32_t *>(original+0x68)[1]=9;IOService adlsProvider;
@@ -82,11 +82,11 @@ int main(){
   assert(result==(bus==9?0x91u:0xE00002C2u));
   if(bus!=9)assert(request[7]==result);
  }
- setup();object.adlsDetected=true;auto foreignWiring=property(2,0,2,0);IOService wrongADLS{&foreignWiring};
+ setup();object.adlsDisplaySelected=true;auto foreignWiring=property(2,0,2,0);IOService wrongADLS{&foreignWiring};
  assert(!XE::tglLoadHDMIWiring(&wrongADLS) && !XE::tglLoadHDMIWiring(&wrongADLS));
  // Panel + external HDMI/DP use the real firmware loader and topology copy.
  for(unsigned kind:{1U,2U})for(unsigned tcon:{0U,2U,3U}) {
-  setup();object.adlsDetected=true;auto &v=object.firmwarePorts;
+  setup();object.adlsDisplaySelected=true;auto &v=object.firmwarePorts;
   v.status=XELP::VBT::Status::Valid;v.present=9;v.port[0]={0x78c6,10,0,0x40,0,0};
   v.panel.valid=true;v.panel.ddi=0;v.panel.backlightValid=true;v.panel.pwmPresent=true;v.panel.backlightType=2;
   v.port[3]={kind==1?0x60d2U:0x60d6U,kind==1?1U:7U,2,kind==1?0U:0x10U,0,0};

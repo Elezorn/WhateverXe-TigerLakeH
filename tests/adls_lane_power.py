@@ -11,7 +11,7 @@ code=r'''
 #include <vector>
 #define FunctionCast(fn,p) reinterpret_cast<decltype(&fn)>(p)
 struct XE {
- bool adlsDetected=true,adlsPowerReady=true;void *tglObservationController;
+ bool adlsDisplaySelected=true,adlsPowerReady=true;void *tglObservationController;
  AlderLakeS::Wiring adlsWiring;uintptr_t orgADLSPowerPG,orgTGLPowerDDIState;
  static uint8_t *adlsPowerTarget(void*);
  static void wrapADLSPowerPG(void*,bool,uint32_t);
@@ -54,7 +54,7 @@ int main(){
   assert(calls.size()==1 && calls[0].target==(expected|2));++count;
  }
  for(unsigned bad=0;bad<6;++bad){
-  state.adlsDetected=bad!=0;state.adlsPowerReady=bad!=1;state.adlsWiring.valid=bad!=2;
+  state.adlsDisplaySelected=bad!=0;state.adlsPowerReady=bad!=1;state.adlsWiring.valid=bad!=2;
   state.adlsWiring.hdmi=bad==3?0:8;state.adlsWiring.dp=0;at<void*>(ctl,0xC8)=bad==4?nullptr:power;at<void*>(power,0x78)=bad==5?nullptr:access;
   assert(!XE::adlsPowerTarget(power));calls.clear();XE::wrapADLSPowerPG(power,false,2);assert(calls.size()==1&&calls[0].target==2);
   calls.clear();XE::wrapTGLPowerDDIState(power,false,0x80);assert(calls.size()==1&&calls[0].kind==1);

@@ -15,7 +15,7 @@ void *current_thread(){return (void*)1;}unsigned delays=0,writes=0,natives=0;uin
 void IODelay(unsigned n){assert(n==8);++delays;}
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry v;return &v;}void setProperty(const char*,bool){} };
 struct XE {
- bool adlsDetected=false;static bool adlsClockTarget(void*,void*,void*){return false;}
+ bool adlsDisplaySelected=false;static bool adlsClockTarget(void*,void*,void*){return false;}
  void *tglObservationController;uintptr_t tglClockOffCaller=1,orgTGLPathLookup,orgTGLDisableClocks;
  bool tglDPSSTMode(unsigned d,unsigned mode){return d>=3&&d<=8&&(mode==3||mode==4);}
  static volatile uint8_t *tglClockOrderTarget(void*,void*,void*,void*);
@@ -52,7 +52,7 @@ int main(){
  tglClockOffTransaction.path=d;tglClockOffTransaction.access=a;tglClockOffTransaction.clockReg=0x46148;
  tglClockOffTransaction.value=0x123;tglClockOffTransaction.pending=true;
  writes=0;XE::wrapTGLDisableClocks(c,p,nullptr);assert(writes==1&&reg(0x46148)==0x123&&!tglClockOffTransaction.pending);
- obj.adlsDetected=true;natives=writes=0;XE::wrapTGLDisableClocks(c,p,nullptr);assert(!natives&&!writes);
+ obj.adlsDisplaySelected=true;natives=writes=0;XE::wrapTGLDisableClocks(c,p,nullptr);assert(!natives&&!writes);
  printf("PASS %u actual clock-order port/pipe/idle cases; invalid pipe and deferred native-write fallback\n",cases);
 }
 '''.replace('TX',tx).replace('FUNCTIONS',f)

@@ -41,7 +41,7 @@ struct KernelPatcher {
 };
 struct XE {
  static XE *callbackXE;
- bool tglActive=true,tglPanelTimingReady=true,adlsDetected=false;
+ bool tglActive=true,tglPanelTimingReady=true,adlsDisplaySelected=false;
  AlderLakeS::Wiring adlsWiring;XELP::PanelPWM adlsPanelPWM;
  uintptr_t orgTGLPanelTiming=0,orgTGLRegisterRead=0,orgTGLPanelConfig=0;
  uint32_t tglPanelTimingBIOS[3]{};bool tglPanelTimingBIOSValid=false;
@@ -160,7 +160,7 @@ int main(int argc,char **argv){
   s.orgTGLPanelTiming=(uintptr_t)(mem+0x4848c);at<void*>(ctl,0xc60)=&provider;
   const uint32_t milliseconds[]={300,100,600,90,800};for(unsigned i=0;i<5;++i)properties[i].value=milliseconds[i];
   if(platform){
-   s.adlsDetected=true;s.xeProfile.family=XELP::Family::AlderLakeS;
+   s.adlsDisplaySelected=true;s.xeProfile.family=XELP::Family::AlderLakeS;
    s.adlsWiring=AlderLakeS::Wiring::fromFirmware(s.firmwarePorts);assert(s.adlsWiring.panel==1);
    const uint32_t record[]={0,0,0,0,2,0x18};memcpy(reinterpret_cast<uint8_t*>(s.tglPlatformCopy)+0x20,record,sizeof(record));
   }

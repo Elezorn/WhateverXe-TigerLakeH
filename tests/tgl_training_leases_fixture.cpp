@@ -45,7 +45,7 @@ template<class... T> void tglObserveResource(T...) {}
 void tglAUXPublish() {}
 void tglDPCDPublish() {}
 struct XE {
- bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;
+ bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;
  // TC_WIRING_FIELDS
  // LEASE_FIELDS
  IORecursiveLock *tglPathPoolLock;
@@ -354,7 +354,7 @@ void routeLifecycleMatrix() {
   if(adapter==0 ? ddi>1 : adapter==1 ? (ddi!=0&&ddi!=3&&ddi!=4) : ddi<3)continue;
   setup();
   if(adapter==0){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.tglComboDPMask=1U<<ddi;}
-  if(adapter==1){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=1U<<ddi;}
+  if(adapter==1){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDisplaySelected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=1U<<ddi;}
   if(mode==3){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.tglDPAltCandidates=1U<<ddi;}
   ports[ddi].at<uint32_t>(0x550)=mode;
   for(unsigned i=0;i<pipe;++i)used[i]=true;
@@ -513,7 +513,7 @@ int main(int argc, char **argv) {
  // three simultaneously and vary both allocation and teardown order.
  unsigned comboOrders=0,ins[]={0,3,4};
  do {unsigned outs[]={0,3,4};do {
-  setup();obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;
+  setup();obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDisplaySelected=true;
   obj.adlsWiring.valid=true;obj.adlsWiring.dp=0x19;obj.tglAUXParentReady=true;
   for(auto d:ins){
    assert(XE::tglTrainingLeaseForDDI(d)&&!obj.tglLegacyTCEligible(d)&&obj.tglAUXParentEligible(d));
@@ -530,7 +530,7 @@ int main(int argc, char **argv) {
  for(unsigned mode:{1u,3u,4u})for(unsigned d=0;d<9;++d)for(unsigned pipe=0;pipe<3;++pipe){
   if(mode==1 ? (d!=0 && d!=3 && d!=4) : d<3)continue;
   setup();
-  if(mode==1){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=1U<<d;}
+  if(mode==1){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDisplaySelected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=1U<<d;}
   if(mode==3){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.tglDPAltCandidates=1U<<d;}
   ports[d].at<uint32_t>(0x550)=mode;
   for(unsigned i=0;i<pipe;++i)used[i]=true;

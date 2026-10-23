@@ -38,7 +38,7 @@ struct KernelPatcher {
 };
 struct XE {
  static XE*callbackXE;
- bool adlsDetected=true,adlsPanelPWMReady=true,tglActive=true;XELP::PanelPWM adlsPanelPWM;
+ bool adlsDisplaySelected=true,adlsPanelPWMReady=true,tglActive=true;XELP::PanelPWM adlsPanelPWM;
  XELP::VBT::Ports firmwarePorts;AlderLakeS::Wiring adlsWiring;
  struct {XELP::Family family=XELP::Family::AlderLakeS;}xeProfile;
  TGLTCNativeFunctions tglTCNativeFunctions;void*tglObservationController=nullptr;

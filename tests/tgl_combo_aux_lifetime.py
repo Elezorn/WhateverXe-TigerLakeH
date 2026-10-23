@@ -14,7 +14,7 @@ code=r'''
 #include <map>
 #include <cstdio>
 struct Functions {bool ready=true;void **controllerSlot=nullptr;void(*getAux)(void*)=nullptr;void(*putAux)(void*)=nullptr;bool complete(){return ready;}};
-struct State {uint32_t tglComboDPMask=0;bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};void *tglObservationController=nullptr;bool tglActive=true,tglComboAUXLifetimeReady=true;
+struct State {uint32_t tglComboDPMask=0;bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};void *tglObservationController=nullptr;bool tglActive=true,tglComboAUXLifetimeReady=true;
  struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;Functions tglTCNativeFunctions;void *tglComboAUXOwners[9]{};
 } state,*callbackXE=&state;
@@ -29,7 +29,7 @@ int main(){
  unsigned ddi=testDDI,mask=3U<<(2*ddi),buffer=0x64000+256*ddi;
  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
  state={};if(adls) {
-  state.adlsDetected=true;state.adlsWiring.valid=true;state.adlsWiring.dp=1U<<ddi;state.adlsWiring.pin[ddi]=ddi?ddi+6:1;state.xeProfile.family=XELP::Family::AlderLakeS;
+  state.adlsDisplaySelected=true;state.adlsWiring.valid=true;state.adlsWiring.dp=1U<<ddi;state.adlsWiring.pin[ddi]=ddi?ddi+6:1;state.xeProfile.family=XELP::Family::AlderLakeS;
   config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);const uint32_t c[]={ddi,ddi?ddi+6:1,1,0,0x400,0x201};memcpy(config,c,sizeof(c));
  }
  if(panel){state.adlsWiring.dp=0;state.adlsWiring.panel=1;const uint32_t c[]={0,0,0,0,2,0x18};memcpy(config,c,sizeof(c));}
@@ -58,7 +58,7 @@ int main(){
  if(bad==9)store(p,0x590,buffer+0x100);
  if(bad==10)regs[0x45454]=0;
  if(bad==11)regs[buffer]=0x80000001;
- if(bad==12){state.xeProfile.family=XELP::Family::AlderLakeN;state.adlsDetected=false;}
+ if(bad==12){state.xeProfile.family=XELP::Family::AlderLakeN;state.adlsDisplaySelected=false;}
  if(bad==13)*refs=~0U;
  auto before=*refs;run(p,true);
  if(bad){assert(*refs==before&&!state.tglComboAUXOwners[ddi]);assert(getCount==(bad==14));assert(putCount==(bad==14));continue;}

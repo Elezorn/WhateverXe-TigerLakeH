@@ -82,7 +82,10 @@ private:
 	bool tglActive {false};
 	bool adlnRequested {false};
 	bool adlnDetected {false};
-    bool adlsDetected {},adlsNativeReady {},adlsDisplayHooksReady {};
+    // Render and Display selections are independent; shared PHY/port code
+    // must not depend on which GT implementation the product uses.
+    bool adlsDetected {},adlsNativeReady {};
+    bool adlsDisplaySelected {},adlsDisplayHooksReady {};
     bool adlsPortInitReady {},tglHPDHookReady {};
     bool adlsPLLTableReady {},adlsClockReady {},adlsPowerReady {},adlsPanelPWMReady {};
  XELP::PanelPWM adlsPanelPWM;
@@ -338,8 +341,8 @@ private:
  bool tglHDMIWiringLoaded {},tglHDMIWiringExplicit {},tglHDMIWiringApplied {};
  uint32_t tglHDMIBackendMask {3}; // TGL-U combo PHY A/B; C is absent
  static bool tglLoadHDMIWiring(IOService *provider);
- bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && (adlsDetected?adlsWiring.matches(config,false):tglHDMIWiring.matches(config));}
- bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && (adlsDetected?adlsWiring.usesDDC(pin):tglHDMIWiring.usesDDC(pin));}
+ bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && (adlsDisplaySelected?adlsWiring.matches(config,false):tglHDMIWiring.matches(config));}
+ bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && (adlsDisplaySelected?adlsWiring.usesDDC(pin):tglHDMIWiring.usesDDC(pin));}
 
 	bool tglGMBusReady {false};
 	mach_vm_address_t orgTGLGMBus {};
@@ -448,8 +451,8 @@ private:
  XELP::Display12SSTRoutes tglSSTRoutes() const {
   auto routes=tglTCWiring.sstRoutes(tglAUXParentMask,
    tglTCAutoCandidates&__atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE),tglDPAltCandidates);
-  routes.combo=adlsDetected ? (adlsWiring.valid?adlsWiring.dp:0) : tglComboDPMask;
-  routes.panel=adlsDetected && adlsWiring.valid ? adlsWiring.panel : 0;
+  routes.combo=adlsDisplaySelected ? (adlsWiring.valid?adlsWiring.dp:0) : tglComboDPMask;
+  routes.panel=adlsDisplaySelected && adlsWiring.valid ? adlsWiring.panel : 0;
   return routes;
  }
  bool tglDPSSTEligible(uint32_t ddi) const {return tglSSTRoutes().eligible(ddi);}

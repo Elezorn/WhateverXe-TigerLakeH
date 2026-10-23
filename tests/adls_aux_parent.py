@@ -18,7 +18,7 @@ code=r'''
 #include "kern_tgl_tc_boot.hpp"
 struct IOService;
 struct XE {
- bool adlsDetected=true;AlderLakeS::Wiring adlsWiring;
+ bool adlsDisplaySelected=true;AlderLakeS::Wiring adlsWiring;
  FIELDS
  uintptr_t tglPortByDDI,tglEnablePG,tglDisablePG,orgTGLEnableAUXPower,orgTGLDisableAUXPower;
  static void wrapTGLEnableAUXPower(void*,uint32_t);
@@ -71,7 +71,7 @@ int main(){
  }
  reset(0);assert(!state.tglAUXParentEligible(0));
  reset(1);state.adlsWiring.valid=false;assert(!state.tglAUXParentEligible(0));
- reset(1);state.adlsDetected=false;assert(!state.tglAUXParentEligible(0));
+ reset(1);state.adlsDisplaySelected=false;assert(!state.tglAUXParentEligible(0));
  reset(1);state.tglAUXParentReady=false;assert(!state.tglAUXParentEligible(0));
  reset(1);assert(!state.tglAUXParentEligible(9)&&!state.tglAUXParentEligible(~0U));
  printf("PASS %u mixed AUX A/TC parent orderings; nested/inherited refs; foreign owner; admission guards\n",cases);

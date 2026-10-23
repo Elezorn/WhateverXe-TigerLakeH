@@ -35,6 +35,16 @@ assert "const bool linearTest = display13FramebufferRequested;" in xe
 init = xe[xe.index('void XE::init() {'):xe.index('void XE::deinit()')]
 assert 'BaseDeviceInfo' not in init and 'CPU_MODEL' not in init
 entry = re.search(r'extern "C" kern_return_t tglStart\(.*?\n\}', provider, re.S).group()
+# Execute the production prerequisite expressions at all three entry points.
+prerequisites = []
+for method,stop in [('wrapTGLFramebufferStart',' tglRecordStartOrder'),
+                    ('wrapTGLAcceleratorStart',' if (callbackXE->adlnDetected'),
+                    ('wrapTGLAcceleratorProbe',' if (!callbackXE->tglAcceleratorRequested')]:
+    at=xe.index('XE::'+method+'(')
+    body=xe[xe.index('{',at)+1:xe.index(stop,at)]
+    expression=re.search(r'if\((.*?)\)(?:return| \{)',body,re.S).group(1)
+    prerequisites.append('bool '+method+'Gate() { return !('+expression+'); }')
+
 fixture = r'''
 #include <cassert>
 #include <cstring>
@@ -53,8 +63,9 @@ static int kextIntelTGLFb, kextAppleIntelTGLCompat, kextIntelTGL;
 static struct { void onKextLoadForce(int *) {} } lilu;
 struct XE {
  XELP::Profile xeProfile;
- bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false, adlsDetected=false;
+ bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false, adlsDisplaySelected=false, adlsDetected=false;
  bool display13FramebufferRequested=false, display13TraceEnabled=false;
+ bool adlsNativeReady=false, adlsDisplayHooksReady=false;
  bool tglRequested=false, tglAcceleratorRequested=false;
  bool tglInactivePorts=false, tglPG1Poll=false, tglClockOrderRequested=false;
  bool tglProgramEnabled=false, tglTrainingLeaseRequested=false;
@@ -69,12 +80,23 @@ using kern_return_t = int;
 struct kmod_info_t {};
 static constexpr int KERN_FAILURE=5, KERN_SUCCESS=0;
 // ACTUAL_SOURCE
+// PREREQUISITES
 static XE boot(std::initializer_list<const char *> names, uint32_t pci=0x46D28086,uint32_t effective=0) {
  args.clear(); for (const auto name:names) args.insert(name);
  XE xe; xe.init(); xe.selectProfile(XELP::identify(pci,0,effective?effective:pci)); assert(tglStart(nullptr,nullptr)==KERN_SUCCESS);
  return xe;
 }
 int main() {
+ // Rendering and Display prerequisites can fail independently. The Display
+ // callbacks themselves are replayed elsewhere without any Render flag.
+ for(unsigned bits=0;bits<16;++bits) {
+  XE selected;selected.adlsDetected=bits&1;selected.adlsDisplaySelected=bits&2;
+  selected.adlsNativeReady=bits&4;selected.adlsDisplayHooksReady=bits&8;callbackXE=&selected;
+  const bool ready=(!(bits&1) || (bits&4)) && (!(bits&2) || (bits&8));
+  assert(wrapTGLFramebufferStartGate()==ready);
+  assert(wrapTGLAcceleratorStartGate()==ready);
+  assert(wrapTGLAcceleratorProbeGate()==ready);
+ }
  // Every implemented ADL-N/Twin ID enables the qualified normal path without args.
  XE xe;
  for(uint32_t pci:{0x46D08086U,0x46D18086U,0x46D28086U,0x46D38086U,0x46D48086U}) {
@@ -115,6 +137,25 @@ int main() {
   if(id<0x9000)assert(xe.adlnKernelReady && xe.adlnNativeRequested && xe.display13FramebufferRequested);
   assert(tglStart(nullptr,nullptr)==KERN_SUCCESS);
  }
+ // Exercise the complete production selection, including the shared Display
+ // adapter on unadmitted products. Expected identities are independent of the
+ // new selector; RPL-S remains rejected despite its known Display adapter.
+ for(auto kernel:allKernels)for(auto id:{0x9A49U,0x9A78U,0x4690U,0x4680U,0xA780U,0x46A6U,0x46D2U})
+ for(auto rev:{0U,12U,255U})for(unsigned option=0;option<4;++option) {
+  version=kernel;args={};
+  if(option&1)args.insert("-wex-tgl-off");
+  if(option&2)args.insert("-wex-noaccel");
+  XE selected;selected.init();selected.selectProfile(XELP::identify((id<<16)|0x8086,rev));
+  const bool desktop=id==0x4690 && rev==12;
+  const bool mobile=id==0x9A49 || id==0x9A78;
+  const bool small13=id==0x46D2 && rev==0;
+  assert(selected.adlsDetected==desktop && selected.adlsDisplaySelected==desktop);
+  assert(selected.adlnDetected==small13 && selected.display13FramebufferRequested==small13);
+  const bool d12=(desktop || mobile) && !(option&1);
+  assert(selected.tglRequested==(small13 || d12));
+  assert(selected.tglAcceleratorRequested==(small13 || (d12 && !(option&2))));
+  assert((selected.currentFramebuffer==&kextIntelTGLFb)==(small13 || d12));
+ }
  version="Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64";
  xe=boot({},0x9A498086);assert(xe.tglRequested && xe.tglAcceleratorRequested);
  xe=boot({"-wex-noaccel"},0x9A498086);
@@ -142,7 +183,7 @@ int main() {
  xe=XE{};xe.selectProfile(XELP::identify(0x9A498086,0));assert(!xe.tglRequested);
 
 }
-'''.replace('// ACTUAL_SOURCE', init + entry)
+'''.replace('// ACTUAL_SOURCE', init + entry).replace('// PREREQUISITES', '\n'.join(prerequisites))
 with tempfile.TemporaryDirectory(prefix='wex-boot-args-') as directory:
     directory = Path(directory)
     cpp, exe = directory / 'test.cpp', directory / 'test'

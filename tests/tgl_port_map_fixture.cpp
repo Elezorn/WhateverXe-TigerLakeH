@@ -18,7 +18,7 @@ struct IORegistryEntry {
  void *getProperty(const char *) { return nullptr; }
 };
 struct XE {
- bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;
+ bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;
  // FIELDS
  IOSimpleLock *tglDekelLock;
  uintptr_t orgTGLReadDekel,orgTGLWriteDekel;

@@ -17,7 +17,7 @@ using C=XELP::DisplayContract;
 struct State {
 FIELDS
  struct Native {bool valid=true;bool complete()const{return valid;}}tglTCNativeFunctions;
- bool tglHDMIB=false,adlsDetected=false,tglTrainingLeaseRequested=true;
+ bool tglHDMIB=false,adlsDisplaySelected=false,tglTrainingLeaseRequested=true;
  struct {struct {bool valid=false;}panel;}firmwarePorts;
  struct {unsigned dp=0;}adlsWiring;
  struct {unsigned legacy=0;}tglTCWiring;
@@ -49,10 +49,10 @@ int main() {
  s.tglDPAltFiaReady=false;assert(s.start().missing()==C::AltFIA);s.tglDPAltFiaReady=true;
  s.tglAUXParentReady=false;assert(s.start().ready()); // TC owns DP-alt AUX power.
  s.tglAUXParentReady=true;s.tglDPAltCandidates=0;
- s.adlsDetected=true;s.adlsWiring.dp=1;
+ s.adlsDisplaySelected=true;s.adlsWiring.dp=1;
  s.tglComboSignalReady=false;assert(s.start().missing()==C::ComboSignal);
  s.tglComboSignalReady=true;
- s.adlsDetected=false;s.adlsWiring.dp=0;s.firmwarePorts.panel.valid=true;
+ s.adlsDisplaySelected=false;s.adlsWiring.dp=0;s.firmwarePorts.panel.valid=true;
  s.tglTCNativeFunctions.valid=false;assert(s.start().missing()==C::TCNative);s.tglTCNativeFunctions.valid=true;
  s.tglComboAUXGateReady=false;assert(s.start().missing()==C::ComboAUXGate);s.tglComboAUXGateReady=true;
  s.tglPanelDepthReady=false;assert(s.start().missing()==C::PanelDepth);s.tglPanelDepthReady=true;

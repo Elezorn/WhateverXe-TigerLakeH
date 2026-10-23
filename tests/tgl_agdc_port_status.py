@@ -17,7 +17,7 @@ code=r'''
 #include <cstring>
 #include <cstdio>
 struct XE {
- uintptr_t orgTGLAGDCPortStatus{},tglPortByIndex{};bool tglInactivePorts=true,adlsDetected=false;
+ uintptr_t orgTGLAGDCPortStatus{},tglPortByIndex{};bool tglInactivePorts=true,adlsDisplaySelected=false;
  bool tglTCWiringLoaded=true,tglTCWiringExplicit=false;
  TGLTCWiring tglTCWiring=TGLTCWiring::fromMasks(0,0,0);XELP::VBT::Ports firmwarePorts;
  struct {XELP::Family family=XELP::Family::TigerLake;}xeProfile;
@@ -49,7 +49,7 @@ int main() {
   if(wiring==4)state.tglTCWiringExplicit=true; // unspecified != excluded
   if(wiring==5){state.tglTCWiringExplicit=true;state.tglTCWiring=TGLTCWiring::fromMasks(0,0,TGLTCWiring::Mask);}
   if(wiring==6)state.tglTCWiringLoaded=false;
-  if(wiring==7)state.adlsDetected=true;
+  if(wiring==7)state.adlsDisplaySelected=true;
   auto c=reinterpret_cast<uint32_t*>(state.tglPlatformCopy+0x20+24*ddi);
   c[0]=ddi;c[1]=ddi+6;c[2]=1;put(ports[ddi],0x548,c);put(ports[ddi],0x550,mode);put(ports[ddi],0x554,status);
   ports[ddi][0xF8]=sinks;put(ctl,0xD40,state.tglPlatformCopy+0);

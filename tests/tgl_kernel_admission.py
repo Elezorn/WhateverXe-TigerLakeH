@@ -11,12 +11,12 @@ body=s[start:end].rstrip()[:-1]
 code=r'''
 #include <cstring>
 #include "kern_xelp_os.hpp"
+#include "kern_xelp_platform.hpp"
 #include <cassert>
 #include <cstdio>
-namespace XELP { enum class Family {TigerLake,Other,AlderLakeS}; }
 struct Profile { bool ok; XELP::Family family; bool admitted() const {return ok;} };
 const char *version;
-bool noaccel,off,adlsDetected;
+bool noaccel,off,adlsDisplaySelected;
 bool checkKernelArgument(const char *arg) {return !strcmp(arg,"-wex-noaccel")?noaccel:!strcmp(arg,"-wex-tgl-off")?off:false;}
 bool tglRequested,tglInactivePorts,tglPG1Poll,tglClockOrderRequested,tglTrainingLeaseRequested,tglProgramEnabled,tglAcceleratorRequested;
 int kextIntelTGL,kextIntelTGLFb;int *currentGraphics,*currentFramebuffer;
@@ -37,8 +37,8 @@ const char *versions[]={
 unsigned cases=0;
 for(unsigned k=0;k<11;++k)for(unsigned n=0;n<2;++n)for(unsigned o=0;o<2;++o)for(unsigned physical=0;physical<2;++physical)for(unsigned family=0;family<3;++family){
 version=versions[k];noaccel=n;off=o;currentGraphics=currentFramebuffer=nullptr;
-adlsDetected=family==2;
-select({bool(physical),family==2?XELP::Family::AlderLakeS:family?XELP::Family::TigerLake:XELP::Family::Other});
+adlsDisplaySelected=family==2;
+select({bool(physical),family==2?XELP::Family::AlderLakeS:family?XELP::Family::TigerLake:XELP::Family::Unknown});
 bool expected=physical&&family&&!o&&(k<7)&&(family!=2 || k>=1);
 assert(tglRequested==expected);assert(tglAcceleratorRequested==(expected&&!n));
 assert((currentFramebuffer==&kextIntelTGLFb)==expected);++cases;

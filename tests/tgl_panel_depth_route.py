@@ -41,7 +41,7 @@ void *tglAUXLock=&root;
 void IOSimpleLockLock(void *){} void IOSimpleLockUnlock(void *){}
 struct Ports {struct Port {bool internal(){return true;}bool dp(){return true;}} port[2];unsigned present=1;bool valid(){return true;}};
 struct XE {
- bool tglActive=true,tglPanelDepthReady=true,adlsDetected=false;
+ bool tglActive=true,tglPanelDepthReady=true,adlsDisplaySelected=false;
  AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  void *tglObservationController=nullptr;
  struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
@@ -76,7 +76,7 @@ int main(){
   assert(published==before && *reinterpret_cast<uint16_t *>(timing+0x8A)==2);
  }
  // Same depth contract on qualified ADL-S panel; retained record is required.
- state.tglActive=state.tglPanelDepthReady=true;state.adlsDetected=true;
+ state.tglActive=state.tglPanelDepthReady=true;state.adlsDisplaySelected=true;
  state.xeProfile.family=XELP::Family::AlderLakeS;port[0x117]=0;put(port,0x578,access);
  state.adlsWiring.valid=true;state.adlsWiring.panel=1;
  const uint32_t panelRecord[]={0,0,0,0,2,0x18};memcpy(state.tglPlatformCopy+0x20,panelRecord,sizeof(panelRecord));

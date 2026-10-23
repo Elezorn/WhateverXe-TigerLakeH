@@ -21,7 +21,7 @@ struct IORegistryEntry {
 #define OSDynamicCast(type,p) dynamic_cast<type*>(p)
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 struct XE {
- bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;
+ bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;
  bool tglActive=true;
  XELP::Profile xeProfile=XELP::identify(0x9a498086,1);XELP::VBT::Ports firmwarePorts;
  // FIELDS

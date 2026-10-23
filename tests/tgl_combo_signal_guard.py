@@ -20,7 +20,7 @@ code=r'''
 #include <map>
 #include <cstdio>
 struct State {
- uint32_t tglComboDPMask=0;bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
+ uint32_t tglComboDPMask=0;bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  void *tglObservationController=nullptr;bool tglActive=true,tglComboSignalReady=true;
  struct {uint32_t identity=0x9A498086;XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;
@@ -119,7 +119,7 @@ int main(){
  for(unsigned ddi:{0u,3u,4u})for(unsigned bad=0;bad<12;++bad) {
   alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};
   auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
-  state={};state.adlsDetected=true;state.adlsWiring.valid=true;state.adlsWiring.dp=1U<<ddi;state.adlsWiring.pin[ddi]=ddi?ddi+6:1;
+  state={};state.adlsDisplaySelected=true;state.adlsWiring.valid=true;state.adlsWiring.dp=1U<<ddi;state.adlsWiring.pin[ddi]=ddi?ddi+6:1;
   AlderLakeS::Port route;assert(AlderLakeS::Port::resolve(ddi,route));auto base=route.phyBase();state.xeProfile.family=XELP::Family::AlderLakeS;
   state.tglObservationController=ctl;state.firmwarePorts.status=XELP::VBT::Status::Valid;
   const uint32_t c[]={ddi,ddi?ddi+6:1,1,0,0x400,0x201};auto config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);memcpy(config,c,sizeof(c));
@@ -143,7 +143,7 @@ int main(){
  for(unsigned rate:{6U,10U,20U,30U})for(unsigned low=0;low<2;++low)for(unsigned hobl=0;hobl<2;++hobl) {
   alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};
   auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
-  state={};state.adlsDetected=true;state.xeProfile.family=XELP::Family::AlderLakeS;
+  state={};state.adlsDisplaySelected=true;state.xeProfile.family=XELP::Family::AlderLakeS;
   state.tglObservationController=ctl;auto &v=state.firmwarePorts;v.status=XELP::VBT::Status::Valid;v.present=1;v.port[0]={0x78C6,10,0,0x40,0,0};
   v.panel.valid=true;v.panel.ddi=0;v.panel.backlightValid=true;v.panel.pwmPresent=true;v.panel.backlightType=2;v.panel.lowSwing=low;v.panel.hobl=hobl;
   state.adlsWiring=AlderLakeS::Wiring::fromFirmware(v);assert(state.adlsWiring.panel==1);
