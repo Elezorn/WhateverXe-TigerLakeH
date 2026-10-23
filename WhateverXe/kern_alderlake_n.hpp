@@ -232,17 +232,53 @@ enum class GOPProtocol : uint32_t {TMDS,DP};
 // Source and power must remain unchanged while only the plane is reinitialized.
 // This is an early, serialized bootstrap transaction, not a modeset or link
 // adoption certificate. A changed link stops further writes, including rollback.
-template<class IO> bool dpSourceUnchanged(IO &io,const DisplayReadout &r,unsigned pipe,unsigned ddi) {
-    if(pipe>=3 || ddi>=2)return false;
+template<class IO> bool dpSourceUnchanged(IO &io,const DisplayReadout &r,unsigned pipe,unsigned ddi,
+                                         uint32_t addedAUXRequest=0) {
+    if(pipe>=3 || ddi>=2 || (addedAUXRequest && addedAUXRequest!=(2U<<(2*ddi))))return false;
     const uint32_t bank=pipe*0x1000;
     const uint32_t regs[] {0x60400+bank,0x60404+bank,0x60540+bank,0x60030+bank,0x60034+bank,
         0x60040+bank,0x60044+bank,0x70008+bank,0x46140+4*pipe,0x64000+0x100*ddi,
         0x78000+0x200*pipe,0x78004+0x200*pipe,0x45404,0x45454,0x45444,0x42000};
     for(auto reg:regs) {
         uint32_t expected=0;
-        if(!value(r,reg,expected) || !io.readable(reg) || io.read(reg)!=expected)return false;
+        if(!value(r,reg,expected) || !io.readable(reg))return false;
+        if(reg==Display13Power::AUX)expected|=addedAUXRequest;
+        if(io.read(reg)!=expected)return false;
     }
     return true;
+}
+// The GOP is already driving DP. Keep its physical AUX domain on without
+// inventing a native transaction reference or claiming the firmware request.
+// Caller holds the display owner lock throughout both proof and acquisition.
+template<class IO> Display13Power::Result holdDPBootAUX(IO &io,const DisplayReadout &boot,
+    Display13Power::NativeBridge &bridge,Display13Power::MainLinkAUX &link,unsigned ddi) {
+    using namespace Display13Power;Result r;
+    if(ddi>=2 || boot.activePipes!=1 || !dpSource(boot,0,ddi) || !dpSourceUnchanged(io,boot,0,ddi) ||
+       bridge.bootPort!=ddi || bridge.bootAdopted || !bridge.bootPGProtected || !bridge.bootDDIProtected ||
+       !bridge.outputHeld(io,ddi,0) || link.owner || link.bootPending || link.lease.owner)return r;
+    uint32_t aux=0;
+    if(!value(boot,AUX,aux) || !(aux&(1U<<(2*ddi))))return r; // No active-link cold power-up.
+    r=acquire(io,bridge.state,link.lease,auxDomain(ddi));
+    if(r.status!=Status::Complete)return r;
+    link.port=ddi;link.bootPending=true;
+    if(!dpSourceUnchanged(io,boot,0,ddi,2U<<(2*ddi)) || !held(io,bridge.state,link.lease.domains)) {
+        // Do not release a newly acquired request under a still-active GOP.
+        bridge.state.faulted=true;r.status=Status::RequestLost;
+    }
+    return r;
+}
+// Bind the protected lease to the actual, independently validated native port.
+// The caller retains that object on success and then adopts the boot path.
+// No hardware request or native AUX transaction counter changes at handoff.
+template<class IO> Display13Power::Result adoptDPBootAUX(IO &io,const DisplayReadout &boot,
+    Display13Power::NativeBridge &bridge,Display13Power::MainLinkAUX &link,uintptr_t target,unsigned ddi) {
+    using namespace Display13Power;Result r;
+    if(!target || ddi>=2 || boot.activePipes!=1 || !dpSource(boot,0,ddi) || !dpSourceUnchanged(io,boot,0,ddi) ||
+       bridge.bootPort!=ddi || bridge.bootAdopted || !bridge.bootPGProtected || !bridge.bootDDIProtected ||
+       !bridge.outputHeld(io,ddi,0) || !link.bootPending || link.owner || link.port!=ddi ||
+       link.lease.owner!=&bridge.state || link.lease.domains!=dependencies(auxDomain(ddi)) ||
+       !held(io,bridge.state,link.lease.domains))return r;
+    link.owner=target;link.bootPending=false;r.status=Status::Complete;return r;
 }
 enum class LinearStatus : uint32_t {
     NotAdmitted, Ready, Success, NotSingleHDMI, NotLinearFHD, OtherPlaneActive,

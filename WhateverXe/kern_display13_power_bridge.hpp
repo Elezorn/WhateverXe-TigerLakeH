@@ -238,9 +238,10 @@ struct MainLinkAUX {
     Lease lease;
     uintptr_t owner {};
     unsigned port {UINT32_MAX};
+    bool bootPending {}; // Protected GOP lease, before an actual port object exists.
     template<class IO> Result begin(IO &io,NativeBridge &b,uintptr_t target,unsigned ddi) {
         Result r;
-        if(!target || ddi>=2 || !b.ddiHeld(io,ddi))return r;
+        if(bootPending || !target || ddi>=2 || !b.ddiHeld(io,ddi))return r;
         if(owner) {
             if(owner==target && port==ddi && lease.owner==&b.state &&
                lease.domains==dependencies(auxDomain(ddi)) && held(io,b.state,lease.domains))r.status=Status::Complete;
@@ -254,7 +255,7 @@ struct MainLinkAUX {
     }
     template<class IO> Result end(IO &io,NativeBridge &b,uintptr_t target,unsigned ddi) {
         Result r;
-        if(!target || ddi>=2)return r;
+        if(bootPending || !target || ddi>=2)return r;
         if(!owner && !lease.owner){r.status=Status::Complete;return r;}
         if(owner!=target || port!=ddi || lease.owner!=&b.state || lease.domains!=dependencies(auxDomain(ddi)) ||
            !b.ddiHeld(io,ddi) || !held(io,b.state,lease.domains))return r;

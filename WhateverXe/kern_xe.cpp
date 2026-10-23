@@ -4539,6 +4539,14 @@ struct Display13FBPowerIO {
 	}
 	void delayUs(unsigned us) { IODelay(us); }
 };
+// The static boot reader selects powered banks and fixed Display13 offsets.
+// Broader read access does not expand the power-only write allowlist above.
+struct Display13FBBootIO : Display13FBPowerIO {
+    explicit Display13FBBootIO(IOMemoryMap *m):Display13FBPowerIO{m} {}
+    bool readable(uint32_t r) const {
+        return map && map->getVirtualAddress() && map->getLength()==0x1000000 && r<=0x1000000-4;
+    }
+};
 // Only used after native object/BAR binding and the power lease proof. The
 // common SST/signal sequencers choose all addresses; no caller register input.
 struct Display13FBSSTIO {
@@ -7011,7 +7019,18 @@ void XE::wrapAlderLakeNSetupWorkLoop(IOService *controller,IOWorkLoop *workLoop)
 		}
 		check[37]=valid;
 		if(valid) {
-			if(!c.bridge.bootAdopted)result=c.bridge.adoptBootPath(reinterpret_cast<uintptr_t>(path),0,c.bridge.bootPort);
+			if(!c.bridge.bootAdopted) {
+                const auto ddi=c.bridge.bootPort;
+                const bool dp=ddi<2 && (callbackXE->adlnOutputWiring.dp&(1U<<ddi));
+                bool linked=!dp;
+                if(dp && display13SSTPort(port)) {
+                    Display13FBBootIO io{c.map};const auto boot=AlderLakeN::readDisplay(io,true);
+                    result=AlderLakeN::adoptDPBootAUX(io,boot,c.bridge,c.mainLink[ddi],reinterpret_cast<uintptr_t>(port),ddi);
+                    linked=result.status==Display13Power::Status::Complete;
+                    if(linked)port->retain(); // Released only after real buffer stop/idle.
+                }
+                if(linked)result=c.bridge.adoptBootPath(reinterpret_cast<uintptr_t>(path),0,ddi);
+            }
 			else if(c.bridge.bootPath==reinterpret_cast<uintptr_t>(path))result.status=Display13Power::Status::Complete;
 			if(result.status==Display13Power::Status::Complete &&
 				!Display13Power::publishObject(c.bridge,c.power,0x80,controller,0x1C20))result.status=Display13Power::Status::NotReady;
@@ -8812,7 +8831,8 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 			service->retain();static_cast<OSObject *>(power)->retain();static_cast<OSObject *>(c.access)->retain();
 			Display13FBPowerIO io {map};
 			const auto wells=io.read(Display13Power::Driver),a=io.read(0x60400),pipeA=io.read(0x70008);
-			const auto bootPort=Display13FBTopology::bootDDI(callbackXE->adlnOutputWiring,a);
+			const auto bootPort=Display13FBTopology::bootDDI(callbackXE->adlnOutputWiring,a,true);
+			const bool dpBoot=bootPort<2 && (callbackXE->adlnOutputWiring.dp&(1U<<bootPort));
 			const auto ddi=bootPort<3 ? io.read(0x64000+0x100*bootPort) : UINT32_MAX;
 			// The initial protected references belong to the measured pipe A /
 			// selected Combo boot display. Validate that live topology before acquiring
@@ -8823,8 +8843,18 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 				const auto trans=io.read(0x60400+pipe*0x1000);
 				boot=boot && trans!=UINT32_MAX && !(trans&(1U<<31));
 			}
+            if(boot && dpBoot) {
+                Display13FBBootIO bootIO{map};const auto source=AlderLakeN::readDisplay(bootIO,true);uint32_t aux=0;
+                boot=AlderLakeN::dpSource(source,0,bootPort) && AlderLakeN::dpSourceUnchanged(bootIO,source,0,bootPort) &&
+                    AlderLakeN::value(source,Display13Power::AUX,aux) && (aux&(1U<<(2*bootPort)));
+            }
 			if(boot)result=c.bridge.begin(io,bootPort,callbackXE->adlnOutputWiring.selected());
 			else {result.status=Display13Power::Status::InvalidDomains;adlnFault(c.bridge.state.faulted,__LINE__);}
+            if(result.status==Display13Power::Status::Complete && dpBoot) {
+                Display13FBBootIO bootIO{map};const auto source=AlderLakeN::readDisplay(bootIO,true);
+                result=AlderLakeN::holdDPBootAUX(bootIO,source,c.bridge,c.mainLink[bootPort],bootPort);
+                if(result.status!=Display13Power::Status::Complete)adlnFault(c.bridge.state.faulted,__LINE__);
+            }
 			if(result.status==Display13Power::Status::Complete && !Display13Power::publishObject(c.bridge,power,0x80,controller,0xC60)) {
 				result.status=Display13Power::Status::NotReady;adlnFault(c.bridge.state.faulted,__LINE__);
 			}
