@@ -15,13 +15,18 @@ struct IO {
         {0x45400,0}, {0x45408,0}, {0x4540C,0}, {0x45450,0}, {0x4545C,0}};
     std::vector<std::pair<uint32_t,uint32_t>> writes;
     uint32_t deny {}, allones {}, failedEnable {}, failedEnableReg {}, stickyRelease {};
-    unsigned time {}, delayEnable {};
+    unsigned time {}, delayEnable {}, delayFuse {}, fuseUnavailableAt {UINT32_MAX};
+    uint32_t delayedFuse {};
     bool loseDDIAfterWrite {};
     bool readable(uint32_t reg) { return reg != deny && regs.count(reg); }
     uint32_t read(uint32_t reg) {
         assert(regs.count(reg));
         if (reg == allones || (loseDDIAfterWrite && reg==0x45454 && writes.size()>=3)) return UINT32_MAX;
         update();
+        if(reg==0x42000) {
+            if(time>=fuseUnavailableAt)return UINT32_MAX;
+            return regs[reg] & ~(time<delayFuse ? delayedFuse : 0U);
+        }
         return regs[reg];
     }
     void update() {
@@ -104,8 +109,44 @@ int main() {
       assert(acquire(io,s,l,0x80).status==Status::InvalidDomains && io.writes.empty()); }
     // PW1 prerequisite fuse timeout occurs before any write; no fake lease.
     { IO io; State s; Lease l; assert(initialize(io,s)); io.regs[0x42000]&=~0x08000000U;
-      assert(acquire(io,s,l,BootHDMIB).status==Status::FuseTimeout && io.time==5 && io.writes.empty());
+      assert(acquire(io,s,l,BootHDMIB).status==Status::FuseTimeout && io.time==1000 && io.writes.empty());
       assert(s.faulted && !l.owner); empty(s); }
+    // Linux's fuse wait uses a millisecond budget, not its comment's 1/5 us.
+    // Exercise PG0, PW1, PW2 and every supported pipe after ACK, in acquire
+    // and restore. Literal masks keep the delayed-hardware model independent.
+    const uint32_t masks[]={0x08000000,0x04000000,0x02000000,0x00200000,0x00100000,0x00080000};
+    const Domain domains[]={Domain::PW1,Domain::PW1,Domain::PW2,Domain::PipeA,Domain::PipeB,Domain::PipeC};
+    unsigned fuseCases=0;
+    for(unsigned i=0;i<6;++i)for(unsigned delay:{0U,1U,2U,5U,6U,999U,1000U,1001U,UINT32_MAX})
+    for(bool restoring:{false,true}) {
+      IO io;State s;Lease l;assert(initialize(io,s));
+      if(restoring)assert(ok(acquire(io,s,l,bit(domains[i]))) && ok(suspend(io,s)));
+      io.delayedFuse=masks[i];io.delayFuse=delay;
+      const auto refs=s.refs[0];
+      auto r=restoring?restore(io,s):acquire(io,s,l,bit(domains[i]));
+      if(delay<=1000) {
+        assert(ok(r) && io.time==delay && l.owner==&s && !s.faulted && !s.suspended);
+        assert(s.refs[0]==(restoring?refs:1));
+        assert(ok(release(io,s,l)));empty(s);
+      } else {
+        assert(r.status==Status::FuseTimeout && io.time==1000 && s.faulted);
+        if(restoring)assert(s.suspended && l.owner==&s && s.refs[0]==refs);
+        else {assert(!l.owner && !r.rollbackFailed);empty(s);}
+      }
+      ++fuseCases;
+    }
+    // MMIO disappearing during the longer poll never counts as fuse ready.
+    for(unsigned i=0;i<6;++i)for(bool restoring:{false,true}) {
+      IO io;State s;Lease l;assert(initialize(io,s));
+      if(restoring)assert(ok(acquire(io,s,l,bit(domains[i]))) && ok(suspend(io,s)));
+      io.delayedFuse=masks[i];io.delayFuse=1000;io.fuseUnavailableAt=37;
+      auto r=restoring?restore(io,s):acquire(io,s,l,bit(domains[i]));
+      assert(r.status==Status::Unavailable && io.time==37 && s.faulted);
+      if(restoring)assert(l.owner==&s && s.suspended && s.refs[0]==1);
+      else {assert(!l.owner && !r.rollbackFailed);empty(s);}
+      ++fuseCases;
+    }
+    printf("PASS %u delayed fuse acquire/restore cases\n",fuseCases);
     // Bounded state wait plus rollback; never attempt DDI after failed PW_A.
     { IO io; io.failedEnable=0x400; State s; Lease l; assert(initialize(io,s));
       auto r=acquire(io,s,l,BootHDMIB); assert(r.status==Status::StateTimeout && r.domain==2 &&
@@ -119,7 +160,7 @@ int main() {
       assert(acquire(io,s,l,BootHDMIB).status==Status::NotReady); }
     // Native pipe fuse is checked after request/state, before DDI acquisition.
     { IO io; State s; Lease l; assert(initialize(io,s)); io.regs[0x42000]&=~0x00200000U;
-      auto r=acquire(io,s,l,BootHDMIB); assert(r.status==Status::FuseTimeout && r.domain==2 && io.time==1);
+      auto r=acquire(io,s,l,BootHDMIB); assert(r.status==Status::FuseTimeout && r.domain==2 && io.time==1000);
       assert(!l.owner && !r.rollbackFailed); empty(s); }
     // A stuck final release must retain refs/lease/prerequisites for recovery.
     { IO io; State s; Lease l; assert(initialize(io,s)); assert(ok(acquire(io,s,l,BootHDMIB)));
