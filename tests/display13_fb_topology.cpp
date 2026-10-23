@@ -91,6 +91,38 @@ int main() {
         assert(!apply(out.data(),Bytes,in.data(),malformed) && !memcmp(out.data(),keep.data(),Bytes));
         if(mask==3){auto broken=out;broken.config(0)[5]=0x18;assert(!excludedTypeC(broken.data(),Bytes,w));}
     }
+    // All fixed Combo HDMI/DP assignments compose CPU topology/resources.
+    // DP runtime/boot admission stays closed until the hardware hooks exist.
+    for(unsigned assignment=1;assignment<9;++assignment) {
+        Display13OutputWiring w;w.valid=true;unsigned code=assignment;
+        for(unsigned d=0;d<2;++d){unsigned kind=code%3;code/=3;
+            if(kind==1){w.hdmi|=1U<<d;w.ddc[d]=d+1;}if(kind==2)w.dp|=1U<<d;}
+        Platform in,out;assert(selectedWiring(w) && adlnWiring(w));
+        assert(supportedWiring(w)==!w.dp);assert(apply(out.data(),Bytes,in.data(),w));
+        const auto ports=boundPorts(out.data(),w);assert(ports.valid() && ports.selected==w.selected());
+        for(unsigned d=0;d<9;++d) {
+            const bool on=w.selected()&(1U<<d),hdmi=w.hdmi&(1U<<d);
+            assert(selected(out.data(),out.config(d),w)==on);
+            assert(skipDPLanes(out.data(),out.config(d),w,true,false,0,0)==hdmi);
+            if(on)assert(out.config(d)[2]==(hdmi?2U:1U));
+            for(unsigned mode=0;mode<8;++mode)
+                assert(bootDDI(w,0x80000000|((d+1)<<27)|(mode<<24))==(hdmi&&mode<=1?d:~0U));
+        }
+        assert(excludedTypeC(out.data(),Bytes,w)==0x3f000000);
+        auto reloaded=w;reloaded=wiring;assert(!reloaded.dp && reloaded.hdmi==2);
+        auto bad=w;bad.dp|=bad.hdmi; // Empty HDMI in DP-only: inject explicit overlap.
+        if(!bad.hdmi){bad.hdmi=bad.dp;for(unsigned d=0;d<2;++d)if(bad.hdmi&(1U<<d))bad.ddc[d]=d+1;}
+        auto saved=out;assert(!apply(out.data(),Bytes,in.data(),bad) && !memcmp(out.data(),saved.data(),Bytes));
+        bad=w;bad.dp|=4;assert(!apply(out.data(),Bytes,in.data(),bad) && !memcmp(out.data(),saved.data(),Bytes));
+        auto corrupted=out;
+        for(unsigned d=0;d<2;++d)if(w.dp&(1U<<d)) {
+            corrupted.config(d)[2]=2;assert(!boundPorts(corrupted.data(),w).valid());corrupted=out;
+        }
+    }
+    // A failure on the last selected predecessor must not publish a copy.
+    {const uint32_t prop[]={1,7,1,2,3};const auto w=TGLHDMIWiring::fromProperty(prop,sizeof(prop));
+     Platform in,out;memset(out.data(),0x5a,Bytes);auto saved=out;in.config(2)[2]=0;
+     assert(!apply(out.data(),Bytes,in.data(),w) && !memcmp(out.data(),saved.data(),Bytes));}
     assert(singleOutputWiring(wiring));
     auto invalid=wiring;invalid.ddc[1]=4;assert(bootDDI(invalid,0x90030100)==UINT32_MAX);
     puts("PASS AlderLakeN connector policy: stable identities/counts/pool, A/DDC1, B/DDC2 and A+B; measured single-GOP bootstrap, excluded connectors, malformed wiring and foreign config rejection. CPU only.");

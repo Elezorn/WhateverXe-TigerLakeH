@@ -122,7 +122,7 @@ private:
 	mach_vm_address_t xelpProviderProbe {},xelpProviderConfigureProbe {};
     bool xelpBindProbe(void *controller);
 	bool display13FBTopologyHooksReady {false};
-	Display13HDMIWiring adlnHDMIWiring;
+	Display13OutputWiring adlnOutputWiring;
 	uint64_t adlnPlatform[0x1C0/8] {};
 	IOService *adlnTopologyController {};
 	mach_vm_address_t orgAlderLakeNGetOSInformation {},orgAlderLakeNPortState {};

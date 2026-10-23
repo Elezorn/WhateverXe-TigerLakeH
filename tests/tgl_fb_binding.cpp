@@ -6,7 +6,7 @@ template<class T> void put(void *p,size_t off,T value) {memcpy(static_cast<uint8
 struct Fixture {
     alignas(void*) uint8_t ctl[0x1C20] {},fb[0x4B90] {},path[0x3730] {},plane[0x1C8] {},port[0x580] {},access[0x68] {};
     alignas(void*) uint8_t platform[Display13FBTopology::Bytes] {},donor[Display13FBTopology::Bytes] {};
-    TGLHDMIWiring wiring;
+    Display13OutputWiring wiring;
     Fixture(unsigned fbIndex,unsigned pipe,unsigned ddi) {
         const uint32_t property[] {1,7,1,2,3};wiring=TGLHDMIWiring::fromProperty(property,sizeof(property));
         donor[0x12]=9;const uint32_t panel[] {0,0,0,0,2,0x18};memcpy(donor+0x20,panel,24);
@@ -71,6 +71,20 @@ int main() {
             const auto saved=paths[p];const auto owner=owners[p];paths[p]={};owners[p]=0;
             m=powerPipes(paths,owners,7);assert(m.valid && m.known==(7U&~(1U<<f[p]->inspect().ddi)));
             assert(m.mask[f[p]->inspect().ddi]==7);paths[p]=saved;owners[p]=owner;
+        }
+    }
+    // Mixed HDMI/DP topology feeds the same native binding and withdrawal
+    // map. Change protocol, FB index and pipe independently of physical DDI.
+    for(unsigned dp=1;dp<4;++dp)for(unsigned pipe=0;pipe<3;++pipe)for(unsigned fb=0;fb<3;++fb) {
+        for(unsigned ddi=0;ddi<2;++ddi) {
+            Fixture x(fb,pipe,ddi);x.wiring.hdmi=3&~dp;x.wiring.dp=dp;
+            for(unsigned d=0;d<3;++d)x.wiring.ddc[d]=(x.wiring.hdmi&(1U<<d))?d+1:0;
+            assert(Display13FBTopology::apply(x.platform,sizeof(x.platform),x.donor,x.wiring));x.attach();
+            const auto r=x.inspect(true);assert(r.status==Status::Complete&&r.ddi==ddi&&r.pipe==pipe&&r.framebuffer==fb);
+            PublishedPath paths[3];uintptr_t owners[3]{};owners[pipe]=reinterpret_cast<uintptr_t>(x.fb);
+            assert(publish(paths[pipe],owners[pipe],reinterpret_cast<uintptr_t>(x.path),r,pipe));
+            auto m=powerPipes(paths,owners,x.wiring.selected());assert(m.valid&&m.known==(1U<<ddi)&&m.mask[ddi]==(1U<<pipe));
+            paths[pipe]={};owners[pipe]=0;m=powerPipes(paths,owners,x.wiring.selected());assert(m.valid&&!m.known&&m.mask[ddi]==7);
         }
     }
     // FB index, display pipe, physical DDI and aperture slot need not agree.

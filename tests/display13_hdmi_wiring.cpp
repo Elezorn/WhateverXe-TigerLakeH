@@ -1,7 +1,9 @@
 #include <cassert>
 #include <cstdio>
+#include <type_traits>
 #include "kern_display13_fb_topology.hpp"
 using namespace Display13FBTopology;
+static_assert(!std::is_convertible<Display13OutputWiring,TGLHDMIWiring>::value,"Do not silently drop DP policy through a legacy HDMI API");
 int main() {
     for(unsigned mask=1;mask<=7;++mask) {
         const uint32_t legacy[] {1,mask,(mask&1)?1U:0U,(mask&2)?2U:0U,(mask&4)?3U:0U};

@@ -88,8 +88,8 @@ inline Readout inspect(const Objects &o,const XELP::NativePorts &ports,bool atta
     }
     r.status=Status::Complete;return r;
 }
-// Compatibility adapter for existing Combo callers and their CPU fixtures.
-inline Readout inspect(const Objects &o,const void *platform,const Display13HDMIWiring &w,bool attached=false) {
+// Transport qualification precedes the shared native object binding.
+inline Readout inspect(const Objects &o,const void *platform,const Display13OutputWiring &w,bool attached=false) {
     return inspect(o,Display13FBTopology::boundPorts(platform,w),attached);
 }
 }

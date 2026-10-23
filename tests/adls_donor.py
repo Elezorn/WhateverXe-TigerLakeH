@@ -34,6 +34,7 @@ ports=list(struct.unpack_from('<54I',donor,0x9a928))
 assert ports[:6]==[0,0,0,0,2,0x18]
 assert ports[18:24]==[3,9,1,1,0x400,0x201]
 code='''#include "kern_alderlake_s.hpp"
+#include "kern_display13_fb_topology.hpp"
 #include <cassert>
 #include <cstdio>
 int main() {
@@ -61,6 +62,18 @@ int main() {
  const auto panel=AlderLakeS::Wiring::fromFirmware(firmware);
  assert(panel.panel==1 && panel.apply(platform,sizeof(platform)));
  assert(!memcmp(platform+0x20,ports,24) && panel.boundPanel(platform,reinterpret_cast<uint32_t *>(platform+0x20)));
+ // The same captured predecessor records feed Display13 CPU topology.
+ for(unsigned assignment=1;assignment<9;++assignment) {
+  Display13OutputWiring w;w.valid=true;unsigned code=assignment;
+  for(unsigned d=0;d<2;++d){unsigned kind=code%3;code/=3;
+   if(kind==1){w.hdmi|=1U<<d;w.ddc[d]=d+1;}if(kind==2)w.dp|=1U<<d;}
+  memcpy(platform+0x20,ports,sizeof(ports));alignas(8) uint8_t output[sizeof(platform)]{};
+  assert(Display13FBTopology::apply(output,sizeof(output),platform,w));
+  assert(Display13FBTopology::boundPorts(output,w).selected==w.selected());
+  for(unsigned d=0;d<2;++d)if(w.dp&(1U<<d)) {
+   const uint32_t native[]={d,d+1,1,0,0x400,0x201};assert(!memcmp(output+0x20+24*d,native,sizeof(native)));
+  }
+ }
  puts("PASS exact donor Combo A/B/C register tables and firmware connector adaptation");
 }'''.replace('APHY',','.join(map(str,aphy))).replace('CPHY',','.join(map(str,cphy))).replace('PHY',','.join(map(str,phy))).replace('PORTS',','.join(map(str,ports)))
 with tempfile.TemporaryDirectory(prefix='adls-donor-') as tmp:
