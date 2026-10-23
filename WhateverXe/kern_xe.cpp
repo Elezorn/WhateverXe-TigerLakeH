@@ -6072,9 +6072,97 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
     const bool ready=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
     IORegistryEntry::getRegistryRoot()->setProperty("N97FBGMBusObservationReady",ready);
     const bool complete=ready && processDisplay13FramebufferColor(patcher,index,address,size) &&
-        processDisplay13FramebufferSST(patcher,index,address,size);
+        processDisplay13FramebufferSST(patcher,index,address,size) && processDisplay13FramebufferAUX(patcher,index,address,size);
     adlnComboPLLFractionCaller=complete ? address+0x6D973 : 0;
     return complete;
+}
+
+// The native get/put AUX methods return void. Gate the actual HAL transfer
+// after get, then recheck the public operation after put so neither failure
+// becomes successful DPCD/EDID data. No ACK/status or retry policy is emulated.
+bool XE::processDisplay13FramebufferAUX(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ const char *names[]={"__ZN14AppleIntelPort7readAUXEjPvj","__ZN14AppleIntelPort8writeAUXEjPvj",
+  "__ZN14AppleIntelPort13runI2COverAUXENS_11AUX_CommandEPjjh",
+  "__ZN17AppleIntelPortHAL13runAUXCommandEN14AppleIntelPort11AUX_CommandEPjjb"};
+ const uint32_t offsets[]={0x1CC72,0x1CEB0,0x1D2B6,0x61748};
+ const uint8_t entry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53};
+ if(!adlnDetected || !display13FBABIReady || !display13FBPowerReferencesReady || size<0x138BB0)return false;
+ for(unsigned i=0;i<4;++i) {
+  auto fn=patcher.solveSymbol<mach_vm_address_t>(index,names[i],address,size);patcher.clearError();
+  if(fn!=address+offsets[i] || memcmp(reinterpret_cast<void *>(fn),entry,sizeof(entry)))return false;
+ }
+ auto global=patcher.solveSymbol<mach_vm_address_t>(index,"_gController",address,size);patcher.clearError();
+ if(global!=address+0x138BA8)return false;
+ KernelPatcher::RouteRequest routes[]={
+  {names[0],wrapDisplay13ReadAUX,orgDisplay13ReadAUX},{names[1],wrapDisplay13WriteAUX,orgDisplay13WriteAUX},
+  {names[2],wrapDisplay13I2CAUX,orgDisplay13I2CAUX},{names[3],wrapDisplay13RunAUX,orgDisplay13RunAUX}
+ };
+ display13FBAUXHooksReady=patcher.routeMultiple(index,routes,arrsize(routes),address,size);patcher.clearError();
+ display13AUXControllerSlot=display13FBAUXHooksReady ? global : 0;
+ return display13FBAUXHooksReady;
+}
+
+// Caller holds the display owner lock. Probe may run before setPortMode,
+// hence mode0 is allowed; a DDI/main-link lease is deliberately not required.
+bool XE::display13AUXReady(void *port,bool command) {
+ auto s=callbackXE;auto &c=display13FBPower;auto object=static_cast<OSObject *>(port);
+ if(!s->adlnDetected || s->xeProfile.display!=XELP::Display::XeLPD || !s->display13FBAUXHooksReady ||
+    !object || object->getMetaClass()->getClassSize()<0x5AC || !c.controller ||
+    c.controller!=s->adlnTopologyController || !s->display13AUXControllerSlot ||
+    *reinterpret_cast<void **>(s->display13AUXControllerSlot)!=c.controller || !adlnWriterMappingBound() ||
+    !c.bridge.begun || !c.bridge.state.ready || c.bridge.state.faulted || c.bridge.state.suspended ||
+    c.clockFaulted || c.memoryFaulted || !Display13Power::objectAssociations(c.power,0x80,c.controller,0xC60) ||
+    Display13FBMemory::field<void *>(c.controller,0xD0) ||
+    Display13FBMemory::field<uint32_t>(c.controller,0xB48) ||
+    Display13FBMemory::field<uint8_t>(c.controller,0x1BD8) ||
+    !Display13FBMemory::field<void *>(c.controller,0xC30))return false;
+ auto p=static_cast<uint8_t *>(port);auto config=Display13FBMemory::field<uint32_t *>(p,0x548);
+ if(!Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring) || config[0]>=2 ||
+    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] || Display13FBMemory::field<uint32_t>(p,0x550)>1 ||
+    Display13FBMemory::field<void *>(p,0x578)!=c.access ||
+    Display13FBMemory::field<void *>(c.power,0x10)!=c.controller ||
+    Display13FBMemory::field<void *>(c.power,0x78)!=c.access)return false;
+ // Exact c004 HAL uses CTL + five DATA offsets from the port object.
+ const auto ctl=0x64010+0x100*config[0];
+ for(unsigned n=0;n<6;++n)if(Display13FBMemory::field<uint32_t>(p,0x594+4*n)!=ctl+4*n)return false;
+ if(!command)return true;
+ Display13FBPowerIO io {c.map};return c.bridge.beginAUXCommand(io,config[0]);
+}
+
+uint32_t XE::wrapDisplay13ReadAUX(void *port,uint32_t address,void *data,uint32_t length) {
+ auto &c=display13FBPower;if(!c.lock)return kIOReturnNotReady;
+ IOLockLock(c.lock);const bool ready=display13AUXReady(port,false);IOLockUnlock(c.lock);
+ if(!ready)return kIOReturnNotReady;
+ const auto r=FunctionCast(wrapDisplay13ReadAUX,callbackXE->orgDisplay13ReadAUX)(port,address,data,length);
+ IOLockLock(c.lock);const bool complete=display13AUXReady(port,false);IOLockUnlock(c.lock);
+ return r ? r : complete ? 0 : kIOReturnNotReady;
+}
+uint32_t XE::wrapDisplay13WriteAUX(void *port,uint32_t address,void *data,uint32_t length) {
+ auto &c=display13FBPower;if(!c.lock)return kIOReturnNotReady;
+ IOLockLock(c.lock);const bool ready=display13AUXReady(port,false);IOLockUnlock(c.lock);
+ if(!ready)return kIOReturnNotReady;
+ const auto r=FunctionCast(wrapDisplay13WriteAUX,callbackXE->orgDisplay13WriteAUX)(port,address,data,length);
+ IOLockLock(c.lock);const bool complete=display13AUXReady(port,false);IOLockUnlock(c.lock);
+ return r ? r : complete ? 0 : kIOReturnNotReady;
+}
+uint32_t XE::wrapDisplay13I2CAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,uint8_t flag) {
+ auto &c=display13FBPower;if(!c.lock)return kIOReturnNotReady;
+ IOLockLock(c.lock);const bool ready=display13AUXReady(port,false);IOLockUnlock(c.lock);
+ if(!ready)return kIOReturnNotReady;
+ const auto r=FunctionCast(wrapDisplay13I2CAUX,callbackXE->orgDisplay13I2CAUX)(port,command,packet,length,flag);
+ IOLockLock(c.lock);const bool complete=display13AUXReady(port,false);IOLockUnlock(c.lock);
+ return r ? r : complete ? 0 : kIOReturnNotReady;
+}
+uint32_t XE::wrapDisplay13RunAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,bool flag) {
+ auto &c=display13FBPower;if(!c.lock)return kIOReturnNotReady;
+ IOLockLock(c.lock);const bool ready=display13AUXReady(port,true);
+ const auto ddi=ready ? Display13FBMemory::field<uint32_t>(port,0x120) : 7;
+ IOLockUnlock(c.lock);if(!ready)return kIOReturnNotReady;
+ const auto r=FunctionCast(wrapDisplay13RunAUX,callbackXE->orgDisplay13RunAUX)(port,command,packet,length,flag);
+ IOLockLock(c.lock);Display13FBPowerIO io {c.map};const bool held=c.bridge.endAUXCommand(io,ddi);
+ const bool complete=display13AUXReady(port,false) && held;
+ if(!complete)adlnFault(c.bridge.state.faulted,__LINE__);
+ IOLockUnlock(c.lock);return r ? r : complete ? 0 : kIOReturnNotReady;
 }
 
 bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
@@ -8359,7 +8447,7 @@ void XE::wrapAlderLakeNEngineDisable(void *power) {
 	if(callbackXE->display13FBLifecycleHooksReady && c.bridge.begun && !c.bridge.state.faulted &&
 		c.bridge.state.suspended && !c.engineEnabled && c.clockStopped && !c.engine.domains)status=Display13DBUF::Status::Complete;
 	else if(callbackXE->display13FBLifecycleHooksReady && c.bridge.begun && !c.bridge.state.faulted &&
-		!c.bridge.state.suspended && !c.clockFaulted && !Display13WM::busyPipes(c.pipe) && !c.dbuf.updating &&
+		!c.bridge.state.suspended && !c.bridge.auxBusy() && !c.clockFaulted && !Display13WM::busyPipes(c.pipe) && !c.dbuf.updating &&
 		Display13Power::objectAssociations(power,0x80,c.controller,0x1C20)) {
 		if(!c.engineEnabled && c.clockStopped && !c.engine.domains)status=Display13DBUF::Status::Complete;
 		else {
@@ -8443,7 +8531,7 @@ void XE::wrapAlderLakeNPowerOverride(void *power,bool enable) {
 			if(quiet) {irq.quiescing=true;irq.blockedPipes=7;}
 			IOSimpleLockUnlockEnableInterrupt(irq.lock,saved);
 			if(quiet) {
-				Display13FBPowerIO io {c.map};result=Display13Power::suspend(io,c.bridge.state);
+				Display13FBPowerIO io {c.map};result=c.bridge.suspend(io);
 				const auto done=IOSimpleLockLockDisableInterrupt(irq.lock);
 				irq.quiescing=false;irq.blockedPipes=0;IOSimpleLockUnlockEnableInterrupt(irq.lock,done);
 			}

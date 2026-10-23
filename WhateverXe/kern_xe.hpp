@@ -121,6 +121,15 @@ private:
 	bool display13FBWatermarkHooksReady {false};
 	bool display13FBOutputHooksReady {false};
  bool display13FBSSTHooksReady {};
+ bool display13FBAUXHooksReady {};
+ mach_vm_address_t display13AUXControllerSlot {};
+ mach_vm_address_t orgDisplay13ReadAUX {},orgDisplay13WriteAUX {},orgDisplay13I2CAUX {},orgDisplay13RunAUX {};
+ bool processDisplay13FramebufferAUX(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ static bool display13AUXReady(void *port,bool command);
+ static uint32_t wrapDisplay13ReadAUX(void *port,uint32_t address,void *data,uint32_t length);
+ static uint32_t wrapDisplay13WriteAUX(void *port,uint32_t address,void *data,uint32_t length);
+ static uint32_t wrapDisplay13I2CAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,uint8_t flag);
+ static uint32_t wrapDisplay13RunAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,bool flag);
  mach_vm_address_t orgDisplay13TrainingPattern {},orgDisplay13SignalLevels {};
  mach_vm_address_t orgDisplay13EnablePort {},orgDisplay13DisablePort {};
  static bool display13MainLinkAUX(void *port,bool acquire);

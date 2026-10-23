@@ -36,7 +36,7 @@ inline uint32_t nativeDomains(uint32_t ports) {
 struct NativeBridge {
     State state;
     Lease pgLease[4], ddiLease[7], auxLease[7];
-    uint32_t pgRefs[4] {}, ddiRefs[7] {}, auxRefs[7] {};
+    uint32_t pgRefs[4] {}, ddiRefs[7] {}, auxRefs[7] {}, auxCommands[7] {};
     uint32_t selectedPorts {2};
     unsigned bootPort {1}; // Boot pipe remains A until path admission is generalized.
     bool begun {};
@@ -59,6 +59,30 @@ struct NativeBridge {
     uint32_t nativeAUXRefs(unsigned port) const { return port < 7 ? auxRefs[port] : 0; }
     uint32_t nativeDDIBRefs() const { return nativeDDIRefs(1); }
     uint32_t nativeAUXBRefs() const { return nativeAUXRefs(1); }
+
+    bool auxBusy() const {
+        for(auto count:auxCommands)if(count)return true;
+        return false;
+    }
+    template<class IO> bool auxHeld(IO &io,unsigned port) const {
+        return begun && acceptsPort(port) && auxRefs[port] && auxLease[port].owner==&state &&
+            auxLease[port].domains==dependencies(auxDomain(port)) && held(io,state,auxDomain(port));
+    }
+    // The native read/write/I2C callers own getAUX until their HAL call returns.
+    // Pin that scope against last-put/suspend while the donor waits unlocked.
+    // Main-link AUX or firmware-on alone is not a transaction reference.
+    template<class IO> bool beginAUXCommand(IO &io,unsigned port) {
+        if(!auxHeld(io,port) || auxCommands[port]==UINT32_MAX)return false;
+        ++auxCommands[port];return true;
+    }
+    template<class IO> bool endAUXCommand(IO &io,unsigned port) {
+        if(port>=7 || !auxCommands[port])return false;
+        const bool ready=auxHeld(io,port);--auxCommands[port];return ready;
+    }
+    template<class IO> Result suspend(IO &io) {
+        if(auxBusy())return {};
+        return Display13Power::suspend(io,state);
+    }
 
     // Require the native resource leases, not merely another consumer's
     // physical PW1 hold. Caller serializes this proof through its MMIO use.
@@ -175,7 +199,7 @@ struct NativeBridge {
         Result r;
         if (!begun || state.faulted || state.suspended) return r;
         if (!acceptsPort(port)) { r.status = Status::InvalidDomains; return r; }
-        if (!auxRefs[port]) { r.status = Status::Unbalanced; return r; }
+        if (!auxRefs[port] || (auxRefs[port]==1 && auxCommands[port])) { r.status = Status::Unbalanced; return r; }
         if (auxRefs[port] == 1) {
             r = release(io,state,auxLease[port]);
             if (r.status != Status::Complete) return r;
