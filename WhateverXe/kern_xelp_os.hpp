@@ -4,6 +4,9 @@
 #define KERN_XELP_OS_HPP
 namespace XELP {
 enum class OS { Unknown, Donor, BigSur, Monterey, Ventura, Sonoma, Sequoia, Tahoe };
+inline bool hostOS(OS os) {
+    return os>=OS::BigSur && os<=OS::Tahoe;
+}
 inline OS kernelOS(const char *version) {
     static const char *const versions[] = {
         "Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64",

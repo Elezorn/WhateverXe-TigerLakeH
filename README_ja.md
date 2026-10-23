@@ -119,15 +119,15 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 ### Planned
 
 - Alder Lake／Raptor LakeのS/H/P/U対応。開発版のAlder Lake-S `4690`では、
-  Big SurのHDMIまたは固定DP単独出力とMetal／OpenGLアクセラレーションを確認しています。
+  Big Sur〜TahoeでMetal／OpenGLアクセラレーションと3画面同時表示（1080p60×2＋720p60×1）を確認しています。
   未公開のグラフィックス資材変更が必要で、公開済みpkgでは対応しません。
-  固定DPの再接続は確認済みですが、表示復帰に時間がかかる場合があります。
+  Big Surで固定DPの再接続は確認済みですが、起動時の表示や再接続後の復帰に時間がかかる場合があります。
   HDMI／固定DPの配線は機種・コネクタのプリセットではなくVBTから生成し、現在のバックエンドはCombo PHY A～Cを扱います。
   曖昧な配線、DDIと異なるAUXへの配線、Type-C／TBT機能、PHY D／Eは除外します。
   GPUの適用対象は、確認済みのfuse構成を持つ `4690` revision `0C` に限定しています。
   別のポート配置はCPUテストで確認していますが、実機では未検証です。
   VBT上でCombo PHY Aの固定DPとして扱われるUSB-C端子でも実表示を確認しています。
-  これはType-C/TBT管理経路の動作確認ではありません。消灯／復帰、他のmacOSは未検証です。
+  これはType-C/TBT管理経路の動作確認ではありません。消灯／復帰は未検証です。
 - Display 13のUSB-C / eDP対応
 
 ### Not Planned

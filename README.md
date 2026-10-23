@@ -166,17 +166,18 @@ These results cover tested systems, not every GPU, display, adapter or dock.
 ### Planned
 
 - Alder Lake and Raptor Lake S/H/P/U support. Development support for Alder Lake-S
-  `4690` currently covers Big Sur single-display HDMI or fixed DP with Metal and
-  OpenGL acceleration. It requires unreleased companion graphics changes and is
-  not supported by the published graphics pkg. Fixed DP reconnection has been
-  tested, but display recovery can be delayed. HDMI/fixed-DP routing is derived
+  `4690` has been tested from Big Sur through Tahoe with Metal and OpenGL
+  acceleration and three simultaneous displays (two 1080p60 and one 720p60).
+  It requires unreleased companion graphics changes and is not supported by the
+  published graphics pkg. Fixed DP reconnection has been tested on Big Sur, but
+  initial display output and reconnection can be delayed. HDMI/fixed-DP routing is derived
   from VBT rather than a board or connector preset, within the current Combo
   PHY A–C backend. Ambiguous routes, cross-routed AUX, Type-C/TBT capability
   and PHY D/E are excluded. GPU admission remains limited to `4690` revision
   `0C` with the qualified fuse configuration. Other port layouts have CPU-test
   coverage but are not hardware-qualified. A USB-C connector exposed by VBT
   as fixed DP on Combo PHY A has also been tested. This does not qualify
-  Type-C/TBT-managed routes. Sleep/wake and other macOS versions remain unqualified.
+  Type-C/TBT-managed routes. Sleep/wake remains unqualified.
 - Display 13 USB-C and eDP support
 
 ### Not Planned

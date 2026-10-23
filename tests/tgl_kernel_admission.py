@@ -39,7 +39,7 @@ for(unsigned k=0;k<11;++k)for(unsigned n=0;n<2;++n)for(unsigned o=0;o<2;++o)for(
 version=versions[k];noaccel=n;off=o;currentGraphics=currentFramebuffer=nullptr;
 adlsDetected=family==2;
 select({bool(physical),family==2?XELP::Family::AlderLakeS:family?XELP::Family::TigerLake:XELP::Family::Other});
-bool expected=physical&&family&&!o&&(k<7)&&(family!=2 || k==1);
+bool expected=physical&&family&&!o&&(k<7)&&(family!=2 || k>=1);
 assert(tglRequested==expected);assert(tglAcceleratorRequested==(expected&&!n));
 assert((currentFramebuffer==&kextIntelTGLFb)==expected);++cases;
 }printf("PASS: %u actual TGL admission cases, including Tahoe acceleration, Sequoia acceleration, Sonoma acceleration, Ventura acceleration, noaccel and unknown-kernel rejection\n",cases);

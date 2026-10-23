@@ -3751,7 +3751,7 @@ void XE::selectProfile(const XELP::Profile &profile) {
         return;
     }
     tglRequested=profile.admitted() && (profile.family==XELP::Family::TigerLake ||
-        (adlsDetected && XELP::kernelOS(version)==XELP::OS::BigSur)) &&
+        (adlsDetected && XELP::hostOS(XELP::kernelOS(version)))) &&
         !checkKernelArgument("-wex-tgl-off");
     tglInactivePorts=tglPG1Poll=tglClockOrderRequested=tglTrainingLeaseRequested=tglRequested;
     tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
@@ -4083,7 +4083,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	selectProfile(XELP::deviceProfile(physicalGPU));
     if(xeProfile.family==XELP::Family::AlderLakeS && xeProfile.identity==0x46908086 &&
        xeProfile.revision==0x0C && !xeProfile.overridden() && physicalGPU &&
-       XELP::kernelOS(version)==XELP::OS::BigSur && (physicalGPU->configRead16(4)&2)) {
+       XELP::hostOS(XELP::kernelOS(version)) && (physicalGPU->configRead16(4)&2)) {
         // Gen12 forcewake/fuse coordinates are shared with the existing reader.
         // Its ADL-N profile verdict is not used to admit ADL-S. No engine,
         // GGTT, display, PLL or reset programming is performed here.

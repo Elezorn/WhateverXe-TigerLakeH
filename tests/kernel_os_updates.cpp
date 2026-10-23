@@ -3,6 +3,10 @@
 
 int main() {
     using namespace XELP;
+    assert(!hostOS(OS::Unknown) && !hostOS(OS::Donor));
+    for (unsigned os=unsigned(OS::BigSur);os<=unsigned(OS::Tahoe);++os)
+        assert(hostOS(static_cast<OS>(os)));
+    assert(!hostOS(static_cast<OS>(unsigned(OS::Tahoe)+1)));
     assert(kernelOS(nullptr)==OS::Unknown);
     assert(kernelOS("")==OS::Unknown);
     assert(kernelOS("Darwin Kernel Version 24.6.1: update/RELEASE_X86_64")==OS::Sequoia);
