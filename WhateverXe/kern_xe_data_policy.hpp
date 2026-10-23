@@ -6,8 +6,13 @@ namespace XeDataPolicy {
 enum class Client { None, Compiler, WebKitGPU };
 inline bool service(const char *path, Client client = Client::Compiler) {
     if (!path || client == Client::None) return false;
-    // WebKit's executable vnode is on the OS Cryptex on newer systems.
-    // Accept only the two OS mount roots, followed by the exact service path.
+    // Safari updates can place WebKit in the App Cryptex instead of the OS.
+    // Admit the exact GPU service, never arbitrary staged frameworks or apps.
+    if (client == Client::WebKitGPU && !strcmp(path,
+        "/System/Volumes/Preboot/Cryptexes/App/System/Library/StagedFrameworks/Safari/"
+        "WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/"
+        "Contents/MacOS/com.apple.WebKit.GPU")) return true;
+    // Preserve the two OS mount roots and their original exact service path.
     if (client == Client::WebKitGPU) {
         constexpr const char os[] = "/System/Volumes/Preboot/Cryptexes/OS";
         constexpr const char incoming[] = "/System/Volumes/Preboot/Cryptexes/Incoming/OS";

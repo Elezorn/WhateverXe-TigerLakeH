@@ -39,6 +39,18 @@ int main() {
     for (auto name : {"", "other", "TGLVA.old", "../Info.plist"})
         assert(clientForFile((va+name).c_str(), true) == Client::None);
     assert(service(web, Client::WebKitGPU));
+    const std::string safari = "/System/Volumes/Preboot/Cryptexes/App/System/Library/StagedFrameworks/Safari/"
+        "WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU";
+    assert(service(safari.c_str(), Client::WebKitGPU));
+    assert(!service(safari.c_str(), Client::Compiler));
+    assert(!service((safari+".old").c_str(), Client::WebKitGPU));
+    assert(!service(("/System/Volumes/Data"+safari).c_str(), Client::WebKitGPU));
+    auto other = safari;
+    other.replace(other.find("StagedFrameworks/Safari"), 23, "StagedFrameworks/Other");
+    assert(!service(other.c_str(), Client::WebKitGPU));
+    other = safari;
+    other.replace(other.rfind("com.apple.WebKit.GPU"), 20, "com.apple.WebKit.WebContent");
+    assert(!service(other.c_str(), Client::WebKitGPU));
     for (auto root : {"/System/Volumes/Preboot/Cryptexes/OS", "/System/Volumes/Preboot/Cryptexes/Incoming/OS"}) {
         assert(service((std::string(root)+web).c_str(), Client::WebKitGPU));
         assert(!service((std::string(root)+web).c_str(), Client::Compiler));

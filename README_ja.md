@@ -120,6 +120,9 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 
 - Alder Lake／Raptor LakeのS/H/P/U対応。開発版のAlder Lake-S `4690`では、
   Big Sur〜TahoeでMetal／OpenGLアクセラレーションと3画面同時表示（1080p60×2＋720p60×1）を確認しています。
+  更新版VA資材との組み合わせでは、Big SurとTahoeでハードウェアH.264エンコード／デコード、
+  HEVCデコード、Safariのハードウェア動画デコード、Widevine再生も確認しています。
+  SafariのApp Cryptex内WebKit配置にも対応しています。
   未公開のグラフィックス資材変更が必要で、公開済みpkgでは対応しません。
   Big Surで固定DPの再接続は確認済みですが、起動時の表示や再接続後の復帰に時間がかかる場合があります。
   HDMI／固定DPの配線は機種・コネクタのプリセットではなくVBTから生成し、現在のバックエンドはCombo PHY A～Cを扱います。

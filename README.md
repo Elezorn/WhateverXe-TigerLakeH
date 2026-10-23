@@ -168,6 +168,9 @@ These results cover tested systems, not every GPU, display, adapter or dock.
 - Alder Lake and Raptor Lake S/H/P/U support. Development support for Alder Lake-S
   `4690` has been tested from Big Sur through Tahoe with Metal and OpenGL
   acceleration and three simultaneous displays (two 1080p60 and one 720p60).
+  With the revised VA assets, hardware H.264 encode/decode, HEVC decode,
+  Safari hardware video decoding and Widevine playback have also been tested
+  on Big Sur and Tahoe. Safari's App Cryptex WebKit layout is supported.
   It requires unreleased companion graphics changes and is not supported by the
   published graphics pkg. Fixed DP reconnection has been tested on Big Sur, but
   initial display output and reconnection can be delayed. HDMI/fixed-DP routing is derived
