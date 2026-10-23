@@ -8938,6 +8938,13 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
   patcher.clearError();return ready;
  }
  const bool surfaceABIReady=tglInstallSonomaSurfaceABI(patcher,index,address,size,false);
+ if (xeProfile.identity == 0x9A608086) {
+  // The OpenGL driver reads the PCI device ID through IGAccelDevice::get_hw_caps (selector 0xB) and
+  // USC::CreateCompiler asserts on IDs it does not list (9A60). Report the spoofed backend ID.
+  KernelPatcher::RouteRequest hwCaps("__ZN13IGAccelDevice11get_hw_capsEP16_IntelHwCapsInfoS1_yPy", wrapTGLGetHwCaps, orgTGLGetHwCaps);
+  if (!patcher.routeMultiple(index, &hwCaps, 1, address, size)) SYSLOG("xe", "failed to route get_hw_caps for 9A60");
+  patcher.clearError();
+ }
  IORegistryEntry::getRegistryRoot()->setProperty("TGLSonomaSurfaceAcceleratorReady",surfaceABIReady);
  if(adlnDetected && (checkKernelArgument("-wex-adln-kernel-ctx") || adlnNativeRCSProfileRequested))adlnPrepareRCSProfile(patcher,index,address,size);
    // Serialize only the two direct stores in detectEDRAM. The original
@@ -9075,8 +9082,14 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// native subslice count and publish the separately admitted L3 capacity.
 			uint8_t urbReplaceAlderLakeN[] {0x83,0xFE,0x01,0x75,0x59,0x83,0xFA,0x04,0x75,0x54,0x41,0xC7,0x87,0x64,0x11,0x00,0x00,0x04,0x00,0x00,0x00};
 			if (adlnDetected) { urbReplaceAlderLakeN[7]=adlnNativeSubslices;urbReplaceAlderLakeN[17]=adlnL3Banks; }
-			const auto urbReplacement = xeProfile.gt==XELP::GT::ADLNSmall ? urbReplaceAlderLakeN :
-				(xeProfile.gt==XELP::GT::TGLG4 ? urbReplaceG4 : urbReplace);
+			// TGL-H GT1 (physical 9A60, selected by physical identity because it runs through the
+			// 9A49 override): one slice, 2 DSS = 4 native subslices, 4 L3 banks (256 KiB URB), the
+			// same small-GT capacity ADL-N publishes. Fuse readout on an i7-11850H: 0x9138=1,
+			// 0x9134=0, 0x9118=0xF0, 32 EU.
+			static const uint8_t urbReplaceGT1[] {0x83,0xFE,0x01,0x75,0x59,0x83,0xFA,0x04,0x75,0x54,0x41,0xC7,0x87,0x64,0x11,0x00,0x00,0x04,0x00,0x00,0x00};
+			const auto urbReplacement = xeProfile.identity==0x9A608086 ? urbReplaceGT1 :
+				(xeProfile.gt==XELP::GT::ADLNSmall ? urbReplaceAlderLakeN :
+				(xeProfile.gt==XELP::GT::TGLG4 ? urbReplaceG4 : urbReplace));
 			auto gpuInfo=patcher.solveSymbol<mach_vm_address_t>(index,
 				"__ZN16IntelAccelerator10getGPUInfoEv",address,size);
 			auto urbSite=reinterpret_cast<uint8_t *>(address+0x28781);
@@ -14265,8 +14278,20 @@ uint32_t XE::wrapTGLTopDDC(void *fb, int connection, uint32_t block, uint32_t ty
 	return r;
 }
 
+int XE::wrapTGLGetHwCaps(void *device, void *in, void *out, unsigned long long length, unsigned long long *outLength) {
+	const int ret = FunctionCast(wrapTGLGetHwCaps, callbackXE->orgTGLGetHwCaps)(device, in, out, length, outLength);
+	if (ret != 0 || !out || callbackXE->xeProfile.identity != 0x9A608086) return ret;
+	auto words = static_cast<uint16_t *>(out); // +8 vendor, +0x0A device
+	if (words[0x0A / 2] == 0x9A60) words[0x0A / 2] = 0x9A49;
+	return ret;
+}
+
 uint32_t XE::wrapTGLRegisterRead(void *access, unsigned long reg) {
  const bool trace=tglTransitionRegister(reg);
+	// i7-11850H TGL-H (physical 9A60): GPU_TICKS (0x2910) is a render-domain register sampled by the
+	// framebuffer's GT-frequency statistics (startGTHWAvgFreq without forcewake). With the GT not awake
+	// the read never completes and ends in a machine check. The donor treats a zero sample as "no data".
+	if (reg == 0x2910 && callbackXE->xeProfile.identity == 0x9A608086) return 0;
  if(trace)tglTransitionRecord(35,false,access,reg,tglConnectionCaller(__builtin_return_address(0)),0);
 	auto value = FunctionCast(wrapTGLRegisterRead, callbackXE->orgTGLRegisterRead)(access, reg);
  if(trace)tglTransitionRecord(35,true,access,reg,tglConnectionCaller(__builtin_return_address(0)),value);

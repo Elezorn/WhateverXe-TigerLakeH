@@ -291,6 +291,8 @@ private:
 	bool tglGMBusReady {false};
 	mach_vm_address_t orgTGLGMBus {};
 	mach_vm_address_t orgTGLRegisterRead {}, tglGMBusFunction {};
+	mach_vm_address_t orgTGLGetHwCaps {};
+	static int wrapTGLGetHwCaps(void *device, void *in, void *out, unsigned long long length, unsigned long long *outLength);
 	static uint32_t wrapTGLRegisterRead(void *access, unsigned long reg);
 	static uint32_t wrapTGLGMBus(void *controller, uint32_t bus, uint32_t speed, void *request);
 	bool tglTopologyReady {false};
