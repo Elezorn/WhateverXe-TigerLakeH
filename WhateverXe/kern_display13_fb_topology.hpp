@@ -30,11 +30,15 @@ inline uint32_t singleDDI(const Display13OutputWiring &w) {
 // TGL/XE_LPD TRANS_DDI_FUNC_CTL encodes physical DDI as port+1 at bit27.
 // Dual board wiring alone does not identify the boot connector; use the
 // active pipe's actual TMDS selection and reject an unselected connector.
-inline uint32_t bootDDI(const Display13OutputWiring &w,uint32_t trans) {
-    if(!selectedWiring(w) || trans==UINT32_MAX || !(trans&(1U<<31)) || ((trans>>24)&7)>1)return UINT32_MAX;
+inline uint32_t bootDDI(const Display13OutputWiring &w,uint32_t trans,bool dpSource=false) {
+    if(!selectedWiring(w) || trans==UINT32_MAX || !(trans&(1U<<31)))return UINT32_MAX;
     const auto selector=(trans>>27)&15;
     if(selector<1 || selector>3)return UINT32_MAX;
     const auto port=selector-1;
+    const auto mode=(trans>>24)&7;
+    // Explicit source inspection only; runtime adoption keeps the TMDS default.
+    if(dpSource && mode==2 && port<2 && (w.dp&(1U<<port)))return port;
+    if(mode>1)return UINT32_MAX;
     return (w.hdmi&(1U<<port)) ? port : UINT32_MAX;
 }
 // Current handoff adopts one real GOP on pipe A. A dual board policy does not

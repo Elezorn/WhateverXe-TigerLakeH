@@ -133,10 +133,10 @@ template<class IO> GTReadout readGT(IO &io, bool admitted, uint32_t *edram=nullp
 }
 enum class ReadoutStatus : uint32_t { NotAdmitted, Complete, Unavailable, PowerChanged };
 struct DisplayReadout {
-    uint32_t version {1};
+    uint32_t version {2};
     ReadoutStatus status {ReadoutStatus::NotAdmitted};
     uint32_t count {}, poweredPipes {}, activePipes {}, hdmiBPipes {};
-    Register registers[128] {};
+    Register registers[160] {};
 };
 
 // Read only. Check Display 13 PW_A/B/C before pipe-local registers; do not
@@ -180,6 +180,14 @@ template<class IO> DisplayReadout readDisplay(IO &io, bool admitted) {
             0x70180, 0x70188, 0x7018C, 0x70190, 0x7019C, 0x701A4, 0x701AC,
             0x7027C, 0x7037C, 0x70280, 0x70380, 0x70480, 0x70580, 0x70680, 0x70780};
         for (auto offset : local) add(offset + 0x1000 * pipe);
+        // TGL+ DP transport is transcoder-indexed, not DDI-indexed. M2/N2
+        // are absent on Display13 (Linux intel_cpu_transcoder_has_m2_n2).
+        const uint32_t transport[] {0x60404,0x60540,0x60030,0x60034,0x60040,0x60044};
+        for (auto offset : transport)
+            add(offset + 0x1000 * pipe);
+        add(0x46140 + 4 * pipe);
+        // Display13 DSC/joiner belongs to the corresponding pipe well.
+        add(0x78000 + 0x200 * pipe);add(0x78004 + 0x200 * pipe);
     }
     const auto after = add(0x45404);
     if (r.status == ReadoutStatus::Complete && after != power)

@@ -12,6 +12,32 @@ struct Result {
     uint32_t version {1};Status status {Status::Unavailable};
     uint32_t stage {},writes {},before {},after {},lastReg {},expected {},observed {},framesBefore {},framesAfter {};
 };
+// Source-side certificate for an already-running, uncompressed external SST
+// GOP. This does not prove sink DPCD state, PLL rate or native AUX ownership.
+inline bool dpSource(const AlderLakeN::DisplayReadout &boot,unsigned pipe,unsigned ddi) {
+    if(pipe>=3 || ddi>=2 || boot.status!=AlderLakeN::ReadoutStatus::Complete ||
+       !(boot.activePipes&boot.poweredPipes&(1U<<pipe)))return false;
+    const auto bank=pipe*0x1000;
+    uint32_t trans=0,tp=0,buf=0,clock=0,ctl2=0,dss1=0,dss2=0,dm=0,dn=0,lm=0,ln=0;
+    if(!AlderLakeN::value(boot,0x60400+bank,trans) || !AlderLakeN::value(boot,0x60540+bank,tp) ||
+       !AlderLakeN::value(boot,0x64000+ddi*0x100,buf) || !AlderLakeN::value(boot,0x46140+4*pipe,clock) ||
+       !AlderLakeN::value(boot,0x60404+bank,ctl2) || !AlderLakeN::value(boot,0x78000+pipe*0x200,dss1) ||
+       !AlderLakeN::value(boot,0x78004+pipe*0x200,dss2) || !AlderLakeN::value(boot,0x60030+bank,dm) ||
+       !AlderLakeN::value(boot,0x60034+bank,dn) || !AlderLakeN::value(boot,0x60040+bank,lm) ||
+       !AlderLakeN::value(boot,0x60044+bank,ln))return false;
+    const unsigned lanes=((trans>>1)&7)+1;
+    // Linux v6.12 i915_reg.h: SST, normal training, scrambling, no FEC/MST,
+    // port sync, HDCP, DSC or joined pipes. Enhanced framing may be on or off.
+    return (trans&0xFF700000U)==(0x82000000U|((ddi+1)<<27)) &&
+        !(trans&((1U<<15)|(1U<<9)|(1U<<8))) && !ctl2 &&
+        (lanes==1 || lanes==2 || lanes==4) && ((buf>>1)&7)==lanes-1 &&
+        (buf&0x800000C0U)==0x80000000U && (clock>>28)==ddi+1 &&
+        (tp&~(1U<<18))==0x80000300U &&
+        !(dss1&0xF0300000U) && !(dss2&0x80008000U) &&
+        !(dm&0x81000000U) && (dm&0xFFFFFF) &&
+        dn && !(dn&0xFF000000U) && lm && !(lm&0xFF000000U) && ln && !(ln&0xFF000000U) &&
+        (dm&0xFFFFFF)<=dn;
+}
 template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boot,bool admitted,
                                     const Display13HDMIWiring &w,const XELPMemory::Layout &memory) {
     Result r;r.before=boot.activePipes;
@@ -20,8 +46,8 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
     const auto active=boot.activePipes;
     if(!memory.valid || !Display13FBTopology::multiOutputWiring(w) || boot.status!=AlderLakeN::ReadoutStatus::Complete ||
        !(active&1) || active==1 || (active&~7U) || (active&~boot.poweredPipes))return r;
-    uint32_t ports[3] {},clocks[3] {},used=0;
-    // Every active firmware pipe must be a distinct selected linear TMDS GOP.
+    uint32_t ports[3] {},clocks[3] {},transport[3] {},used=0,dpPipes=0;
+    // Every active firmware pipe must be a distinct selected linear GOP.
     // Pipe identity and physical DDI are independent. No foreign cursor/plane/DSB.
     for(unsigned p=0;p<3;++p)if(boot.poweredPipes&(1U<<p)) {
         const auto bank=p*0x1000;uint32_t v=0;
@@ -38,8 +64,12 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
         }
         uint32_t ctl=0,trans=0,surface=0,live=0;
         if(!AlderLakeN::value(boot,0x70180+bank,ctl) || !AlderLakeN::value(boot,0x60400+bank,trans))return r;
-        const auto port=Display13FBTopology::bootDDI(w,trans);
+        const auto port=Display13FBTopology::bootDDI(w,trans,true);
         if(port>=3 || (used&(1U<<port)))return r;
+        if(((trans>>24)&7)==2) {
+            if(!dpSource(boot,p,port))return r;
+            dpPipes|=1U<<p;AlderLakeN::value(boot,0x60540+bank,transport[p]);
+        }
         ports[p]=port;used|=1U<<port;
         uint32_t stride=0,size=0,position=0,offset=0,ht=0,vt=0,conf=0;
         if(((trans>>20)&7) || !AlderLakeN::value(boot,0x70188+bank,stride) ||
@@ -74,7 +104,8 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
             for(unsigned p=1;p<3;++p)if((active&(1U<<p)) && (p==current || (parked&(1U<<p)))) {
                 const auto bank=0x1000*p;
                 if((reg>=0x60000+bank && reg<0x61000+bank) ||
-                   (reg>=0x70000+bank && reg<0x71000+bank) || reg==0x64000+0x100*ports[p])mutableReg=true;
+                   (reg>=0x70000+bank && reg<0x71000+bank) || reg==0x64000+0x100*ports[p] ||
+                   reg==0x46140+4*p)mutableReg=true;
             }
             if(reg==0x70040 || reg==0x71040 || reg==0x72040)continue;
             if(!mutableReg && io.read(reg)!=pair.value) {
@@ -115,6 +146,12 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
         r.stage=3;write(0x60404+bank,0);write(0x60400+bank,trans&~(0x80000000U|(15U<<27)|(7U<<24)));
         if(!wait(0x60400+bank,0x80000000,0))return r;
         r.stage=4;write(bufReg,buf&~0x80000000U);
+        // Display12/13 disable_ddi_buf: buffer off, transport off, then idle.
+        // Stop only this transcoder; preserve the adopted GOP's M/N and link.
+        if(dpPipes&(1U<<p)) {
+            write(0x60540+bank,transport[p]&~0x80000000U);
+            if(!wait(0x60540+bank,0x80000000U,0))return r;
+        }
         if(!wait(bufReg,0x80000080,0x80))return r;
         r.stage=5;write(0x46140+4*p,clocks[p]&0x0FFFFFFF);
         if(!wait(0x46140+4*p,UINT32_MAX,clocks[p]&0x0FFFFFFF))return r;
