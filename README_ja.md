@@ -116,7 +116,7 @@ Safariのインストール先や更新による配置変更に依存せずData�
 - Safariの動画再生で、ときどきコマ落ちが発生します。
 - 同時出力は最大3画面です。4画面目には映像が出ません。
 - 開発版ではTGL Combo A/Bの固定外部DPもVBTから配線を生成し、他のDP経路とSST訓練・電源・AUX保持を共有します。この組合せはCPU試験済みで実機未検証です。AUXの交差配線やType-C/TBT管理を必要とするCombo配線は除外します。
-- TGL eDPの信号設定は、物理GPUのsubplatformとVBTのpanel情報からRBR〜HBR3を選択します。HBR3未満のHOBL訓練は引き続きdonorが管理します。高速度の選択はCPU試験済みですが、上記の実機結果は全link rateの動作保証ではありません。
+- TGL eDPの信号設定は、物理GPUのsubplatformとVBTのpanel情報からRBR〜HBR3を選択します。HOBLを要求するfirmwareでも標準のLinux fallback係数を使用します。HOBL最適化は再試行処理を実装するまで無効です。高速度の選択はCPU試験済みですが、上記の実機結果は全link rateの動作保証ではありません。
 - システム全体のスリープ／復帰と、上記を超える解像度は未検証です。USB-C映像出力では現在、表示回路の一部を省電力状態へ移行させずに動作させています。
 
 ## ロードマップ

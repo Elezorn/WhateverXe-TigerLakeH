@@ -59,7 +59,7 @@ int main(){
   if(bad==11)store(p,0x578,ctl+0);
   if(bad==12)store(p,0x124,3U);
   if(bad==13)store(p,0x128,12U);
-  if(bad==14)state.firmwarePorts.panel.hobl=true;
+  if(bad==14)state.xeProfile.identity=0x9A491234;
   if(bad==15)store(p,0x620,0x6C804U);
   if(bad==16)store(access,0x60,0x100000U);
   if(bad==17)registers[0x45404]=0;
@@ -87,8 +87,7 @@ int main(){
   store(p,0x124,4U);store(p,0x128,rate);store(p,0x620,0x162804U);store(p,0x5C8,0x162028U);
   store(access,0x60,0x200000U);store(access,0x50,ctl+0);
   registers.clear();registers[0x45404]=3;registers[0x45454]=3;reads=writes=records=0;
-  uint32_t result=99;assert(run(p,0,1,nullptr,result)==(!hobl||rate==30));
-  if(hobl&&rate!=30){assert(!writes);continue;}
+  uint32_t result=99;assert(run(p,0,1,nullptr,result));
   assert(result==0);
   const unsigned post=rate==30?8:low?7:id==0x9A608086?8:9;
   assert(((registers[0x162890]>>12)&63)==post);

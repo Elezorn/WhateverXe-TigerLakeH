@@ -8,7 +8,7 @@ int main() {
  for(unsigned rate:{6,10,20,30})for(bool low:{false,true})for(bool hobl:{false,true})
  for(unsigned vs=0;vs<5;++vs)for(unsigned pre=0;pre<5;++pre) {
   TGLComboSignal s;
-  bool valid=ddi<2&&(lanes==1||lanes==2||lanes==4)&&(!hobl||rate==30)&&
+  bool valid=ddi<2&&(lanes==1||lanes==2||lanes==4)&&
       (rate==6||rate==10||rate==20||rate==30)&&vs<4&&pre<4&&vs+pre<=3;
   assert(s.select(ddi,lanes,rate,low,hobl,vs,pre)==valid);
   if(!valid)continue;

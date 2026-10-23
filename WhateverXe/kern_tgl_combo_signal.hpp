@@ -29,9 +29,12 @@ struct TGLComboSignal {
     bool select(uint32_t ddi,uint32_t count,uint32_t rate,bool lowSwing,bool hobl,
                 uint32_t voltage,uint32_t emphasis,
                 XELP::ComboPolicy::Platform platform=XELP::ComboPolicy::Platform::TGL,bool panel=true) {
-        // HOBL needs a training-failure retry policy, so keep that native
-        // operation intact. At HBR3 Linux ignores both panel swing flags.
-        if(ddi>1 || (count!=1 && count!=2 && count!=4) || (panel && hobl && rate!=30) ||
+        // HOBL is an optional optimization. Until a retry backend owns its
+        // hobl_active/hobl_failed lifecycle, select Linux's standard fallback
+        // directly. Never fall through to unqualified donor coefficients just
+        // because firmware requests HOBL. At HBR3 neither panel flag applies.
+        (void)hobl;
+        if(ddi>1 || (count!=1 && count!=2 && count!=4) ||
            (platform!=XELP::ComboPolicy::Platform::TGL && platform!=XELP::ComboPolicy::Platform::TGLUY))return false;
         XELP::ComboPolicy policy;
         if(!policy.select(platform,rate,panel,lowSwing,false,voltage,emphasis))return false;
