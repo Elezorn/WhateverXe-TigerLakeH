@@ -64,6 +64,7 @@ struct DisplayContract {
   ClockOrder=1ULL<<54,
   ComboAUXGate=1ULL<<55,
   PanelDepth=1ULL<<56,
+  PanelTiming=1ULL<<57,
  };
  Mask required {},available {};
  Mask missing() const {return required&~available;}
@@ -88,7 +89,7 @@ struct DisplayContract {
   if(r.hdmi)required|=GMBus;
   if(r.leaseRequested||r.combo||r.legacy||r.alt)required|=Training12;
   if(r.panel||r.combo)required|=Combo12;
-  if(r.panel)required|=PanelDepth;
+  if(r.panel)required|=PanelDepth|PanelTiming|PowerGet|PowerPut;
   if(r.combo)required|=AUXParent;
   if(r.legacy)required|=Fixed12;
   if(r.legacy||r.alt)required|=Framing|ModeLock;
@@ -158,6 +159,7 @@ struct DisplayContract {
    case ClockOrder:return "ClockOrder";
    case ComboAUXGate:return "ComboAUXGate";
    case PanelDepth:return "PanelDepth";
+   case PanelTiming:return "PanelTiming";
    default:return "Unknown";
   }
  }

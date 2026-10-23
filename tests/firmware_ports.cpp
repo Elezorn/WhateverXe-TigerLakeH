@@ -141,5 +141,32 @@ int main(int argc,char **argv){
   auto q=parse(b.data(),b.size(),Family::TigerLake);
   assert(q.valid()&&!q.panel.valid);
  }
+ // PPS sequences select all five fields for all 16 panel types. Backlight
+ // corruption is independent of signal/PPS facts and unrelated connectors.
+ auto bl=append(panelTable,43,129);panelTable[bl]=6;
+ for(unsigned n=0;n<16;++n) {
+  for(unsigned i=0;i<5;++i)w16(panelTable,edp+10*n+2*i,100*n+i+1);
+  panelTable[bl+1+6*n]=6;w16(panelTable,bl+2+6*n,200+n);
+  panelTable[bl+113+n]=uint8_t(n<<4|2);
+ }
+ for(unsigned n=0;n<16;++n) {
+  auto b=panelTable;b[options]=n;auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.panel.valid && q.panel.backlightValid && q.panel.pwmPresent && q.panel.activeLowPWM);
+  assert(q.panel.controller==n && q.panel.backlightType==2 && q.panel.pwmHz==200+n);
+  for(unsigned i=0;i<5;++i)assert(q.panel.delays[i]==100*n+i+1);
+ }
+ for(unsigned bad=0;bad<3;++bad) {
+  auto b=panelTable;
+  if(bad==0)b[bl]=7;
+  if(bad==1)w16(b,bl-2,128);
+  if(bad==2)append(b,43,129);
+  auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.panel.valid && !q.panel.backlightValid && q.hdmi(3).hdmi==2);
+ }
+ for(size_t n=bl;n<panelTable.size();++n) {
+  auto b=panelTable;b.resize(n);w16(b,24,b.size());w16(b,68,b.size()-48);
+  auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.panel.valid && !q.panel.backlightValid);
+ }
  puts("PASS firmware bounds, checksum diagnostics, connector maps, optional panel facts and OpRegion addresses");
 }

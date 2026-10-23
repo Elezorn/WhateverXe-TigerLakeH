@@ -255,6 +255,13 @@ private:
 	mach_vm_address_t orgTGLPlaneSetup {}, orgTGLColorMode {}, orgTGLPixelInfo {};
 	mach_vm_address_t orgTGLModeTiming {};
 	bool tglPanelDepthReady {false};
+ bool tglPanelTimingReady {};
+ mach_vm_address_t orgTGLPanelTiming {},orgTGLPanelConfig {};
+ uint32_t tglPanelTimingBIOS[3] {};
+ bool tglPanelTimingBIOSValid {};
+ static void tglApplyPanelTiming(void *controller,bool apply);
+ static void wrapTGLPanelConfig(void *controller,uint32_t config);
+ static uint32_t wrapTGLPanelTiming(void *controller);
 	static uint32_t tglPanelDepthPort(void *port);
 	static void wrapTGLModeTiming(void *controller,void *fb,void *timing);
 	mach_vm_address_t orgTGLGamma10 {}, orgTGLRegisterWrite {}, orgTGLFastRegisterWrite {};

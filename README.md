@@ -163,6 +163,7 @@ installation or update location.
   receive an image.
 - Development builds also derive fixed external DP on TGL Combo A/B from VBT and share the SST training, power and AUX lifetime with other DP routes. This composition has CPU coverage and is not yet hardware-qualified. Cross-routed AUX and Type-C/TBT-managed Combo wiring remain excluded.
 - TGL eDP signal selection covers RBR through HBR3 using the physical GPU subplatform and VBT panel flags. Firmware requesting HOBL uses standard Linux fallback coefficients; the HOBL optimization remains disabled until its retry lifecycle is supported. High-rate selection has CPU coverage; the hardware results above do not qualify every link rate.
+- Qualified TGL PWM/PPS 0 panels combine VBT delays, initial firmware timing and explicit panel properties while retaining native power sequencing. The new timing adapter has CPU and exact-donor coverage; other backlight methods and PPS controllers remain outside its scope.
 - Full system sleep/wake and resolutions above those listed above are unverified.
   USB-C display output currently prevents part of the display hardware from
   entering a low-power state.

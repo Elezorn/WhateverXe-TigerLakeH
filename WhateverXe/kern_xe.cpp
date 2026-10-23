@@ -29,6 +29,7 @@
 #include "kern_tgl_port_map.hpp"
 #include "kern_tgl_combo_signal.hpp"
 #include "kern_tgl_panel_depth.hpp"
+#include "kern_xelp_panel_power.hpp"
 #include "kern_tgl_pcode_gate.hpp"
 #include "kern_tgl_pcode_edram.hpp"
 #include "kern_tgl_tc_cold.hpp"
@@ -10106,6 +10107,26 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				patcher.clearError();
 			}
 
+   if(tglActive) {
+    // PANEL_TIMING_INSTALL: exact property writer and its native consumer.
+    const char *symbol="__ZN31AppleIntelFramebufferController26hwGetPanelTimingPropertiesEv";
+    const uint8_t entry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x53,0x50,0x48,0x89,0xfb,0x48,0xff,0x05,0x08,0x60,0x09,0x00};
+    const uint8_t call[]={0xe8,0xb5,0x4c,0x00,0x00,0x8b,0x93,0x48,0x15,0x00,0x00};
+    const auto target=patcher.solveSymbol(index,symbol,address,size);
+    const auto config=patcher.solveSymbol(index,"__ZN31AppleIntelFramebufferController21hwSetPanelPowerConfigEj",address,size);
+    const bool known=size>=0x48651 && target==address+0x4848c && config==address+0x437a6 &&
+     !memcmp(reinterpret_cast<void *>(target),entry,sizeof(entry)) &&
+     !memcmp(reinterpret_cast<void *>(address+0x437d2),call,sizeof(call));
+    KernelPatcher::RouteRequest routes[] {
+     {symbol,wrapTGLPanelTiming,orgTGLPanelTiming},
+     {"__ZN31AppleIntelFramebufferController21hwSetPanelPowerConfigEj",wrapTGLPanelConfig,orgTGLPanelConfig}
+    };
+    tglPanelTimingReady=known && patcher.routeMultiple(index,routes,2,address,size);
+    IORegistryEntry::getRegistryRoot()->setProperty("WEXPanelTimingReady",tglPanelTimingReady);
+    patcher.clearError();
+    // PANEL_TIMING_INSTALL_END
+   }
+
 			if (tglActive) {
 				// TGL/Xe-LP has no dedicated eDP transcoder. Keep the allocated
 				// pipe (or getTranscoderOffset's pipe argument), including when
@@ -11014,6 +11035,60 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 	return false;
 }
 
+// Retain hwSetPanelPowerConfig's caller-serialization contract. The wrapper
+// completes its timing-property input; it never writes PPS control/status or
+// calls the panel on/off sequence recursively. Capture before either config
+// branch can overwrite BIOS delays; reset on each native controller start.
+void XE::tglApplyPanelTiming(void *controller,bool apply) {
+ auto s=callbackXE;
+ auto c=static_cast<uint8_t *>(controller);
+ const auto &v=s->firmwarePorts;
+ if(!c || c!=s->tglObservationController || !s->tglActive || !s->tglPanelTimingReady ||
+    !XELP::PanelPower::nativePPS0(v,s->xeProfile.family) || !s->tglTCNativeFunctions.complete() ||
+    *s->tglTCNativeFunctions.controllerSlot!=controller || !s->orgTGLRegisterRead ||
+    c[0x918] || *reinterpret_cast<void **>(c+0xD0) ||
+    *reinterpret_cast<void **>(c+0xD40)!=s->tglPlatformCopy)return;
+ const auto ddi=v.panel.ddi;
+ auto port=static_cast<uint8_t *>(s->tglTCNativeFunctions.portByDDI(ddi));
+ const auto cfg=reinterpret_cast<const uint32_t *>(reinterpret_cast<const uint8_t *>(s->tglPlatformCopy)+0x20+24*ddi);
+ if(!port || port[0x117] || *reinterpret_cast<const uint32_t **>(port+0x548)!=cfg ||
+    cfg[0]!=ddi || cfg[2]!=0 || cfg[3]!=0 || *reinterpret_cast<uint32_t *>(port+0x550)!=1)return;
+ auto access=*reinterpret_cast<uint8_t **>(c+0xC40);
+ auto power=*reinterpret_cast<uint8_t **>(c+0xC8);
+ if(!access || !power || *reinterpret_cast<void **>(power+0x10)!=controller || power[0x18] ||
+    *reinterpret_cast<void **>(power+0x78)!=access || *reinterpret_cast<void **>(port+0x578)!=access ||
+    !*reinterpret_cast<void **>(access+0x50) || *reinterpret_cast<uint32_t *>(access+0x60)<0xC7210)return;
+ if(!s->tglPanelTimingBIOSValid) {
+  auto &f=s->tglTCNativeFunctions;
+  f.getPG(power,1);
+  const auto read=[&](uint32_t reg){return FunctionCast(wrapTGLRegisterRead,s->orgTGLRegisterRead)(access,reg);};
+  const auto wells=read(0x45404),fuse=read(0x42000);
+  if(wells!=~0U && fuse!=~0U && (wells&1) && (fuse&0x01000000)) {
+   const auto on=read(0xC7208),off=read(0xC720C),control=read(0xC7204);
+   if(on!=~0U && off!=~0U && control!=~0U) {
+    s->tglPanelTimingBIOS[0]=on;s->tglPanelTimingBIOS[1]=off;s->tglPanelTimingBIOS[2]=control;
+    s->tglPanelTimingBIOSValid=true;
+   }
+  }
+  f.putPG(power,1);
+ }
+ if(!apply || !s->tglPanelTimingBIOSValid)return;
+ const auto &bios=s->tglPanelTimingBIOS;
+ const auto plan=XELP::PanelPower::select(v.panel,reinterpret_cast<uint32_t *>(c+0x1548),bios[0],bios[1],bios[2]);
+ if(plan.valid)memcpy(c+0x1548,plan.fields,sizeof(plan.fields));
+ uint32_t detail[]={1,ddi,plan.valid,plan.fields[0],plan.fields[1],plan.fields[2],plan.fields[3],plan.fields[4]};
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXPanelTimingLast",detail,sizeof(detail));
+}
+void XE::wrapTGLPanelConfig(void *controller,uint32_t config) {
+ tglApplyPanelTiming(controller,false);
+ FunctionCast(wrapTGLPanelConfig,callbackXE->orgTGLPanelConfig)(controller,config);
+}
+uint32_t XE::wrapTGLPanelTiming(void *controller) {
+ const auto result=FunctionCast(wrapTGLPanelTiming,callbackXE->orgTGLPanelTiming)(controller);
+ if(!result)tglApplyPanelTiming(controller,true);
+ return result;
+}
+
 bool XE::wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value) {
  if(framebuffer)return framebuffer->setProperty("AAPL,LCD-PowerState-ON",value);
  static uint32_t skipped {};
@@ -11183,6 +11258,7 @@ XELP::DisplayContract::Mask XE::display12Available() const {
  if(tglClockOffCaller)a|=C::ClockOrder;
  if(tglComboAUXGateReady)a|=C::ComboAUXGate;
  if(tglPanelDepthReady)a|=C::PanelDepth;
+ if(tglPanelTimingReady)a|=C::PanelTiming;
  return a;
 }
 
@@ -11272,6 +11348,8 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
   that->setProperty("TGLHostProviderWorkLoopSelected",ok);
   if (!ok) return false;
  }
+ // A reused controller address must not inherit another start's PPS snapshot.
+ callbackXE->tglPanelTimingBIOSValid=false;
 	callbackXE->tglObservationController = that;
  if (checkKernelArgument("-disablegfxfirmware")) {
   auto live=OSSerializer::forTarget(nullptr,tglIRQLiveSerialize);
