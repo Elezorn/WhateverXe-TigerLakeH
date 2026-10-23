@@ -23,28 +23,38 @@ for at in range(0x5f468,0x5f610,17):
 assert donor[0x5f611:0x5f618]==bytes.fromhex('41c78648060000')
 cfields[0x648]=struct.unpack_from('<I',donor,0x5f618)[0]
 cphy=[cfields[off] for off in range(0x5ac,0x64c,4)]
+afields={}
+for at in range(0x5f0c0,0x5f269,17):
+    assert donor[at:at+2]==b'\x48\xb8' and donor[at+10:at+13]==b'\x49\x89\x86'
+    lo,hi=struct.unpack_from('<II',donor,at+2);offset=struct.unpack_from('<I',donor,at+13)[0]
+    afields[offset]=lo;afields[offset+4]=hi
+afields[0x648]=struct.unpack_from('<I',donor,0x5f270)[0]
+aphy=[afields.get(off,0) for off in range(0x580,0x6a8,4)]
 ports=list(struct.unpack_from('<54I',donor,0x9a928))
 assert ports[18:24]==[3,9,1,1,0x400,0x201]
 code='''#include "kern_alderlake_s.hpp"
 #include <cassert>
 #include <cstdio>
 int main() {
- const uint32_t cphy[]={CPHY};const uint32_t phy[]={PHY};const uint32_t ports[]={PORTS};
+ const uint32_t aphy[]={APHY};const uint32_t cphy[]={CPHY};const uint32_t phy[]={PHY};const uint32_t ports[]={PORTS};
  uint32_t registers[0x128/4] {};registers[4]=0x64300;registers[(0x64c-0x580)/4]=0x4610c;
- assert(AlderLakeS::comboBRegisters(registers,sizeof(registers)/4));
+ assert(AlderLakeS::comboRegisters(3,registers,sizeof(registers)/4));
  assert(!memcmp(registers+(0x5ac-0x580)/4,phy,sizeof(phy)));
  memset(registers,0,sizeof(registers));registers[4]=0x64400;registers[(0x64c-0x580)/4]=0x46110;
- assert(AlderLakeS::comboCRegisters(registers,sizeof(registers)/4));
+ assert(AlderLakeS::comboRegisters(4,registers,sizeof(registers)/4));
  assert(!memcmp(registers+(0x5ac-0x580)/4,cphy,sizeof(cphy)));
+ memcpy(registers,aphy,sizeof(aphy));
+ assert(AlderLakeS::comboRegisters(0,registers,sizeof(registers)/4));
+ assert(registers[(0x640-0x580)/4]==0x162A24); // donor duplicated lane3; restore lane2
  alignas(8) uint8_t platform[0x1c0] {};platform[0x12]=9;
  memcpy(platform+0x20,ports,sizeof(ports));
  XELP::VBT::Ports firmware;firmware.status=XELP::VBT::Status::Valid;
  firmware.present=8;firmware.port[3]={0x60d2,1,2};
- const auto wiring=AlderLakeS::HDMI::fromFirmware(firmware);
+ const auto wiring=AlderLakeS::Wiring::fromFirmware(firmware);
  assert(wiring.apply(platform,sizeof(platform)));
  assert(wiring.matches(reinterpret_cast<uint32_t *>(platform+0x68)));
- puts("PASS exact donor Combo B register table and physical TC1 connector adaptation");
-}'''.replace('CPHY',','.join(map(str,cphy))).replace('PHY',','.join(map(str,phy))).replace('PORTS',','.join(map(str,ports)))
+ puts("PASS exact donor Combo A/B/C register tables and firmware connector adaptation");
+}'''.replace('APHY',','.join(map(str,aphy))).replace('CPHY',','.join(map(str,cphy))).replace('PHY',','.join(map(str,phy))).replace('PORTS',','.join(map(str,ports)))
 with tempfile.TemporaryDirectory(prefix='adls-donor-') as tmp:
     tmp=Path(tmp);(tmp/'test.cpp').write_text(code)
     subprocess.run(['clang++','-std=c++17','-O1','-fsanitize=address,undefined','-I'+str(repo/'WhateverXe'),

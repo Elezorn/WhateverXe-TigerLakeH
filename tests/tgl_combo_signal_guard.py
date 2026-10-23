@@ -18,7 +18,7 @@ code=r'''
 #include <map>
 #include <cstdio>
 struct State {
- bool adlsDetected=false,adlsDPWiring=false;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
+ bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  void *tglObservationController=nullptr;bool tglActive=true,tglComboSignalReady=true;
  struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;
@@ -27,6 +27,7 @@ constexpr uint32_t kIOReturnNotReady=0xe00002d8;
 std::map<unsigned,unsigned> registers;unsigned reads=0,writes=0,records=0;
 uint32_t wrapTGLRegisterRead(void *,unsigned long reg){++reads;return registers[reg];}
 void wrapTGLRegisterWrite(void *,unsigned long reg,uint32_t value){++writes;
+ if(reg==0x6C694)for(unsigned n=0;n<4;++n)registers[0x6C894+0x100*n]=value;
  if(reg==0x160694)for(unsigned n=0;n<4;++n)registers[0x160894+0x100*n]=value;
  if(reg==0x162694)for(unsigned n=0;n<4;++n)registers[0x162894+0x100*n]=value;
  registers[reg]=value;
@@ -69,26 +70,27 @@ int main(){
   if(bad==19)assert(result==kIOReturnNotReady);
   if(bad!=0&&bad!=17&&bad!=18&&bad!=19)assert(reads==0);
  }
- for(unsigned bad=0;bad<12;++bad) {
+ for(unsigned ddi:{0u,3u,4u})for(unsigned bad=0;bad<12;++bad) {
   alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};
   auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
-  state={};state.adlsDetected=state.adlsDPWiring=true;state.xeProfile.family=XELP::Family::AlderLakeS;
+  state={};state.adlsDetected=true;state.adlsWiring.valid=true;state.adlsWiring.dp=1U<<ddi;state.adlsWiring.pin[ddi]=ddi?ddi+6:1;
+  AlderLakeS::Port route;assert(AlderLakeS::Port::resolve(ddi,route));auto base=route.phyBase();state.xeProfile.family=XELP::Family::AlderLakeS;
   state.tglObservationController=ctl;state.firmwarePorts.status=XELP::VBT::Status::Valid;
-  const uint32_t c[]={4,10,1,0,0x400,0x201};auto config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x80);memcpy(config,c,sizeof(c));
+  const uint32_t c[]={ddi,ddi?ddi+6:1,1,0,0x400,0x201};auto config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);memcpy(config,c,sizeof(c));
   store(p,0x548,config);store(p,0x550,1U);store(p,0x578,access+0);store(ctl,0xC40,access+0);
-  store(p,0x124,4U);store(p,0x128,20U);store(p,0x620,0x160804U);store(p,0x5C8,0x160028U);
+  store(p,0x124,4U);store(p,0x128,20U);store(p,0x620,base+0x804);store(p,0x5C8,base+0x28);
   store(access,0x60,0x200000U);store(access,0x50,ctl+0);
-  registers.clear();registers[0x45404]=0x3f;registers[0x45454]=0x300;reads=writes=records=0;
-  if(bad==1)state.adlsDPWiring=false;
+  registers.clear();registers[0x45404]=0x3f;registers[0x45454]=3U<<(2*ddi);reads=writes=records=0;
+  if(bad==1)state.adlsWiring.dp=0;
   if(bad==2)store(p,0x548,c+0);
   if(bad==3)store(p,0x550,4U);
   if(bad==4)store(p,0x128,12U);
-  if(bad==5)registers[0x45404]=3;
-  if(bad==6)registers[0x45454]=3;
-  if(bad==7)store(p,0x620,0x6c804U);
+  if(bad==5)registers[0x45404]=0;
+  if(bad==6)registers[0x45454]=0;
+  if(bad==7)store(p,0x620,base+0x904);
   if(bad>=8)config[bad-8]^=1;
   uint32_t result=99;assert(run(p,0,0,nullptr,result)==(bad==0));
-  assert((writes!=0)==(bad==0));if(!bad)assert(!result && records==1 && registers[0x16089c]==0x35000000);
+  assert((writes!=0)==(bad==0));if(!bad)assert(!result && records==1 && registers[base+0x89c]==0x35000000);
  }
  puts("PASS production combo guard: family, port, firmware, ownership, power and missing bank");
 }

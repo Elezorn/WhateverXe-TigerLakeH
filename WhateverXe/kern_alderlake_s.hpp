@@ -20,6 +20,8 @@ struct GT {
         out={1,2,4,32,4,256};return true;
     }
 };
+// The donor has three Combo clock slots. D/E need a separate clock allocator.
+constexpr uint32_t ComboBackendMask=0x19; // physical A/TC1/TC2, PHY A/B/C
 struct Port {
     uint32_t ddi {},phy {},buffer {},clock {},clockShift {},clockOff {},hpd {};
     static bool resolve(uint32_t ddi,Port &out) {
@@ -30,6 +32,14 @@ struct Port {
         out={ddi,phy,0x64000+0x100*ddi,phy<3?0x164280U:0x1642BCU,
              2*(phy%3),1U<<off[phy],1U<<(ddi?ddi+21:16)};
         return true;
+    }
+    uint32_t phyBase() const {
+        const uint32_t bases[]={0x162000,0x6C000,0x160000,0x161000,0x16B000};
+        return bases[phy];
+    }
+    uint32_t aux() const {
+        const uint32_t channels[]={0x40,0x10,0x20,0x30,0x50};
+        return channels[phy];
     }
     bool connected(uint32_t sde) const {return sde!=UINT32_MAX && (sde&hpd);}
 };
@@ -49,76 +59,86 @@ struct LanePower {
 inline uint32_t gmbus(uint32_t vbtPin) {
     return vbtPin==1?1:vbtPin>=2 && vbtPin<=5?vbtPin+7:0;
 }
-struct HDMI {
-    uint32_t selected {},pin[XELP::PortCount] {};
+// Immutable firmware-derived routing shared by startup, clocks, training and
+// hotplug. Unsupported or ambiguous routes stay excluded; never guess a port.
+struct Wiring {
+    uint32_t hdmi {},dp {},excluded {},pin[XELP::PortCount] {};
     bool valid {};
-    bool matches(const uint32_t *c) const {
-        return valid && c && c[0]<XELP::PortCount && (selected&(1U<<c[0])) &&
-            c[1]==pin[c[0]] && c[2]==2 && !c[3] && c[4]==0x800 && (c[5]&0xB)==2;
+    uint32_t selected() const {return hdmi|dp;}
+    bool hasDP(uint32_t d) const {return valid && d<XELP::PortCount && (dp&(1U<<d));}
+    bool matches(const uint32_t *c,bool wantDP) const {
+        if(!valid || !c || c[0]>=XELP::PortCount ||
+           !((wantDP?dp:hdmi)&(1U<<c[0])))return false;
+        return c[1]==pin[c[0]] && c[2]==(wantDP?1U:2U) && !c[3] &&
+            c[4]==(wantDP?0x400U:0x800U) && c[5]==(wantDP?0x201U:0x202U);
     }
+    bool matches(const uint32_t *c) const {return matches(c,false) || matches(c,true);}
+    bool bound(const void *platform,const uint32_t *c) const {
+        return platform && matches(c) && c==reinterpret_cast<const uint32_t *>(
+            static_cast<const uint8_t *>(platform)+0x20+24*c[0]);
+    }
+    bool boundDP(const void *platform,const uint32_t *c) const {return matches(c,true) && bound(platform,c);}
     bool usesDDC(uint32_t bus) const {
         if(!valid)return false;
-        for(unsigned d=0;d<XELP::PortCount;++d)if((selected&(1U<<d)) && pin[d]==bus)return true;
+        for(unsigned d=0;d<XELP::PortCount;++d)if((hdmi&(1U<<d)) && pin[d]==bus)return true;
         return false;
     }
-    // Existing physical donor slots are retained. TC-labelled DDIs are
-    // Combo PHYs on ADL-S; connector kind alone must not select Dekel.
-    bool apply(void *platform,uint32_t bytes) const {
-        if(!valid || !selected || (selected&~PortMask) || !platform || bytes<0x1C0)return false;
+    uint32_t laneMask() const {
+        uint32_t mask=0;
+        for(unsigned d=3;d<XELP::PortCount;++d)if(selected()&(1U<<d))mask|=2U<<(2*d);
+        return valid?mask:0;
+    }
+    bool laneConsumer(const uint32_t *refs) const {
+        if(!valid || !refs)return false;
+        for(unsigned d=3;d<XELP::PortCount;++d)if((selected()&(1U<<d)) && refs[d])return true;
+        return false;
+    }
+    uint32_t hotplugMode(bool ready,const uint32_t *c,const void *platform,
+                         uintptr_t caller,uintptr_t hpdCaller,uint32_t requested) const {
+        return ready && boundDP(platform,c) && hpdCaller && caller==hpdCaller && requested==4 ? 1 : requested;
+    }
+    bool apply(void *platform,size_t bytes) const {
+        if(!valid || !selected() || (selected()&~ComboBackendMask) || !platform || bytes<0x1C0)return false;
         auto p=static_cast<uint8_t *>(platform);
         if(p[0x12]!=9)return false;
-        for(unsigned d=0;d<XELP::PortCount;++d)if(selected&(1U<<d)) {
+        // Check every selected predecessor before mutating any record.
+        for(unsigned d=0;d<XELP::PortCount;++d)if(selected()&(1U<<d)) {
             const uint32_t expected[]={d,d>=3?d+6:d+1,1,d>=3?1U:0U,0x400,0x201};
             const uint32_t panel[]={0,0,0,0,2,0x18};
             if(memcmp(p+0x20+24*d,expected,sizeof(expected)) &&
                (d || memcmp(p+0x20,panel,sizeof(panel))))return false;
         }
-        for(unsigned d=0;d<XELP::PortCount;++d)if(selected&(1U<<d)) {
-            auto c=reinterpret_cast<uint32_t *>(p+0x20+24*d);
-            c[1]=pin[d];c[2]=2;c[3]=0;c[4]=0x800;c[5]=0x202;
+        for(unsigned d=0;d<XELP::PortCount;++d)if(selected()&(1U<<d)) {
+            auto c=reinterpret_cast<uint32_t *>(p+0x20+24*d);const bool isDP=dp&(1U<<d);
+            c[1]=pin[d];c[2]=isDP?1:2;c[3]=0;c[4]=isDP?0x400:0x800;c[5]=isDP?0x201:0x202;
         }
         return true;
     }
-    static HDMI fromFirmware(const XELP::VBT::Ports &ports) {
-        HDMI out;
+    static Wiring fromFirmware(const XELP::VBT::Ports &ports) {
+        Wiring out;
         if(!ports.valid())return out;
-        uint32_t used=0;
+        out.excluded=ports.present;
         for(unsigned d=0;d<XELP::PortCount;++d) {
-            if(!(ports.present&(1U<<d)) || !ports.port[d].fixedTMDS())continue;
-            Port port;
-            const auto pin=gmbus(ports.port[d].ddc);
-            if(!Port::resolve(d,port) || !pin || (used&(1U<<pin)))return {};
-            used|=1U<<pin;out.selected|=1U<<d;out.pin[d]=pin;
+            if(!(ports.present&ComboBackendMask&(1U<<d)))continue;
+            const auto &p=ports.port[d];Port port;
+            if(!Port::resolve(d,port) || XELP::VBT::ddi(XELP::Family::AlderLakeS,p.dvo)!=d)continue;
+            const bool isHDMI=p.fixedTMDS();
+            const bool isDP=(p.type&0x14)==0x14 && !(p.type&(0x1000|0x400|0x20|1)) &&
+                !(p.flags&0x17) && !(p.capabilities&3);
+            if(!isHDMI && !isDP)continue;
+            // The native AUX engine is tied to physical DDI. Cross-routed
+            // AUX requires its own backend; DDC is independently programmable.
+            const auto bus=isHDMI?gmbus(p.ddc):(d>=3?d+6:d+1);
+            if(!bus || (isDP && p.aux!=port.aux()))continue;
+            bool shared=false;
+            for(unsigned other=0;other<XELP::PortCount;++other)if(other!=d && (ports.present&(1U<<other))) {
+                const auto &q=ports.port[other];
+                shared|=isDP ? (q.dp() && q.aux==p.aux) : (q.ddc && q.ddc==p.ddc);
+            }
+            if(shared)continue;
+            (isDP?out.dp:out.hdmi)|=1U<<d;out.pin[d]=bus;out.excluded&=~(1U<<d);
         }
         out.valid=true;return out;
-    }
-};
-// First fixed external DP backend: VBT TC2 / AUX USBC2 / Combo C.
-// Reject reversal, LSPCON, internal and Type-C intent instead of guessing.
-struct DP {
-    static bool qualified(const XELP::VBT::Ports &ports) {
-        if(!ports.valid() || !(ports.present&16))return false;
-        const auto &p=ports.port[4];
-        if(p.type!=0x60D6 || p.dvo!=8 || p.ddc!=3 || p.aux!=0x20 ||
-           (p.flags&0x17) || (p.capabilities&3))return false;
-        for(unsigned d=0;d<XELP::PortCount;++d)
-            if(d!=4 && (ports.present&(1U<<d)) && ports.port[d].dp() && ports.port[d].aux==p.aux)return false;
-        return true;
-    }
-    static bool matches(const uint32_t *c) {
-        const uint32_t expected[]={4,10,1,0,0x400,0x201};
-        return c && !memcmp(c,expected,sizeof(expected));
-    }
-    static uint32_t hotplugMode(bool qualified,const uint32_t *config,const uint32_t *bound,
-                                uintptr_t caller,uintptr_t hpdCaller,uint32_t requested) {
-        return qualified && config==bound && matches(config) && hpdCaller && caller==hpdCaller && requested==4 ? 1 : requested;
-    }
-    static bool apply(void *platform,size_t bytes) {
-        if(!platform || bytes<0x1C0)return false;
-        auto p=static_cast<uint8_t *>(platform);
-        const uint32_t expected[]={4,10,1,1,0x400,0x201};
-        if(p[0x12]!=9 || memcmp(p+0x80,expected,sizeof(expected)))return false;
-        reinterpret_cast<uint32_t *>(p+0x80)[3]=0;return true;
     }
 };
 struct PLL {
@@ -130,37 +150,31 @@ struct PLL {
         out={enables[id],configs[id],configs[id]+4};return true;
     }
 };
-// PortHAL::init(c004fc1a) constructs DDI controls independently from the
-// Combo PHY table at +0x5AC. Its TC1 case leaves that table zero. Populate
-// only PHY B's fields; retain TC1's buffer, physical record and AUX slots.
-inline bool comboBRegisters(uint32_t *registers,size_t count) {
-    if(!registers || count!=0x128/4 || registers[(0x590-0x580)/4]!=0x64300 ||
-       registers[(0x64C-0x580)/4]!=0x4610C)return false;
-    for(unsigned off=0x5AC;off<=0x648;off+=4)if(registers[(off-0x580)/4])return false;
-    const uint32_t phy[] {
-        0x64C04,0x6C100,0x6C104,0x6C10C,0x6C124,0x6C128,
-        0x6C014,0x6C028,0x6C030,0x6C03C,
-        0x6C688,0x6C888,0x6C988,0x6CA88,0x6CB88,0x6C388,
-        0x6C690,0x6C890,0x6C990,0x6CA90,0x6CB90,0x6C390,
-        0x6C694,0x6C894,0x6C994,0x6CA94,0x6CB94,0x6C394,
-        0x6C604,0x6C804,0x6C904,0x6CA04,0x6CB04,0x6C304,
-        0x6C624,0x6C824,0x6C924,0x6CA24,0x6CB24,0x6C324
+// Keep physical DDI/AUX registers; populate only the separate Combo bank.
+// PHY A has a native table: validate it and correct its duplicated lane2 slot.
+inline bool comboRegisters(uint32_t ddi,uint32_t *registers,size_t count) {
+    Port port;
+    if(!Port::resolve(ddi,port) || !(ComboBackendMask&(1U<<ddi)) || !registers ||
+       count!=0x128/4 || registers[4]!=port.buffer ||
+       registers[(0x64C-0x580)/4]!=(ddi?0x46100+4*ddi:0))return false;
+    const uint32_t offsets[]={
+        0,0x100,0x104,0x10C,0x124,0x128,0x014,0x028,0x030,0x03C,
+        0x688,0x888,0x988,0xA88,0xB88,0x388,
+        0x690,0x890,0x990,0xA90,0xB90,0x390,
+        0x694,0x894,0x994,0xA94,0xB94,0x394,
+        0x604,0x804,0x904,0xA04,0xB04,0x304,
+        0x624,0x824,0x924,0xA24,0xB24,0x324
     };
-    static_assert(sizeof(phy)==0x648-0x5AC+4,"Combo PHY register table span");
-    memcpy(registers+(0x5AC-0x580)/4,phy,sizeof(phy));return true;
-}
-// The donor's EHL Combo C bank matches ADL-S PHY C. Keep physical
-// TC2's DDI/AUX register slots and translate only the separate PHY table.
-inline bool comboCRegisters(uint32_t *registers,size_t count) {
-    if(!registers || count!=0x128/4 || registers[4]!=0x64400 ||
-       registers[(0x64C-0x580)/4]!=0x46110)return false;
-    for(unsigned off=0x5AC;off<=0x648;off+=4)if(registers[(off-0x580)/4])return false;
-    uint32_t temporary[0x128/4] {};temporary[4]=0x64300;temporary[(0x64C-0x580)/4]=0x4610C;
-    if(!comboBRegisters(temporary,count))return false;
-    for(unsigned off=0x5AC;off<=0x648;off+=4) {
-        const auto index=(off-0x580)/4;
-        registers[index]=off==0x5AC ? 0x64C08 : temporary[index]-0x6C000+0x160000;
+    static_assert(sizeof(offsets)==0x648-0x5AC+4,"Combo PHY register table span");
+    auto bank=registers+(0x5AC-0x580)/4;
+    for(unsigned i=0;i<sizeof(offsets)/4;++i) {
+        const auto expected=i?port.phyBase()+offsets[i]:0x64C00+4*port.phy;
+        // The exact donor duplicates lane3 TX_DW9 in its PHY A lane2 slot.
+        const auto native=(!ddi && offsets[i]==0xA24)?expected+0x100:expected;
+        if(bank[i]!=(ddi?0:native))return false;
     }
+    for(unsigned i=0;i<sizeof(offsets)/4;++i)
+        bank[i]=i?port.phyBase()+offsets[i]:0x64C00+4*port.phy;
     return true;
 }
 // Five-word ClockParams ABI at the exact donor's combo-HDMI call boundary.

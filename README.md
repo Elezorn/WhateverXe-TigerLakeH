@@ -169,8 +169,13 @@ These results cover tested systems, not every GPU, display, adapter or dock.
   `4690` currently covers Big Sur single-display HDMI or fixed DP with Metal and
   OpenGL acceleration. It requires unreleased companion graphics changes and is
   not supported by the published graphics pkg. Fixed DP reconnection has been
-  tested, but display recovery can be delayed. USB-C, sleep/wake and other
-  macOS versions remain unqualified.
+  tested, but display recovery can be delayed. HDMI/fixed-DP routing is derived
+  from VBT rather than a board or connector preset, within the current Combo
+  PHY A–C backend. Ambiguous routes, cross-routed AUX, Type-C/TBT capability
+  and PHY D/E are excluded. GPU admission remains limited to `4690` revision
+  `0C` with the qualified fuse configuration. Other port layouts have CPU-test
+  coverage but are not hardware-qualified. USB-C, sleep/wake and other macOS
+  versions remain unqualified.
 - Display 13 USB-C and eDP support
 
 ### Not Planned

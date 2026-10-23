@@ -71,11 +71,11 @@ struct ProbeConfig {
     bool valid() const {
         if(abi!=3 || bytes!=sizeof(ProbeConfig) || !profile.admitted() ||
            !same(profile,identify(profile.identity,profile.revision,profile.effectiveIdentity)))return false;
-        // ADL-S fixed HDMI TC1/Combo B and optional DP TC2/Combo C.
+        // ADL-S firmware routes use the donor's three Combo PHY slots.
         // Its TC label grants neither Type-C nor Dekel register access.
         if(profile.family==Family::AlderLakeS)
-            return profile.display==Display::XeD && (combo==8 || combo==24) && comboBackend==combo &&
-                !legacy && !typeC && !excluded && !legacyBackend;
+            return profile.display==Display::XeD && combo && !(combo&~0x19U) && comboBackend==0x19 &&
+                !(excluded&~0x1FFU) && !(excluded&combo) && !legacy && !typeC && !legacyBackend;
         if((combo&~7U) || ((legacy|typeC|excluded|legacyBackend)&~0x1F8U) ||
            (comboBackend&~7U) || (legacy&typeC) || (legacy&excluded) || (typeC&excluded))return false;
         if(profile.display==Display::XeD)return comboBackend==7;

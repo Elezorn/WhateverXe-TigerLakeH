@@ -28,45 +28,67 @@ int main() {
         Port port;assert(!Port::resolve(d,port) && !port.buffer && !port.hpd);
     }
     for(auto pin:{0U,6U,7U,8U,9U,UINT32_MAX})assert(!gmbus(pin));
-    // Recorded firmware topology: USB-C A, HDMI TC1, DP TC2, unwired TC3.
-    XELP::VBT::Ports firmware;firmware.status=XELP::VBT::Status::Valid;firmware.present=0x39;
-    firmware.port[0]={0x60d6,10,1,0x40,0xc0,0};
-    firmware.port[3]={0x60d2,1,2,0,0xc0,0};
-    firmware.port[4]={0x60d6,8,3,0x20,0xc0,0};
-    firmware.port[5]={0x68c6,9,0,0x30,0xc0,0};
-    assert(DP::qualified(firmware));
-    const uint32_t dpConfig[]={4,10,1,0,0x400,0x201};
-    assert(DP::hotplugMode(true,dpConfig,dpConfig,0x100,0x100,4)==1);
-    assert(DP::hotplugMode(false,dpConfig,dpConfig,0x100,0x100,4)==4);
-    assert(DP::hotplugMode(true,dpConfig,nullptr,0x100,0x100,4)==4);
-    assert(DP::hotplugMode(true,dpConfig,dpConfig,0x101,0x100,4)==4);
-    assert(DP::hotplugMode(true,dpConfig,dpConfig,0,0,4)==4);
-    for(unsigned m:{0u,1u,2u,3u})assert(DP::hotplugMode(true,dpConfig,dpConfig,0x100,0x100,m)==m);
-    for(unsigned n=0;n<6;++n){uint32_t bad[6];memcpy(bad,dpConfig,sizeof(bad));bad[n]^=1;
-        assert(DP::hotplugMode(true,bad,bad,0x100,0x100,4)==4);}
-
-    for(unsigned i=0;i<6;++i){auto bad=firmware;reinterpret_cast<uint32_t *>(&bad.port[4])[i]^=1;assert(!DP::qualified(bad));}
-    auto dupe=firmware;dupe.port[5].aux=0x20;assert(!DP::qualified(dupe));
-    auto h=HDMI::fromFirmware(firmware);assert(h.valid && h.selected==8 && h.pin[3]==9);
-    alignas(8) uint8_t platform[0x1C0] {};platform[0x12]=9;
-    for(unsigned d=0;d<9;++d) {
-        const uint32_t c[]={d,d>=3?d+6:d+1,1,d>=3?1U:0U,0x400,0x201};
-        memcpy(platform+0x20+24*d,c,sizeof(c));
+    // All connector assignments over the supported physical coordinates,
+    // including DP-only, HDMI-only, mixed and multiple fixed DP routes.
+    for(unsigned assignment=1;assignment<27;++assignment) {
+        XELP::VBT::Ports fw;fw.status=XELP::VBT::Status::Valid;
+        unsigned code=assignment,hdmi=0,dp=0;
+        for(unsigned n=0;n<3;++n) {
+            const unsigned kind=code%3;code/=3;if(!kind)continue;
+            const unsigned d=physical[n];Port route;assert(Port::resolve(d,route));
+            fw.present|=1U<<d;(kind==1?hdmi:dp)|=1U<<d;
+            const uint32_t hdmiDVO[]={0,1,2},dpDVO[]={10,7,8};
+            fw.port[d]={kind==1?0x60D2U:0x60D6U,kind==1?hdmiDVO[n]:dpDVO[n],n+1,kind==1?0:route.aux(),0xC0,0};
+        }
+        auto w=Wiring::fromFirmware(fw);assert(w.valid && w.hdmi==hdmi && w.dp==dp && !w.excluded);
+        alignas(8) uint8_t platform[0x1C0]{};platform[0x12]=9;
+        for(unsigned d=0;d<9;++d) {
+            const uint32_t c[]={d,d>=3?d+6:d+1,1,d>=3?1U:0U,0x400,0x201};
+            memcpy(platform+0x20+24*d,c,sizeof(c));
+        }
+        uint8_t saved[sizeof(platform)];memcpy(saved,platform,sizeof(saved));
+        const unsigned last=fw.present&16?4:fw.present&8?3:0;
+        platform[0x20+24*last+16]^=1;
+        uint8_t bad[sizeof(platform)];memcpy(bad,platform,sizeof(bad));
+        assert(!w.apply(platform,sizeof(platform)) && !memcmp(platform,bad,sizeof(bad)));
+        memcpy(platform,saved,sizeof(saved));assert(w.apply(platform,sizeof(platform)));
+        for(unsigned d=0;d<9;++d)if(fw.present&(1U<<d)) {
+            auto c=reinterpret_cast<uint32_t *>(platform+0x20+24*d);
+            assert(w.matches(c) && w.bound(platform,c));
+            const bool isDP=dp&(1U<<d);
+            assert(w.hasDP(d)==isDP && w.boundDP(platform,c)==isDP);
+            assert(w.hotplugMode(true,c,platform,0x100,0x100,4)==(isDP?1:4));
+            assert(w.hotplugMode(false,c,platform,0x100,0x100,4)==4);
+            assert(w.hotplugMode(true,c,platform,0x101,0x100,4)==4);
+            assert(w.hotplugMode(true,c,platform,0,0,4)==4);
+            for(unsigned mode=0;mode<4;++mode)assert(w.hotplugMode(true,c,platform,0x100,0x100,mode)==mode);
+            uint32_t other[6];memcpy(other,c,sizeof(other));assert(!w.bound(platform,other));
+            for(unsigned i=0;i<6;++i){c[i]^=1;assert(!w.matches(c));c[i]^=1;}
+        }
+        for(unsigned d=0;d<9;++d)if(!(fw.present&(1U<<d)))assert(!memcmp(platform+0x20+24*d,saved+0x20+24*d,24));
     }
-    assert(DP::apply(platform,sizeof(platform)) && DP::matches(reinterpret_cast<uint32_t *>(platform+0x80)));
-    assert(!DP::apply(platform,sizeof(platform)));
-    reinterpret_cast<uint32_t *>(platform+0x80)[3]=1;
-    uint8_t before[sizeof(platform)];memcpy(before,platform,sizeof(before));
-    assert(h.apply(platform,sizeof(platform)));
-    assert(h.matches(reinterpret_cast<uint32_t *>(platform+0x68)) && h.usesDDC(9) && !h.usesDDC(2));
-    assert(!memcmp(platform,before,0x68) && !memcmp(platform+0x80,before+0x80,sizeof(platform)-0x80));
-    memcpy(platform,before,sizeof(platform));platform[0x68+12]=0;
-    memcpy(before,platform,sizeof(before));assert(!h.apply(platform,sizeof(platform)));
-    assert(!memcmp(before,platform,sizeof(platform))); // no partial mutation on a wrong donor
-    auto bad=firmware;bad.port[3].ddc=0;assert(!HDMI::fromFirmware(bad).valid);
-    bad=firmware;bad.port[4]=firmware.port[3];assert(!HDMI::fromFirmware(bad).valid);
-    bad=firmware;bad.port[3].capabilities=1;h=HDMI::fromFirmware(bad);assert(h.valid && !h.selected);
-    assert(!HDMI::fromFirmware({}).valid);
+    XELP::VBT::Ports fw;fw.status=XELP::VBT::Status::Valid;fw.present=8;
+    fw.port[3]={0x60D6,7,0,0x10,0xC0,0};
+    assert(Wiring::fromFirmware(fw).dp==8); // DP does not require GMBUS or HDMI
+    for(unsigned bad=0;bad<8;++bad) {
+        auto f=fw;
+        if(bad==0)f.port[3].aux=0x20;
+        if(bad==1)f.port[3].capabilities=1;
+        if(bad==2)f.port[3].capabilities=2;
+        if(bad==3)f.port[3].flags|=1;
+        if(bad==4)f.port[3].type|=0x1000;
+        if(bad==5)f.port[3].dvo=8;
+        if(bad==6){f.present|=16;f.port[4]=f.port[3];}
+        if(bad==7)f.status=XELP::VBT::Status::Conflict;
+        assert(!Wiring::fromFirmware(f).dp);
+    }
+    fw.port[3]={0x60D2,1,5,0,0xC0,0};auto w=Wiring::fromFirmware(fw);
+    assert(w.hdmi==8 && w.pin[3]==12 && w.usesDDC(12) && !w.usesDDC(9));
+    fw.present|=16;fw.port[4]={0x60D2,2,5,0,0xC0,0};w=Wiring::fromFirmware(fw);
+    assert(!w.selected() && w.excluded==24); // both ambiguous owners excluded
+    fw={};fw.status=XELP::VBT::Status::Valid;fw.present=0x60;
+    fw.port[5]={0x60D6,9,0,0x30,0xC0,0};fw.port[6]={0x60D2,4,5};
+    w=Wiring::fromFirmware(fw);assert(w.valid && !w.selected() && w.excluded==0x60);
     // Physical TC1 still uses Combo B's clock selector, not DKL PLL1.
     Port hdmi;assert(Port::resolve(3,hdmi));
     assert(hdmi.clock==0x164280 && hdmi.clockShift==2 && hdmi.clockOff==0x800);
@@ -85,13 +107,13 @@ int main() {
     assert(!PLL::resolve(4,pll) && !pll.enable);
     uint32_t registers[0x128/4] {};registers[4]=0x64300;registers[(0x64C-0x580)/4]=0x4610C;
     uint32_t saved[0x128/4];memcpy(saved,registers,sizeof(saved));
-    assert(comboBRegisters(registers,sizeof(registers)/4));
+    assert(comboRegisters(3,registers,sizeof(registers)/4));
     assert(registers[(0x5AC-0x580)/4]==0x64C04 && registers[(0x5B8-0x580)/4]==0x6C10C);
     assert(registers[(0x648-0x580)/4]==0x6C324 && registers[4]==0x64300);
     assert(!memcmp(registers,saved,0x5AC-0x580));
     assert(!memcmp(registers+(0x64C-0x580)/4,saved+(0x64C-0x580)/4,0x6A8-0x64C));
-    assert(!comboBRegisters(registers,sizeof(registers)/4)); // no repeated or foreign table
+    assert(!comboRegisters(3,registers,sizeof(registers)/4)); // no repeated or foreign table
     memcpy(registers,saved,sizeof(saved));registers[4]=0x64400;
-    assert(!comboBRegisters(registers,sizeof(registers)/4));
+    assert(!comboRegisters(3,registers,sizeof(registers)/4));
     puts("PASS ADL-S physical DDI/Combo PHY/HPD/PLL/DDC coordinates and ambiguous HDMI rejection");
 }

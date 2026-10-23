@@ -21,6 +21,7 @@
 #ifndef KERN_TGL_COMBO_SIGNAL_HPP
 #define KERN_TGL_COMBO_SIGNAL_HPP
 #include <stdint.h>
+#include "kern_alderlake_s.hpp"
 struct TGLComboSignal {
     uint32_t base {},lanes {},level {},swing {},scalar {},cursor {},post1 {};
     bool low {};
@@ -46,12 +47,14 @@ struct TGLComboSignal {
         const auto row=low ? reduced[level]:normal[level];
         swing=row[0];scalar=row[1];cursor=row[2];post1=row[3];return true;
     }
-    // ADL-S fixed DP on Combo C. RBR/HBR uses the TGL normal table;
+    // ADL-S fixed DP on the resolved Combo PHY. RBR/HBR uses the TGL normal table;
     // HBR2/HBR3 uses Intel's ADL-S external DP coefficients.
-    bool selectADLS(uint32_t count,uint32_t rate,uint32_t voltage,uint32_t emphasis) {
+    bool selectADLS(uint32_t ddi,uint32_t count,uint32_t rate,uint32_t voltage,uint32_t emphasis) {
         if(rate!=6 && rate!=10 && rate!=20 && rate!=30)return false;
         if(!select(1,count,6,false,false,voltage,emphasis))return false;
-        base=0x160000;
+        AlderLakeS::Port route;
+        if(!AlderLakeS::Port::resolve(ddi,route) || !(AlderLakeS::ComboBackendMask&(1U<<ddi)))return false;
+        base=route.phyBase();
         if(rate>=20) {
             static const uint8_t high[10][4]={
                 {0xA,0x35,0x3F,0},{0xA,0x4F,0x37,8},{0xC,0x63,0x31,0xE},{6,0x7F,0x2C,0x13},

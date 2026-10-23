@@ -292,13 +292,12 @@ private:
 	static bool wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value);
 	bool tglHDMIB {false};
  TGLHDMIWiring tglHDMIWiring;
- AlderLakeS::HDMI adlsHDMIWiring;
- bool adlsDPWiring {};
+ AlderLakeS::Wiring adlsWiring;
  bool tglHDMIWiringLoaded {},tglHDMIWiringExplicit {},tglHDMIWiringApplied {};
  uint32_t tglHDMIBackendMask {3}; // TGL-U combo PHY A/B; C is absent
  static bool tglLoadHDMIWiring(IOService *provider);
- bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && (adlsDetected?adlsHDMIWiring.matches(config):tglHDMIWiring.matches(config));}
- bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && (adlsDetected?adlsHDMIWiring.usesDDC(pin):tglHDMIWiring.usesDDC(pin));}
+ bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && (adlsDetected?adlsWiring.matches(config,false):tglHDMIWiring.matches(config));}
+ bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && (adlsDetected?adlsWiring.usesDDC(pin):tglHDMIWiring.usesDDC(pin));}
 
 	bool tglGMBusReady {false};
 	mach_vm_address_t orgTGLGMBus {};
@@ -405,10 +404,10 @@ private:
  uint32_t tglTCAutoCandidates {},tglTCAutoRegistered {};
  uint32_t tglDPAltCandidates {};
  bool tglDPSSTEligible(uint32_t ddi) const {
-  return (adlsDetected && adlsDPWiring && ddi==4) || tglLegacyTCEligible(ddi) || (ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
+  return (adlsDetected && adlsWiring.hasDP(ddi)) || tglLegacyTCEligible(ddi) || (ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
  }
  bool tglDPSSTMode(uint32_t ddi,uint32_t mode) const {
-  return (mode==1 && adlsDetected && adlsDPWiring && ddi==4) || (mode==4 && tglLegacyTCEligible(ddi)) ||
+  return (mode==1 && adlsDetected && adlsWiring.hasDP(ddi)) || (mode==4 && tglLegacyTCEligible(ddi)) ||
    (mode==3 && ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
  }
  uintptr_t tglNativeLegacyHPDCaller {};
@@ -434,7 +433,7 @@ private:
  }
 	uint32_t tglAUXParentRefs[9] {};
 	bool tglAUXParentEligible(uint32_t ddi) const {
-		return tglAUXParentReady && (tglLegacyTCEligible(ddi) || (adlsDetected && adlsDPWiring && ddi==4));
+		return tglAUXParentReady && (tglLegacyTCEligible(ddi) || (adlsDetected && ddi>=3 && adlsWiring.hasDP(ddi)));
 	}
 	static void wrapTGLEnableAUXPower(void *power, uint32_t ddi);
 	static void wrapTGLDisableAUXPower(void *power, uint32_t ddi);

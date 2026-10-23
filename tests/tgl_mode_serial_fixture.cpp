@@ -27,7 +27,7 @@ void tglAUXRecord(void*,unsigned,bool,uint32_t,uint32_t,uint32_t){}
 bool coldReady=true;
 bool tglDPAltColdReady(void*){return coldReady;}
 struct XE {
- bool adlsDetected=false,adlsDPWiring=false;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
+ bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  uint32_t tglDPAltCandidates=0;void *tglObservationController=nullptr;
  uint32_t tglTCAutoRegistered=0,tglTCAutoCandidates=0x10,tglAUXParentMask=0x18;
  // LEGACY_HPD_POLICY

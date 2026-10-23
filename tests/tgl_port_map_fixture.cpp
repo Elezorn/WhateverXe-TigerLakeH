@@ -1,3 +1,4 @@
+#include "kern_alderlake_s.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -17,7 +18,7 @@ struct IORegistryEntry {
  void *getProperty(const char *) { return nullptr; }
 };
 struct XE {
- bool adlsDetected=false,adlsDPWiring=false;
+ bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;
  // FIELDS
  IOSimpleLock *tglDekelLock;
  uintptr_t orgTGLReadDekel,orgTGLWriteDekel;

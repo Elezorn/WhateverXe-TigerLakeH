@@ -35,15 +35,16 @@ int main() {
   // Missing bank declines before the first write.
   writes.clear();regs[s.base+0xA9C]=~0U;assert(!s.program(read,write)&&writes.empty());
  }
- for(unsigned lanes:{0u,1u,2u,3u,4u})for(unsigned rate:{0u,6u,10u,12u,20u,30u})
+ for(unsigned ddi:{0u,3u,4u})for(unsigned lanes:{0u,1u,2u,3u,4u})for(unsigned rate:{0u,6u,10u,12u,20u,30u})
  for(unsigned v=0;v<5;++v)for(unsigned e=0;e<5;++e) {
   TGLComboSignal s;bool ok=(lanes==1||lanes==2||lanes==4)&&(rate==6||rate==10||rate==20||rate==30)&&v<4&&e<4&&v+e<=3;
-  assert(s.selectADLS(lanes,rate,v,e)==ok);if(!ok)continue;
-  assert(s.base==0x160000&&!s.low);
+  assert(s.selectADLS(ddi,lanes,rate,v,e)==ok);if(!ok)continue;
+  AlderLakeS::Port route;assert(AlderLakeS::Port::resolve(ddi,route));
+  assert(s.base==route.phyBase()&&!s.low);
   std::map<unsigned,unsigned> regs;
   assert(s.program([&](unsigned r){return regs[r];},[&](unsigned r,unsigned value){
-   assert(r>=0x160000&&r<0x160BA0);
-   if(r==0x160694)for(unsigned n=0;n<4;++n)regs[0x160894+0x100*n]=value;
+   assert(r>=s.base&&r<s.base+0xBA0);
+   if(r==s.base+0x694)for(unsigned n=0;n<4;++n)regs[s.base+0x894+0x100*n]=value;
    regs[r]=value;
   }));
  }

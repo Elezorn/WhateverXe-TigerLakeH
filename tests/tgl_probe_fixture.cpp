@@ -1,3 +1,4 @@
+#include "kern_alderlake_s.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -30,7 +31,7 @@ void tglAUXRecord(void *,uint32_t,bool,uint32_t,uint32_t,uint32_t) {}
 uint32_t providerProbe(void *);
 uint32_t nativeHPD(void *) {return 1;}
 struct XE {
- bool adlsDetected=false,adlsDPWiring=false;
+ bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;
  uint32_t tglModularProbed=0;
  uint64_t tglPlatformCopy[0x1c0/8] {};
  bool tglActive=true;

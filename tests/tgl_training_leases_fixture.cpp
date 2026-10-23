@@ -1,3 +1,4 @@
+#include "kern_alderlake_s.hpp"
 template<class... T>void tglTransitionRecord(T...){ }
 // Native boundaries are mocks; LEASE_FUNCTIONS is extracted unchanged from production.
 #include <algorithm>
@@ -44,7 +45,7 @@ template<class... T> void tglObserveResource(T...) {}
 void tglAUXPublish() {}
 void tglDPCDPublish() {}
 struct XE {
- bool adlsDetected=false,adlsDPWiring=false;
+ bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;
  // TC_WIRING_FIELDS
  // LEASE_FIELDS
  IORecursiveLock *tglPathPoolLock;
@@ -441,7 +442,7 @@ int main(int argc, char **argv) {
  ports[3].at<uint32_t>(0x550)=2;
  assert(XE::tglPrepareTrainingLease(ctl.data(),obj.tglTrainingLeases[3])==1); // no TBT
  // ADL-S fixed Combo C uses physical TC2 in mode1 and the same pool.
- setup();obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=obj.adlsDPWiring=true;obj.tglAUXParentReady=true;
+ setup();obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=16;obj.adlsWiring.pin[4]=10;obj.tglAUXParentReady=true;
  assert(XE::tglTrainingLeaseForDDI(4)&&!XE::tglTrainingLeaseForDDI(3));
  assert(!obj.tglLegacyTCEligible(4)&&obj.tglAUXParentEligible(4));
  ports[4].at<uint32_t>(0x550)=1;reserve(4);release(4);clean();

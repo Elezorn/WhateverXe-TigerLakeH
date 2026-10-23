@@ -28,7 +28,7 @@ void tglAUXRecord(void*,unsigned,bool,uint32_t,uint32_t,uint32_t){}
 bool coldReady=true;
 bool tglDPAltColdReady(void*){return coldReady;}
 struct XE {
- bool adlsDetected=false,adlsDPWiring=false;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
+ bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  uint32_t tglDPAltCandidates=0;void *tglObservationController=nullptr;
  static void tglRecordStartOrder(unsigned,void*,unsigned=9,uint64_t=0,uint64_t=0,uint64_t=0) {}
  static void tglRecordNativeModeBinding(void *,uint32_t,uint32_t) {}
@@ -104,14 +104,16 @@ int main(int argc,char **argv){
  assert(XE::wrapTGLSetPortMode(port,3)==kIOReturnNotReady && !reads && !writes && !powerGets);
  coldReady=true;instance.tglDPAltCandidates=0;
  // Qualified ADL-S HPD mode4 must execute native Combo mode1, without FIA.
- reset(4);instance.adlsDetected=instance.adlsDPWiring=true;
- auto bound=reinterpret_cast<uint32_t *>(instance.tglPlatformCopy+0x80);
- const uint32_t fixed[]={4,10,1,0,0x400,0x201};memcpy(bound,fixed,sizeof(fixed));
+ for(unsigned ddi:{0u,3u,4u}) {
+ reset(ddi);instance.adlsDetected=true;instance.adlsWiring.valid=true;instance.adlsWiring.dp=1U<<ddi;instance.adlsWiring.pin[ddi]=ddi?ddi+6:1;
+ auto bound=reinterpret_cast<uint32_t *>(instance.tglPlatformCopy+0x20+24*ddi);
+ const uint32_t fixed[]={ddi,ddi?ddi+6:1,1,0,0x400,0x201};memcpy(bound,fixed,sizeof(fixed));
  *reinterpret_cast<uint32_t **>(port+0x548)=bound;
  instance.tglNativeLegacyHPDCaller=testCaller=0x74a59;
  assert(XE::wrapTGLSetPortMode(port,4)==0 && mode()==1);
  assert(!reads && !writes && !powerGets && !powerPuts && !sleeps);
- instance.adlsDetected=instance.adlsDPWiring=false;testCaller=0;instance.tglNativeLegacyHPDCaller=0;
+ }
+ instance.adlsDetected=false;instance.adlsWiring={};testCaller=0;instance.tglNativeLegacyHPDCaller=0;
  *reinterpret_cast<uint32_t **>(port+0x548)=config;
  unsigned cases=0;
  for(bool skipPower:{false,true})for(unsigned d=3;d<=8;++d)for(unsigned requested:{3u,4u})for(bool isReady:{false,true}){

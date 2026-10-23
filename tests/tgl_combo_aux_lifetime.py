@@ -12,7 +12,7 @@ code=r'''
 #include <map>
 #include <cstdio>
 struct Functions {bool ready=true;void **controllerSlot=nullptr;void(*getAux)(void*)=nullptr;void(*putAux)(void*)=nullptr;bool complete(){return ready;}};
-struct State {bool adlsDetected=false,adlsDPWiring=false;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};void *tglObservationController=nullptr;bool tglActive=true,tglComboAUXLifetimeReady=true;
+struct State {bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};void *tglObservationController=nullptr;bool tglActive=true,tglComboAUXLifetimeReady=true;
  struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;Functions tglTCNativeFunctions;void *tglComboAUXOwners[9]{};
 } state,*callbackXE=&state;
@@ -21,13 +21,13 @@ uint32_t wrapTGLRegisterRead(void *,unsigned long reg){++reads;return regs[reg];
 void tglTransitionRecord(unsigned stage,bool,void *,unsigned,unsigned,unsigned,const void *,unsigned){assert(stage==74);}
 FUNCTION
 int main(){
- for(bool adls:{false,true})for(unsigned bad=0;bad<15;++bad){
+ for(unsigned testDDI:{0u,3u,4u})for(bool adls:{false,true})for(unsigned bad=0;bad<15;++bad){
  alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},power[0x100]{},access[0x100]{};uint32_t local[6]{};uint32_t *config=local;
- unsigned ddi=adls?4:0,mask=3U<<(2*ddi),buffer=0x64000+256*ddi;
+ unsigned ddi=adls?testDDI:0,mask=3U<<(2*ddi),buffer=0x64000+256*ddi;
  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
  state={};if(adls) {
-  state.adlsDetected=state.adlsDPWiring=true;state.xeProfile.family=XELP::Family::AlderLakeS;
-  config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x80);const uint32_t c[]={4,10,1,0,0x400,0x201};memcpy(config,c,sizeof(c));
+  state.adlsDetected=true;state.adlsWiring.valid=true;state.adlsWiring.dp=1U<<ddi;state.adlsWiring.pin[ddi]=ddi?ddi+6:1;state.xeProfile.family=XELP::Family::AlderLakeS;
+  config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);const uint32_t c[]={ddi,ddi?ddi+6:1,1,0,0x400,0x201};memcpy(config,c,sizeof(c));
  }
  state.tglObservationController=ctl;void *global=ctl;
  state.tglTCNativeFunctions.controllerSlot=&global;
@@ -43,7 +43,7 @@ int main(){
  if(bad==2)state.tglComboAUXLifetimeReady=false;
  if(bad==3)state.tglTCNativeFunctions.ready=false;
  if(bad==4)global=nullptr;
- if(bad==5)config[0]=3;
+ if(bad==5)config[0]=2;
  if(bad==6)config[2]=2;
  if(bad==7)state.firmwarePorts.present=0;
  if(bad==8)store(power,0x78,ctl+0);
