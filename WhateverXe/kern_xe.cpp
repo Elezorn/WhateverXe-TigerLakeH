@@ -4048,7 +4048,8 @@ bool XE::xelpBindProbe(void *controller) {
         config.legacyBackend=tglAUXParentMask;
     } else {
         if(!display13FBTopologyHooksReady || controller!=adlnTopologyController ||
-            !Display13FBTopology::supportedWiring(adlnOutputWiring))return false;
+            !Display13FBTopology::adlnWiring(adlnOutputWiring) ||
+            (adlnOutputWiring.dp && (!display13DPProbeReady || !display13FBSSTHooksReady || !display13FBAUXHooksReady)))return false;
         config.combo=adlnOutputWiring.selected();config.comboBackend=3;
     }
     const bool bound=config.valid() && reinterpret_cast<XELP::ConfigureProbe>(xelpProviderConfigureProbe)(controller,&config);
@@ -4197,7 +4198,12 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
         // or fall back to a second generation implementation in WEG.
         if(probe>=address && probe-address<size && configure>=address && configure-address<size) {
             xelpProviderProbe=probe;xelpProviderConfigureProbe=configure;
+            const auto query=patcher.solveSymbol<mach_vm_address_t>(index,"_xelpProbeCapabilities",address,size);
+            patcher.clearError();
+            display13DPProbeReady=query>=address && query-address<size &&
+                XELP::display13ProbeCapable(reinterpret_cast<XELP::QueryProbeCapabilities>(query));
         }
+        IORegistryEntry::getRegistryRoot()->setProperty("XELPDisplay13DPProbeAvailable",display13DPProbeReady);
         IORegistryEntry::getRegistryRoot()->setProperty("XELPSharedProbeAvailable",xelpProviderProbe && xelpProviderConfigureProbe);
         if(adlnRequested)IORegistryEntry::getRegistryRoot()->setProperty("N97FBSharedProbeAvailable",xelpProviderProbe && xelpProviderConfigureProbe);
         return true;
@@ -6837,7 +6843,14 @@ bool XE::wrapDisplay13FramebufferInit(IOService *fb,IOService *controller,uint32
 
 bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	auto s=callbackXE;auto pci=OSDynamicCast(IOPCIDevice,provider);
- const auto contract=XELP::DisplayContract::display13(s->display13Available());
+	if(!pci)return false;
+	auto property=provider->getProperty("xelp-hdmi-wiring");
+    if(!property)property=provider->getProperty("tgl-hdmi-wiring");
+    auto wiring=OSDynamicCast(OSData,property);
+    s->adlnOutputWiring=XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
+        wiring?wiring->getLength():0,s->firmwarePorts,3);
+    if(!Display13FBTopology::supportedWiring(s->adlnOutputWiring))return false;
+ const auto contract=XELP::DisplayContract::display13(s->display13Available(),s->adlnOutputWiring.dp!=0);
  const bool ready=s->adlnDetected && s->adlnKernelReady && contract.ready() && pci && xelpAlderLakeNDevice(pci);
  uint64_t contractRecord[]={1,contract.required,contract.available,contract.missing()};
  that->setProperty("WEXDisplayStartupContract",contractRecord,sizeof(contractRecord));
@@ -6845,12 +6858,6 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
   SYSLOG("igfx","Display13 missing operation %s",XELP::DisplayContract::name(bit));
 	that->setProperty("N97FramebufferBackendReady",ready);
 	if(!ready)return false;
-	auto property=provider->getProperty("xelp-hdmi-wiring");
-    if(!property)property=provider->getProperty("tgl-hdmi-wiring");
-    auto wiring=OSDynamicCast(OSData,property);
-    s->adlnOutputWiring=XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
-        wiring?wiring->getLength():0,s->firmwarePorts,3);
-    if(!Display13FBTopology::supportedWiring(s->adlnOutputWiring))return false;
 	const bool dualReady=s->adlnNativeReady && s->adlnScanoutDisableFB && s->orgAlderLakeNSysMemAllocate && s->orgAlderLakeNSysMemFree &&
 		(!adlnFixedSysMemEnabled || display13FBSysMem.lock) && display13FBSysMem.retireLock && s->adlnWorkLoopInGate && s->adlnWorkLoopTryClose && s->adlnWorkLoopOpen;
 	uint64_t dualPolicy[] {1,s->adlnOutputWiring.selected(),dualReady,s->adlnNativeReady,s->adlnScanoutDisableFB!=0,
@@ -11650,6 +11657,10 @@ XELP::DisplayContract::Mask XE::display13Available() const {
  if(display13FBWatermarkLayoutReady)a|=C::WMLayout13;
  if(display13FBOutputHooksReady)a|=C::Output13;
  if(display13FBTopologyHooksReady)a|=C::Topology13;
+ if(display13FBSSTHooksReady)a|=C::SST13;
+ if(display13FBAUXHooksReady)a|=C::AUX13;
+ if(display13DPProbeReady)a|=C::DPProbe13;
+ // No DPBoot13 until GOP handoff and cold-start have a proven backend.
  return a;
 }
 

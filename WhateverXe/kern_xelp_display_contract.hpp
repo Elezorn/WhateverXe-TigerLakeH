@@ -66,6 +66,10 @@ struct DisplayContract {
   PanelDepth=1ULL<<56,
   PanelTiming=1ULL<<57,
   PanelPWM=1ULL<<58,
+  SST13=1ULL<<59,
+  AUX13=1ULL<<60,
+  DPProbe13=1ULL<<61,
+  DPBoot13=1ULL<<62,
  };
  Mask required {},available {};
  Mask missing() const {return required&~available;}
@@ -101,7 +105,8 @@ struct DisplayContract {
   return {PlatformADLS|(dp?Training12|Combo12|Fixed12:0)|
    (panel?Combo12|PanelDepth|PanelTiming|PanelPWM|AUXParent|PowerGet|PowerPut:0),installed};
  }
- static DisplayContract display13(Mask installed) {return {Backend13,installed};}
+ static constexpr Mask DP13=SST13|AUX13|DPProbe13|DPBoot13;
+ static DisplayContract display13(Mask installed,bool dp=false) {return {Backend13|(dp?DP13:0),installed};}
  static const char *name(Mask bit) {
   switch(bit) {
    case Surface:return "Surface";
@@ -163,6 +168,10 @@ struct DisplayContract {
    case PanelDepth:return "PanelDepth";
    case PanelTiming:return "PanelTiming";
    case PanelPWM:return "PanelPWM";
+   case SST13:return "SST13";
+   case AUX13:return "AUX13";
+   case DPProbe13:return "DPProbe13";
+   case DPBoot13:return "DPBoot13";
    default:return "Unknown";
   }
  }

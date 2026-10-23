@@ -25,6 +25,12 @@ struct IOMemoryMap:OSObject {uintptr_t address {};uint64_t bytes {};
 #define IOLog(...) ((void)0)
 // PROVIDER_SOURCE
 int main(int argc,char **argv) {
+ assert(XELP::display13ProbeCapable(xelpProbeCapabilities));
+ assert(!XELP::display13ProbeCapable(nullptr));
+ for(unsigned schema=0;schema<5;++schema)for(unsigned abi=0;abi<6;++abi)
+  assert(xelpProbeCapabilities(schema,abi)==(schema==1&&abi==3?XELP::ProbeDisplay13ComboDP:0));
+ assert(!XELP::display13ProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 0;}));
+ assert(!XELP::display13ProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 2;}));
  assert(argc==2);const bool adln=!strncmp(argv[1],"adln",4);
  const bool adls=!strncmp(argv[1],"adls",4);
  const bool legacy=!strncmp(argv[1],"adln-abi1",9);
@@ -105,6 +111,11 @@ int main(int argc,char **argv) {
    *reinterpret_cast<uint32_t *>(mmio.data()+base+0x8A0)=0x10;
    *reinterpret_cast<uint32_t *>(mmio.data()+base+0x890)=1U<<((d-3)%2);}
   assert(tglProbePort(&port)==(adls?(d==3?1U:0U):adln?(d<2?1U:0U):(d<3?1U:4U)));
+  if(adln){
+   const uint32_t dp[]={d,d+1,1,0,0x400,0x201};memcpy(rec,dp,sizeof(dp));
+   assert(tglProbePort(&port)==(d<2?1U:0U));
+   if(d<2)for(unsigned n=0;n<6;++n){rec[n]^=1;assert(!tglProbePort(&port));rec[n]^=1;}
+  }
   field<void *>(&port,0x578)=&foreign;assert(!tglProbePort(&port));field<void *>(&port,0x578)=&access;
   field<void *>(&port,0x548)=reinterpret_cast<void *>(1);assert(!tglProbePort(&port));
  }

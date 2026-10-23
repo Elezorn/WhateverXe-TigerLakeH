@@ -141,6 +141,7 @@ private:
  static uint32_t wrapDisplay13TrainingPattern(void *path,uint32_t pattern);
  static uint32_t wrapDisplay13SignalLevels(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig);
 	mach_vm_address_t xelpProviderProbe {},xelpProviderConfigureProbe {};
+ bool display13DPProbeReady {};
     bool xelpBindProbe(void *controller);
 	bool display13FBTopologyHooksReady {false};
 	Display13OutputWiring adlnOutputWiring;

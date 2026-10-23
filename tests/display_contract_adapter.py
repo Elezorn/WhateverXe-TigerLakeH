@@ -28,7 +28,16 @@ METHODS
 int main() {
  State s;
  assert(s.display12Available()==((1ULL<<39)-1|C::ClockOrder|C::ComboAUXGate|C::PanelDepth|C::PanelTiming|C::PanelPWM));
- assert(s.display13Available()==C::Backend13);
+ assert(s.display13Available()==(C::Backend13|C::SST13|C::AUX13|C::DPProbe13));
+ assert(C::display13(s.display13Available(),true).missing()==C::DPBoot13);
+ s.display13DPProbeReady=false;
+ assert(C::display13(s.display13Available()).ready()); // Existing provider/HDMI stays valid.
+ assert(C::display13(s.display13Available(),true).missing()==(C::DPBoot13|C::DPProbe13));
+ s.display13DPProbeReady=true;s.display13FBAUXHooksReady=false;
+ assert(C::display13(s.display13Available(),true).missing()==(C::DPBoot13|C::AUX13));
+ s.display13FBAUXHooksReady=true;s.display13FBSSTHooksReady=false;
+ assert(C::display13(s.display13Available(),true).missing()==(C::DPBoot13|C::SST13));
+ s.display13FBSSTHooksReady=true;
  // TGL: candidate not yet registered, native donor setup is complete.
  // Missing framing, AUX, mode lock or cleanup must fail before any hotplug.
  s.tglTCAutoCandidates=8;assert(s.start().ready());

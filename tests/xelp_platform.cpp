@@ -51,6 +51,21 @@ int main() {
   const uint32_t v[]={d,d+1,2,0,0x800,0x202};__builtin_memcpy(r,v,sizeof(v));
   assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(r),r)==(d<2?1U:0U));}
  assert(io.reads.empty());auto other=b;other.access=3;assert(!b.sameBinding(other));assert(b.sameBinding(b));
+ // Display13 Combo protocol/port arrangements compose without FIA reads.
+ unsigned dpCases=0;
+ for(unsigned selected=1;selected<4;++selected)for(unsigned dpMask=0;dpMask<4;++dpMask){
+  if(dpMask&~selected)continue;
+  c.combo=selected;c.comboBackend=3;b.config=c;
+  for(unsigned d=0;d<2;++d){
+   auto rec=reinterpret_cast<uint32_t *>(platform+0x20+24*d);const bool dp=dpMask&(1U<<d);
+   const uint32_t record[]={d,d+1,dp?1U:2U,0,dp?0x400U:0x800U,dp?0x201U:0x202U};memcpy(rec,record,sizeof(record));
+   assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(rec),rec)==((selected&(1U<<d))?1U:0U));
+   if(dp)for(unsigned field=0;field<6;++field){rec[field]^=1;
+    assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(rec),rec));rec[field]^=1;}
+   ++dpCases;
+  }
+ }
+ assert(dpCases==16&&io.reads.empty());
  c={};c.profile=identify(0x46908086,12);c.combo=8;c.comboBackend=0x19;b.config=c;assert(c.valid());
  for(unsigned d=0;d<9;++d){auto r=reinterpret_cast<uint32_t *>(platform+0x20+24*d);
   const uint32_t v[]={d,9,2,0,0x800,0x202};memcpy(r,v,sizeof(v));
