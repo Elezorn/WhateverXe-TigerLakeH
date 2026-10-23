@@ -8,7 +8,7 @@ int main() {
  unsigned implemented=0;
  for(const auto &entry:DeviceTable) {
   const uint32_t pci=uint32_t(entry.device)<<16|0x8086;
-  const auto revision=entry.family==Family::AlderLakeS?12U:0U;
+  const auto revision=entry.backend==GT::ADLSSmall?12U:0U;
   auto p=identify(pci,revision);
   assert(p.identity==pci && p.effectiveIdentity==pci && !p.overridden());
   assert(p.family==entry.family && p.display==entry.display && p.gt==entry.backend);
@@ -21,11 +21,11 @@ int main() {
   // TGL/ADL-N explicit override semantics remain unchanged.
   auto f=select(0x12348086,revision,true,&value,4);
   assert(f.overridden() && f.identity==0x12348086 && f.effectiveIdentity==pci);
-  assert(f.admitted()==(p.admitted() && entry.family!=Family::AlderLakeS));
+  assert(f.admitted()==(p.admitted() && entry.backend!=GT::ADLSSmall));
   assert(!strcmp(model(f),entry.model));
   auto nonIntel=select(0x123410DE,0,true,&value,4);assert(!nonIntel.admitted());
  }
- assert(implemented==9); // Recognition of other table rows adds no native backend.
+ assert(implemented==24); // Recognition of other table rows adds no native backend.
  uint32_t id=0x46D2;
  assert(select(0x12348086,0,true,&id,4).admitted());
  assert(!select(0x12348086,1,true,&id,4).admitted()); // Keep physical stepping guard.

@@ -132,7 +132,11 @@ Safariのインストール先や更新による配置変更に依存せずData�
   Big Surで固定DPの再接続は確認済みですが、起動時の表示や再接続後の復帰に時間がかかる場合があります。
   HDMI／固定DPの配線は機種・コネクタのプリセットではなくVBTから生成し、現在のバックエンドはCombo PHY A～Cを扱います。
   曖昧な配線、DDIと異なるAUXへの配線、Type-C／TBT機能、PHY D／Eは除外します。
-  GPUの適用対象は、確認済みのfuse構成を持つ `4690` revision `0C` に限定しています。
+  開発版のGPU受付は、ADL-S `4680/4682/4688/468A/468B/4690/4692/4693` のrevision `0C`と、
+  RPL-S `A780/A781/A782/A783/A788/A789/A78A/A78B` のrevision `04/0C`（GT D0）が対象です。
+  物理IDの一致、1 slice・最大2 DSS・16/24/32 EU・4 L3 bank・対応media engine構成を要求し、
+  他のsteppingや資源構成は拒否します。実機確認済みは `4690` のみで、他IDはCPU試験の範囲です。
+  追加IDには更新版のcompanion側ID受付も必要です。
   別のポート配置はCPUテストで確認していますが、実機では未検証です。
   VBT上でCombo PHY Aの固定DPとして扱われるUSB-C端子でも実表示を確認しています。
   これはType-C/TBT管理経路の動作確認ではありません。開発版のeDP経路は、VBTで確認したDDI Aのpanelを

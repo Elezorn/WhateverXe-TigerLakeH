@@ -4095,8 +4095,8 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	// This must precede tglLoadHDMIWiring, tglPrepareMMIOUC and TGL FIA reads.
 	auto physicalGPU = OSDynamicCast(IOPCIDevice, info->videoBuiltin);
 	selectProfile(XELP::deviceProfile(physicalGPU));
-    if(xeProfile.family==XELP::Family::AlderLakeS && xeProfile.identity==0x46908086 &&
-       xeProfile.revision==0x0C && !xeProfile.overridden() && physicalGPU &&
+    if(adlsDetected && AlderLakeS::identity(xeProfile.identity,xeProfile.revision) &&
+       !xeProfile.overridden() && physicalGPU &&
        XELP::hostOS(XELP::kernelOS(version)) && (physicalGPU->configRead16(4)&2)) {
         // Gen12 forcewake/fuse coordinates are shared with the existing reader.
         // Its ADL-N profile verdict is not used to admit ADL-S. No engine,

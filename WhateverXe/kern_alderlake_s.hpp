@@ -7,21 +7,27 @@
 #include "kern_vbt.hpp"
 #include "kern_xelp_panel_power.hpp"
 #include "kern_xelp_display_resources.hpp"
+#include "kern_xelp_gt_resources.hpp"
 
 namespace AlderLakeS {
 constexpr uint32_t PortMask=XELP::ADLSComboResources::physicalMask(); // A, TC1, TC2, TC3, TC4
-// Initial GT qualification is the measured UHD770 D0 configuration. Do not
-// infer fused EU/engine resources for other products from their family name.
-inline bool identity(uint32_t pci,uint32_t revision) {return pci==0x46908086 && revision==0x0C;}
-struct GT {
-    uint32_t slices {},dss {},nativeSubslices {},eus {},l3Banks {},urbKiB {};
+// ADL-S/RPL-S share the D0 GT backend; physical identity is never spoofed.
+inline bool identity(uint32_t pci,uint32_t revision) {return XELP::desktopGTD0(pci,revision);}
+struct GT : XELP::SmallGTResources {
     static bool decode(uint32_t pci,uint32_t revision,const uint32_t *fuses,GT &out) {
         out={};
-        if(!identity(pci,revision) || !fuses || fuses[0]!=1 || fuses[1]!=3 ||
-           fuses[2]!=0 || fuses[3]!=0xF0 || fuses[4]!=0xE00FA)return false;
-        out={1,2,4,32,4,256};return true;
+        if(!identity(pci,revision) || !fuses)return false;
+        for(unsigned i=0;i<5;++i)if(fuses[i]==UINT32_MAX)return false;
+        // Gen12 slice/DSS/EU-pair fields. Keep the supported four-bank
+        // capacity; do not derive URB size from EU count or a marketing ID.
+        const auto video=(~fuses[4])&0xFF,enhance=((~fuses[4])>>16)&0xF;
+        // Existing donor paths cover VCS0, optional VCS2, and VECS0.
+        if((video!=1 && video!=5) || enhance!=1)return false;
+        return XELP::smallGTResources(fuses[0]&0xFF,fuses[1]&0x3F,
+                                      fuses[2]&0xFF,fuses[3]&0xFF,out);
     }
 };
+static_assert(sizeof(GT)==6*sizeof(uint32_t),"Preserve GT resource layout");
 // The donor has three Combo clock slots. D/E need a separate clock allocator.
 constexpr uint32_t ComboBackendMask=XELP::ADLSComboBackend::mask(XELP::Donor::C004FC1A); // physical A/TC1/TC2, PHY A/B/C
 struct Port {

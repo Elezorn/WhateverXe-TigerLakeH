@@ -18,7 +18,8 @@ struct Profile {
     bool admitted() const {return (identity&0xFFFF)==0x8086 && revision<=255 &&
         donor==Donor::C004FC1A && gt!=GT::Unknown &&
         (family!=Family::AlderLakeN || revision==0) &&
-        (family!=Family::AlderLakeS || (identity==0x46908086 && revision==0x0C && !overridden()));}
+        ((gt!=GT::ADLSSmall && !desktopGTDevice(identity)) ||
+         (gt==GT::ADLSSmall && desktopGTD0(identity,revision) && !overridden()));}
 };
 inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) {
     Profile p;p.identity=physical;p.revision=revision;p.effectiveIdentity=effective;

@@ -15,16 +15,19 @@ int main() {
  static_assert(sizeof(Profile)==28 && sizeof(ProbeConfig)==60,"Keep existing provider ABI3 layout");
  for(auto id:{0xA7808086U,0xA7828086U,0xA7888086U,0xA78B8086U}) {
   auto p=identify(id,12);
-  assert(displayAdapter(p.family)==DisplayAdapter::ADLS && p.gt==GT::Unknown && !p.admitted());
+  assert(displayAdapter(p.family)==DisplayAdapter::ADLS && p.gt==GT::ADLSSmall && p.admitted());
   ProbeConfig c;c.profile=p;c.combo=0x19;c.comboBackend=0x19;
-  assert(!c.valid()); // A known Display adapter is not runtime qualification.
+  assert(c.valid()); // Registered desktop GT uses the common Display adapter.
   assert(!identify(id,12,0x46908086).admitted());
  }
 
- for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,12U,255U}) {
+ for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,4U,8U,12U,255U}) {
   const auto p=identify((id<<16)|0x8086,rev);
   const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4;
-  assert(p.admitted()==(tgl || (adln && rev==0) || (id==0x4690 && rev==12)));
+  const bool adls=id==0x4680 || id==0x4682 || id==0x4688 || id==0x468A || id==0x468B || id==0x4690 || id==0x4692 || id==0x4693;
+  const bool rpls=id==0xA780 || id==0xA781 || id==0xA782 || id==0xA783 || id==0xA788 || id==0xA789 || id==0xA78A || id==0xA78B;
+  assert(p.admitted()==(tgl || (adln && rev==0) || (adls && rev==12) || (rpls && (rev==4 || rev==12))));
+  if(adls||rpls)assert(!identify((id<<16)|0x8086,rev,0x9A498086).admitted());
   assert(!adln || p.display==Display::XeLPD);
   assert(!identify((id<<16)|0x1234,rev).admitted());
  }

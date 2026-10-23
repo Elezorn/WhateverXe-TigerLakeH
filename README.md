@@ -183,8 +183,12 @@ installation or update location.
   initial display output and reconnection can be delayed. HDMI/fixed-DP routing is derived
   from VBT rather than a board or connector preset, within the current Combo
   PHY A–C backend. Ambiguous routes, cross-routed AUX, Type-C/TBT capability
-  and PHY D/E are excluded. GPU admission remains limited to `4690` revision
-  `0C` with the qualified fuse configuration. Other port layouts have CPU-test
+  and PHY D/E are excluded. Development GPU admission covers ADL-S IDs `4680/4682/4688/468A/468B/4690/4692/4693`
+  at revision `0C`, and RPL-S IDs `A780/A781/A782/A783/A788/A789/A78A/A78B`
+  at revisions `04/0C` (GT D0). Physical identity must match, with one slice,
+  up to two DSS, 16/24/32 EUs, four L3 banks and the supported media-engine mask.
+  Other steppings and resource layouts are rejected. Only `4690` has hardware validation;
+  the other IDs have CPU coverage and need the updated companion ID dispatch. Other port layouts have CPU-test
   coverage but are not hardware-qualified. A USB-C connector exposed by VBT
   as fixed DP on Combo PHY A has also been tested. This does not qualify
   Type-C/TBT-managed routes. Development eDP routing also composes a

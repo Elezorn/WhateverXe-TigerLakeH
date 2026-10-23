@@ -7,11 +7,34 @@ using namespace AlderLakeS;
 int main() {
     uint32_t fuses[]={1,3,0,0xF0,0xE00FA};GT gt;
     assert(GT::decode(0x46908086,0xC,fuses,gt) && gt.eus==32 && gt.nativeSubslices==4 && gt.l3Banks==4 && gt.urbKiB==256);
-    for(unsigned i=0;i<5;++i)for(unsigned bit=0;bit<32;++bit) {
-        fuses[i]^=1U<<bit;assert(!GT::decode(0x46908086,0xC,fuses,gt) && !gt.eus);fuses[i]^=1U<<bit;
+    unsigned cases=0;
+    const unsigned ids[]={0x4680,0x4682,0x4688,0x468A,0x468B,0x4690,0x4692,0x4693,
+                          0xA780,0xA781,0xA782,0xA783,0xA788,0xA789,0xA78A,0xA78B};
+    for(auto id:ids)for(unsigned rev=0;rev<256;++rev) {
+        const bool d0=rev==12 || (id>=0xA780 && rev==4);
+        assert(GT::decode((id<<16)|0x8086,rev,fuses,gt)==d0);
+        assert(!GT::decode((id<<16)|0x1234,rev,fuses,gt));++cases;
+    }
+    for(unsigned dss=1;dss<64;++dss)for(unsigned eu=0;eu<256;++eu)for(unsigned video:{1U,5U}) {
+        fuses[1]=dss;fuses[2]=eu;fuses[4]=0xE0000|(0xFF^video);
+        const unsigned count=__builtin_popcount(dss),eus=2*count*(8-__builtin_popcount(eu));
+        const bool supported=count<=2 && (eus==16 || eus==24 || eus==32);
+        assert(GT::decode(0xA7808086,4,fuses,gt)==supported);
+        if(supported)assert(gt.dss==count && gt.nativeSubslices==count*2 && gt.eus==eus && gt.l3Banks==4 && gt.urbKiB==256);
+        else assert(!gt.eus);
+        ++cases;
+    }
+    const uint32_t original[]={1,3,0,0xF0,0xE00FA};memcpy(fuses,original,sizeof(fuses));
+    for(unsigned i=0;i<5;++i) {
+        fuses[i]=UINT32_MAX;assert(!GT::decode(0xA7808086,4,fuses,gt));fuses[i]=original[i];
+        fuses[i]|=0x80000000;assert(GT::decode(0xA7808086,4,fuses,gt));fuses[i]=original[i];
+    }
+    for(unsigned i:{0U,3U,4U}) {
+        fuses[i]^=1;assert(!GT::decode(0xA7808086,4,fuses,gt));fuses[i]=original[i];
     }
     assert(!GT::decode(0x46D18086,0,fuses,gt));assert(!GT::decode(0x46908086,0,fuses,gt));
     assert(!GT::decode(0x46908086,0xC,nullptr,gt));
+    printf("PASS %u desktop GT identity/step/resource cases\n",cases);
     const uint32_t physical[]={0,3,4,5,6},dvo[]={10,1,8,9,11};
     const uint32_t expectedPin[]={1,9,10,11,12};
     const uint32_t expectedHPD[]={0x10000,0x1000000,0x2000000,0x4000000,0x8000000};

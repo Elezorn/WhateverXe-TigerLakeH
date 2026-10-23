@@ -7,6 +7,7 @@
 #define kern_alderlake_n_hpp
 #include <stdint.h>
 #include "kern_xelp_platform.hpp"
+#include "kern_xelp_gt_resources.hpp"
 #include "kern_xelp_memory_layout.hpp"
 #include "kern_xelp_geometry.hpp"
 #include <stddef.h>
@@ -30,24 +31,10 @@ inline bool matches(uint32_t identity, uint8_t revision) {
     return p.family==XELP::Family::AlderLakeN && p.admitted();
 }
 
-struct Resources {
-    uint32_t slices {}, dss {}, nativeSubslices {}, eus {}, l3Banks {}, urbKiB {};
-};
-
-// Gen12 SSEU: one slice, up to two DSS in these small GT SKUs, one disable
-// bit per EU pair. Native subslices are twice the DSS population. Preserve
-// the physical LP backend; capacity is independent of the PCI product label.
-// Four L3 banks/256KiB is the supported small-GT capacity, not eus*constant.
-inline bool resources(uint32_t slice, uint32_t dss, uint32_t euDisable,
-                      uint32_t l3Disable, Resources &out) {
-    out = {};
-    if (slice != 1 || !dss || (dss&~0x3FU) || (euDisable&~0xFFU) || l3Disable != 0xF0)
-        return false;
-    const auto count=static_cast<uint32_t>(__builtin_popcount(dss));
-    const auto eus=2*count*(8-static_cast<uint32_t>(__builtin_popcount(euDisable)));
-    if (count>2 || (eus!=16 && eus!=24 && eus!=32)) return false;
-    out = {1, count, 2*count, eus, 4, 256};
-    return true;
+using Resources=XELP::SmallGTResources;
+using XELP::smallGTResources;
+inline bool resources(uint32_t slice,uint32_t dss,uint32_t euDisable,uint32_t l3Disable,Resources &out) {
+    return smallGTResources(slice,dss,euDisable,l3Disable,out);
 }
 
 struct Register { uint32_t offset {}, value {}; };

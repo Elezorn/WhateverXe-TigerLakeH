@@ -32,15 +32,16 @@ int main(int argc,char **argv) {
  assert(!XELP::display13ProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 0;}));
  assert(!XELP::display13ProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 2;}));
  assert(argc==2);const bool adln=!strncmp(argv[1],"adln",4);
- const bool adls=!strncmp(argv[1],"adls",4);
+ const bool rpls=!strncmp(argv[1],"rpls",4);
+ const bool adls=!strncmp(argv[1],"adls",4) || rpls;
  const bool legacy=!strncmp(argv[1],"adln-abi1",9);
  const bool fake=strstr(argv[1],"fake")!=nullptr;
- const bool rejected=!strcmp(argv[1],"rpls") || !strcmp(argv[1],"unknown") || !strcmp(argv[1],"adln-revision") || !strcmp(argv[1],"adls-revision");
+ const bool rejected=!strcmp(argv[1],"rpls-revision") || !strcmp(argv[1],"unknown") || !strcmp(argv[1],"adln-revision") || !strcmp(argv[1],"adls-revision");
  IOService controller;IOPCIDevice pci;OSObject access,port,foreign;IOMemoryMap map;
  std::vector<uint8_t> mmio(0x1000000);alignas(8) uint8_t platform[0x1C0] {};
  pci.identity=adln?0x46D18086:0x9A498086;
  if(adls){pci.identity=0x46908086;pci.revision=12;}
- if(!strcmp(argv[1],"rpls")){pci.identity=0xA7808086;pci.revision=12;}
+ if(rpls){pci.identity=0xA7808086;pci.revision=!strcmp(argv[1],"rpls-revision")?8:4;}
  if(!strcmp(argv[1],"adls-revision"))pci.revision=0;
  if(!strcmp(argv[1],"tgl-g4"))pci.identity=0x9A788086;
  if(!strcmp(argv[1],"tgl-9a40"))pci.identity=0x9A408086;

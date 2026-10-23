@@ -16,13 +16,14 @@ struct DeviceEntry {
 };
 // GT::Unknown means catalogued, without an implemented automatic backend.
 constexpr DeviceEntry DeviceTable[] {
-    {0x4680, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 770"},
-    {0x4682, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 730"},
-    {0x4688, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
-    {0x468B, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
+    {0x4680, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 770"},
+    {0x4682, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 730"},
+    {0x4688, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0x468A, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0x468B, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
     {0x4690, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 770"},
-    {0x4692, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 730"},
-    {0x4693, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 710"},
+    {0x4692, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 730"},
+    {0x4693, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 710"},
     {0x46A3, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel UHD Graphics"},
     {0x46A6, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
     {0x46A8, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
@@ -40,10 +41,14 @@ constexpr DeviceEntry DeviceTable[] {
     {0x9A49, Family::TigerLake, Display::XeD, GT::TGLGT2, "Intel Iris Xe Graphics"},
     {0x9A60, Family::TigerLake, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
     {0x9A78, Family::TigerLake, Display::XeD, GT::TGLG4, "Intel UHD Graphics"},
-    {0xA780, Family::RaptorLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 770"},
-    {0xA782, Family::RaptorLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 730"},
-    {0xA788, Family::RaptorLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
-    {0xA78B, Family::RaptorLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
+    {0xA780, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 770"},
+    {0xA781, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA782, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 730"},
+    {0xA783, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA788, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA789, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA78A, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA78B, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
     {0xA7A0, Family::RaptorLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
     {0xA7A1, Family::RaptorLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
     {0xA7A8, Family::RaptorLakeP, Display::XeLPD, GT::Unknown, "Intel UHD Graphics"},
@@ -57,6 +62,17 @@ inline const DeviceEntry *deviceEntry(uint32_t pci) {
     if((pci&0xFFFF)!=0x8086)return nullptr;
     for(const auto &entry:DeviceTable)if(entry.device==(pci>>16))return &entry;
     return nullptr;
+}
+inline bool desktopGTDevice(uint32_t pci) {
+    const auto e=deviceEntry(pci);
+    return e && (e->family==Family::AlderLakeS || e->family==Family::RaptorLakeS);
+}
+// Linux v6.12 intel_step.c: ADL-S 0C and RPL-S 04/0C are GT D0.
+// Earlier ADL-S and unknown revisions need a separate stepping/WA policy.
+inline bool desktopGTD0(uint32_t pci,uint32_t revision) {
+    const auto e=deviceEntry(pci);
+    return e && ((e->family==Family::AlderLakeS && revision==0xC) ||
+                 (e->family==Family::RaptorLakeS && (revision==4 || revision==0xC)));
 }
 }
 #endif

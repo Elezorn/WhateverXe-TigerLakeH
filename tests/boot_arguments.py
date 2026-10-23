@@ -138,15 +138,14 @@ int main() {
   assert(tglStart(nullptr,nullptr)==KERN_SUCCESS);
  }
  // Exercise the complete production selection, including the shared Display
- // adapter on unadmitted products. Expected identities are independent of the
- // new selector; RPL-S remains rejected despite its known Display adapter.
+ // adapter on registered desktop products and the still-unimplemented ADL-P.
  for(auto kernel:allKernels)for(auto id:{0x9A49U,0x9A78U,0x4690U,0x4680U,0xA780U,0x46A6U,0x46D2U})
- for(auto rev:{0U,12U,255U})for(unsigned option=0;option<4;++option) {
+ for(auto rev:{0U,4U,12U,255U})for(unsigned option=0;option<4;++option) {
   version=kernel;args={};
   if(option&1)args.insert("-wex-tgl-off");
   if(option&2)args.insert("-wex-noaccel");
   XE selected;selected.init();selected.selectProfile(XELP::identify((id<<16)|0x8086,rev));
-  const bool desktop=id==0x4690 && rev==12;
+  const bool desktop=((id==0x4690 || id==0x4680) && rev==12) || (id==0xA780 && (rev==4 || rev==12));
   const bool mobile=id==0x9A49 || id==0x9A78;
   const bool small13=id==0x46D2 && rev==0;
   assert(selected.adlsDetected==desktop && selected.adlsDisplaySelected==desktop);
