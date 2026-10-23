@@ -38,27 +38,21 @@ int main() {
     }
     for (auto name : {"", "other", "TGLVA.old", "../Info.plist"})
         assert(clientForFile((va+name).c_str(), true) == Client::None);
-    assert(service(web, Client::WebKitGPU));
-    const std::string safari = "/System/Volumes/Preboot/Cryptexes/App/System/Library/StagedFrameworks/Safari/"
-        "WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU";
-    assert(service(safari.c_str(), Client::WebKitGPU));
-    assert(!service(safari.c_str(), Client::Compiler));
-    assert(!service((safari+".old").c_str(), Client::WebKitGPU));
-    assert(!service(("/System/Volumes/Data"+safari).c_str(), Client::WebKitGPU));
-    auto other = safari;
-    other.replace(other.find("StagedFrameworks/Safari"), 23, "StagedFrameworks/Other");
-    assert(!service(other.c_str(), Client::WebKitGPU));
-    other = safari;
-    other.replace(other.rfind("com.apple.WebKit.GPU"), 20, "com.apple.WebKit.WebContent");
-    assert(!service(other.c_str(), Client::WebKitGPU));
-    for (auto root : {"/System/Volumes/Preboot/Cryptexes/OS", "/System/Volumes/Preboot/Cryptexes/Incoming/OS"}) {
-        assert(service((std::string(root)+web).c_str(), Client::WebKitGPU));
-        assert(!service((std::string(root)+web).c_str(), Client::Compiler));
-        assert(!service((std::string(root)+metal).c_str(), Client::WebKitGPU));
-        assert(!service((std::string(root)+web+".old").c_str(), Client::WebKitGPU));
+    // Same signing identifier alone is not authority: both kernel trust and
+    // current signature validity are required. Other Apple services are denied.
+    for (const char *identity : {static_cast<const char *>(nullptr), "", "com.apple.WebKit.GPU",
+        "com.apple.WebKit.GPU.extra", "com.apple.WebKit.WebContent",
+        "com.apple.WebKit.Networking", "com.apple.Safari", "MTLCompilerService"}) {
+        for (bool platform : {false, true}) for (bool valid : {false, true})
+            assert(webKitGPU(identity, platform, valid) ==
+                (identity && std::string(identity) == "com.apple.WebKit.GPU" && platform && valid));
     }
-    for (auto root : {"/tmp", "/System/Volumes/Data", "/System/Volumes/Preboot/Cryptexes/OS-extra",
-        "/System/Volumes/Preboot/Cryptexes/Incoming/OS/..", "/System/Volumes/Preboot/Cryptexes/App"})
+    // No path-only fallback, including formerly accepted OS/App Cryptex roots,
+    // updated/staged layouts, and arbitrary relocated or renamed copies.
+    for (const char *root : {"", "/System/Volumes/Preboot/Cryptexes/OS",
+        "/System/Volumes/Preboot/Cryptexes/Incoming/OS",
+        "/System/Volumes/Preboot/Cryptexes/App", "/System/Cryptexes/App",
+        "/Applications/Relocated Safari.app", "/tmp"})
         assert(!service((std::string(root)+web).c_str(), Client::WebKitGPU));
     assert(!service(nullptr, Client::WebKitGPU));
     const std::string mtl = "/Library/GPUBundles/AppleIntelTGLGraphicsMTLDriver.bundle/Contents/MacOS/";

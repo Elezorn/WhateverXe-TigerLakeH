@@ -148,6 +148,10 @@ its X-tiled scanout path is unsupported. Display 12 tiling selection is unchange
 
 These results cover tested systems, not every GPU, display, adapter or dock.
 
+On Big Sur–Tahoe, WebKit GPU access to the Data GPU drivers uses its valid
+Apple platform signature and service identifier, independently of Safari’s
+installation or update location.
+
 ### Known issues and limits
 
 - Some image-conversion operations can crash the application.
@@ -170,7 +174,7 @@ These results cover tested systems, not every GPU, display, adapter or dock.
   acceleration and three simultaneous displays (two 1080p60 and one 720p60).
   With the revised VA assets, hardware H.264 encode/decode, HEVC decode,
   Safari hardware video decoding and Widevine playback have also been tested
-  on Big Sur and Tahoe. Safari's App Cryptex WebKit layout is supported.
+  on Big Sur and Tahoe.
   It requires unreleased companion graphics changes and is not supported by the
   published graphics pkg. Fixed DP reconnection has been tested on Big Sur, but
   initial display output and reconnection can be delayed. HDMI/fixed-DP routing is derived
