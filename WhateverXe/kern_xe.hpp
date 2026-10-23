@@ -433,7 +433,10 @@ private:
  }
 	uint32_t tglAUXParentRefs[9] {};
 	bool tglAUXParentEligible(uint32_t ddi) const {
-		return tglAUXParentReady && (tglLegacyTCEligible(ddi) || (adlsDetected && ddi>=3 && adlsWiring.hasDP(ddi)));
+		return tglAUXParentReady && (tglLegacyTCEligible(ddi) || (adlsDetected && adlsWiring.hasDP(ddi)));
+	}
+	uint32_t tglAUXParentPG(uint32_t ddi) const {
+		return adlsDetected && ddi==0 ? 1 : 3;
 	}
 	static void wrapTGLEnableAUXPower(void *power, uint32_t ddi);
 	static void wrapTGLDisableAUXPower(void *power, uint32_t ddi);

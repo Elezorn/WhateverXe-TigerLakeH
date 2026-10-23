@@ -14114,8 +14114,9 @@ static bool tglPcodeGateSerialize(void *,void *,OSSerialize *serializer) {
  const bool result=out->serialize(serializer);out->release();return result;
 }
 
-// TGL TC AUX depends on PW1/2/3, independently of the AUX-specific well.
-// Donor PG argument 3 acquires refs 1..3; pair every AUX reference with it.
+// AUX wells also need their parent display power: PW1 for ADL-S DDI A,
+// PW1/2/3 for TC AUX. Donor PG argument N acquires refs 1..N. Pair every
+// owned AUX reference with its physical parent, including after all pipes stop.
 // Extra refs are port-local; the donor power object/PG1..3 remain shared.
 // Preserve the donor caller-serialization contract. This bookkeeping is not
 // a lock for native power transitions or a claim of concurrent AUX support.
@@ -14128,7 +14129,7 @@ void XE::wrapTGLEnableAUXPower(void *power, uint32_t ddi) {
 	auto bytes = static_cast<uint8_t *>(power);
 	if (hold) {
 		tglAUXRecord(port, 5, false, 0, *reinterpret_cast<uint32_t *>(bytes + 0x28), *reinterpret_cast<uint32_t *>(bytes + 0x54 + 4 * ddi), self->tglAUXParentRefs[ddi]);
-		reinterpret_cast<void (*)(void *, uint32_t)>(self->tglEnablePG)(power, 3);
+		reinterpret_cast<void (*)(void *, uint32_t)>(self->tglEnablePG)(power, self->tglAUXParentPG(ddi));
   tglAUXRecord(port,9,true,0,*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(power)+0x28),
    *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(power)+0x54+4*ddi),self->tglAUXParentRefs[ddi],1);
 		++self->tglAUXParentRefs[ddi];
@@ -14155,7 +14156,7 @@ void XE::wrapTGLDisableAUXPower(void *power, uint32_t ddi) {
 			--self->tglAUXParentRefs[ddi];
   tglAUXRecord(port,9,false,0,*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(power)+0x28),
    *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(power)+0x54+4*ddi),self->tglAUXParentRefs[ddi],0);
-			reinterpret_cast<void (*)(void *, uint32_t)>(self->tglDisablePG)(power, 3);
+			reinterpret_cast<void (*)(void *, uint32_t)>(self->tglDisablePG)(power, self->tglAUXParentPG(ddi));
 		}
 		tglAUXRecord(port, 6, true, release ? 0 : 1, *reinterpret_cast<uint32_t *>(bytes + 0x28), *reinterpret_cast<uint32_t *>(bytes + 0x54 + 4 * ddi), self->tglAUXParentRefs[ddi]);
 	}

@@ -126,7 +126,8 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
   曖昧な配線、DDIと異なるAUXへの配線、Type-C／TBT機能、PHY D／Eは除外します。
   GPUの適用対象は、確認済みのfuse構成を持つ `4690` revision `0C` に限定しています。
   別のポート配置はCPUテストで確認していますが、実機では未検証です。
-  USB-C、消灯／復帰、他のmacOSは未検証です。
+  VBT上でCombo PHY Aの固定DPとして扱われるUSB-C端子でも実表示を確認しています。
+  これはType-C/TBT管理経路の動作確認ではありません。消灯／復帰、他のmacOSは未検証です。
 - Display 13のUSB-C / eDP対応
 
 ### Not Planned
