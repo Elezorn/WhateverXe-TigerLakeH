@@ -441,11 +441,21 @@ int main(int argc, char **argv) {
  assert(used[0]&&fbs[0].at<uint32_t>(0x49e8)==1);used[0]=false;clean();
  ports[3].at<uint32_t>(0x550)=2;
  assert(XE::tglPrepareTrainingLease(ctl.data(),obj.tglTrainingLeases[3])==1); // no TBT
- // ADL-S fixed Combo C uses physical TC2 in mode1 and the same pool.
- setup();obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=16;obj.adlsWiring.pin[4]=10;obj.tglAUXParentReady=true;
- assert(XE::tglTrainingLeaseForDDI(4)&&!XE::tglTrainingLeaseForDDI(3));
- assert(!obj.tglLegacyTCEligible(4)&&obj.tglAUXParentEligible(4));
- ports[4].at<uint32_t>(0x550)=1;reserve(4);release(4);clean();
+ // ADL-S Combo A/B/C use the same pool and mode1 contract. Allocate all
+ // three simultaneously and vary both allocation and teardown order.
+ unsigned comboOrders=0,ins[]={0,3,4};
+ do {unsigned outs[]={0,3,4};do {
+  setup();obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;
+  obj.adlsWiring.valid=true;obj.adlsWiring.dp=0x19;obj.tglAUXParentReady=true;
+  for(auto d:ins){
+   assert(XE::tglTrainingLeaseForDDI(d)&&!obj.tglLegacyTCEligible(d)&&obj.tglAUXParentEligible(d));
+   ports[d].at<uint32_t>(0x550)=1;reserve(d);
+  }
+  for(auto d:outs)release(d);
+  clean();++comboOrders;
+ }while(std::next_permutation(outs,outs+3));}while(std::next_permutation(ins,ins+3));
+ assert(comboOrders==36);
+ std::puts("PASS ADL-S Combo A/B/C: 36 three-port allocation/teardown orders using the shared lease implementation");
  // Nested and concurrent training must not unmute another invocation.
  TGLTrainingScopes scopes;
  auto one=scopes.enter(1), nested=scopes.enter(1), two=scopes.enter(2);

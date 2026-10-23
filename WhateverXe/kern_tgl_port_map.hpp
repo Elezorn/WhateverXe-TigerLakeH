@@ -169,28 +169,5 @@ struct TGLTypeCPort {
 
 // A native SST path may use a combo eDP port or a qualified legacy TC port.
 // This selects register coordinates, not firmware wiring or a fixed pipe.
-struct TGLSSTTrainingPort {
- uint32_t ddi {}, ddiBuffer {};
- bool combo {};
- static bool resolve(uint32_t physicalDDI, uint32_t kind, uint32_t backend,
-                     bool qualifiedTC, TGLSSTTrainingPort &out) {
-  out = {};
-  const bool edp = physicalDDI < 2 && kind == 0 && backend == 1;
-  const bool tc = physicalDDI >= 3 && physicalDDI <= 8 &&
-   kind == 1 && (backend == 3 || backend == 4) && qualifiedTC;
-  // qualifiedTC includes generation and firmware admission. ADL-S
-  // physical A/TC1/TC2 use Combo mode1; TC lane power remains PW3.
-  const bool adls = (physicalDDI==0 || physicalDDI==3 || physicalDDI==4) && kind==1 && backend==1 && qualifiedTC;
-  if (!edp && !tc && !adls) return false;
-  out.ddi = physicalDDI; out.ddiBuffer = 0x64000 + 0x100 * physicalDDI;
-  out.combo = edp || (adls && physicalDDI==0);
-  return true;
- }
- uint32_t mainPowerMask(uint32_t pipe) const {
-  // TGL PW1 owns combo lanes and pipe A; PW3 adds pipe B / TC lanes,
-  // and PW4 adds pipe C (Linux v6.12 intel_display_power_map.c).
-  return pipe == 2 ? 0xFFU : (pipe == 0 && combo ? 3U : 0x3FU);
- }
-};
 
 #endif

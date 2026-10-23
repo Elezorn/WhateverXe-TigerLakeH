@@ -93,6 +93,21 @@ int main(){
   else {assert(r.pre.empty());assert(reg(0x46140+4*p)==0x3456&&reg(0x60400+0x1000*p)==0x01000020);}
   ++cases;
  }
+ // Reuse the actual wrapper for every admitted ADL-S Combo route on every
+ // pipe, independent of which connector/pipe a physical fixture happened to use.
+ for(unsigned d:{0u,3u,4u})for(unsigned p=0;p<3;++p)
+ for(unsigned lanes:{1u,2u,4u})for(unsigned framing=0;framing<2;++framing)
+ for(unsigned pat=0;pat<6;++pat){
+  reset(d,p,pat);object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);
+  object.adlsDetected=true;object.adlsWiring.valid=true;object.adlsWiring.dp=1U<<d;
+  config[2]=1;field(port,0x550,1U);field(port,0x124,lanes);port[0x11A]=framing;
+  emitTP=true;expectPre=pat==1;
+  reg(0x45454)=3U<<(2*d);reg(0x45404)=p==2?0xFF:(d==0&&p==0?3:0x3F);
+  invoke();neighbors();assert(reg(0x60540+0x1000*p)==(0x80100A00|(framing<<18)));
+  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post.size()==13&&r.post[9]==p&&r.post[10]==d);
+  assert(!r.post[11]); // No eDP Alternate SR on external Combo DP, including A.
+  ++cases;
+ }
  // Normal/fast pattern transitions must agree with the sink's negotiated
  // Alternate SR mode. Preserve unrelated bits, external ports, invalid
  // negotiation, and unknown donor layouts; never touch another transcoder.

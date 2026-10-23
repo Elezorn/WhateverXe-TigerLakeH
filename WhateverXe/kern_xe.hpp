@@ -403,12 +403,16 @@ private:
  // instances need the new mode backend, regardless of available PHY math.
  uint32_t tglTCAutoCandidates {},tglTCAutoRegistered {};
  uint32_t tglDPAltCandidates {};
- bool tglDPSSTEligible(uint32_t ddi) const {
-  return (adlsDetected && adlsWiring.hasDP(ddi)) || tglLegacyTCEligible(ddi) || (ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
+ XELP::Display12SSTRoutes tglSSTRoutes() const {
+  auto routes=tglTCWiring.sstRoutes(tglAUXParentMask,
+   tglTCAutoCandidates&__atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE),tglDPAltCandidates);
+  if(adlsDetected && adlsWiring.valid)routes.combo=adlsWiring.dp;
+  return routes;
  }
+ bool tglDPSSTEligible(uint32_t ddi) const {return tglSSTRoutes().eligible(ddi);}
  bool tglDPSSTMode(uint32_t ddi,uint32_t mode) const {
-  return (mode==1 && adlsDetected && adlsWiring.hasDP(ddi)) || (mode==4 && tglLegacyTCEligible(ddi)) ||
-   (mode==3 && ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
+  const auto route=tglSSTRoutes().external(ddi,mode);
+  return route.valid() && route.mode==mode;
  }
  uintptr_t tglNativeLegacyHPDCaller {};
  bool tglRegisterLegacyHPD(uint32_t ddi,uint32_t mode,uintptr_t caller) {
@@ -428,16 +432,13 @@ private:
  }
  static bool tglLoadTCWiring(IOService *provider);
  bool tglLegacyTCEligible(uint32_t ddi) const {
-  return tglTCWiring.legacyEligible(ddi,tglAUXParentMask) || (ddi>=3 && ddi<9 &&
-   (tglTCAutoCandidates & tglAUXParentMask & __atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE) & (1U<<ddi)));
+  return tglSSTRoutes().external(ddi,4).valid();
  }
 	uint32_t tglAUXParentRefs[9] {};
 	bool tglAUXParentEligible(uint32_t ddi) const {
-		return tglAUXParentReady && (tglLegacyTCEligible(ddi) || (adlsDetected && adlsWiring.hasDP(ddi)));
+		return tglAUXParentReady && tglSSTRoutes().fixed(ddi).auxParentPG!=0;
 	}
-	uint32_t tglAUXParentPG(uint32_t ddi) const {
-		return adlsDetected && ddi==0 ? 1 : 3;
-	}
+	uint32_t tglAUXParentPG(uint32_t ddi) const {return tglSSTRoutes().fixed(ddi).auxParentPG;}
 	static void wrapTGLEnableAUXPower(void *power, uint32_t ddi);
 	static void wrapTGLDisableAUXPower(void *power, uint32_t ddi);
 	static uint32_t wrapTGLRunAUX(void *port, uint32_t command, uint32_t *packet, uint32_t length, bool flag);

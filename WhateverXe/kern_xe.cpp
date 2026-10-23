@@ -15644,9 +15644,9 @@ uint32_t XE::wrapTGLPortTraining(void *port, void *request) {
 		auto p = static_cast<uint8_t *>(port);
 		auto config = *reinterpret_cast<uint32_t **>(p + 0x548);
 		auto ctl = static_cast<uint8_t *>(callbackXE->tglObservationController);
-		TGLSSTTrainingPort mapping;
-		if (config && ctl && TGLSSTTrainingPort::resolve(config[0],config[2],
-			*reinterpret_cast<uint32_t *>(p + 0x550),callbackXE->tglDPSSTMode(config[0],*reinterpret_cast<uint32_t *>(p + 0x550)),mapping) &&
+		XELP::Display12SSTRoute mapping;
+		if (config && ctl && callbackXE->tglSSTRoutes().resolve(config[0],config[2],
+			*reinterpret_cast<uint32_t *>(p + 0x550),mapping) &&
 			*reinterpret_cast<void **>(p + 0x578) &&
 			*reinterpret_cast<void **>(p + 0x578) == *reinterpret_cast<void **>(ctl + 0xC40) &&
 			p[0x115] == 1 && p[0x117] == 0 && p[0x10] <= 1 && p[0x11A] <= 1) {
@@ -16368,9 +16368,9 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 		auto ctl = fb ? *reinterpret_cast<uint8_t **>(fb + 0x1D0) : nullptr;
 		auto access = ctl ? *reinterpret_cast<uint8_t **>(ctl + 0xC40) : nullptr;
 		const auto transcoder = *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(path) + 0x3640);
-		TGLSSTTrainingPort mapping;
-		if (config && TGLSSTTrainingPort::resolve(config[0],config[2],
-			*reinterpret_cast<uint32_t *>(pb + 0x550),callbackXE->tglDPSSTMode(config[0],*reinterpret_cast<uint32_t *>(pb + 0x550)),mapping) && !pb[0x117] &&
+		XELP::Display12SSTRoute mapping;
+		if (config && callbackXE->tglSSTRoutes().resolve(config[0],config[2],
+			*reinterpret_cast<uint32_t *>(pb + 0x550),mapping) && !pb[0x117] &&
 			transcoder < 3 && ctl == callbackXE->tglObservationController && access &&
 			*reinterpret_cast<void **>(pb + 0x578) == access &&
 			*reinterpret_cast<void **>(fb + 0x4A40) == access) {
@@ -16445,9 +16445,9 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 		auto ctl = fb ? *reinterpret_cast<uint8_t **>(fb + 0x1D0) : nullptr;
 		auto access = ctl ? *reinterpret_cast<uint8_t **>(ctl + 0xC40) : nullptr;
 		const auto transcoder = *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(path) + 0x3640);
-		TGLSSTTrainingPort mapping;
-		if (config && TGLSSTTrainingPort::resolve(config[0],config[2],
-			*reinterpret_cast<uint32_t *>(p + 0x550),callbackXE->tglDPSSTMode(config[0],*reinterpret_cast<uint32_t *>(p + 0x550)),mapping) &&
+		XELP::Display12SSTRoute mapping;
+		if (config && callbackXE->tglSSTRoutes().resolve(config[0],config[2],
+			*reinterpret_cast<uint32_t *>(p + 0x550),mapping) &&
 			!p[0x117] && p[0x11A] <= 1 && transcoder < 3 &&
 			ctl == callbackXE->tglObservationController && access &&
 			*reinterpret_cast<void **>(p + 0x578) == access &&

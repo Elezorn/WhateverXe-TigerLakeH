@@ -12,7 +12,7 @@ if len(sys.argv)>1:
   text=re.search(rf'{name}\[\] \{{([^}}]+)\}}',install).group(1)
   expected=bytes(int(x,0) for x in text.split(','));assert b[offset:offset+len(expected)]==expected
 code=r'''
-#include "kern_tgl_port_map.hpp"
+#include "kern_xelp_sst_route.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -20,7 +20,8 @@ code=r'''
 struct State {
  bool tglActive=true,tglSinkFramingReady=true,eligible=true;
  void *tglObservationController=nullptr;
- bool tglDPSSTMode(uint32_t,uint32_t mode){return eligible && (mode==3 || mode==4);}
+ XELP::Display12SSTRoutes tglSSTRoutes(){return kind==2?XELP::Display12SSTRoutes{0,0,8}:XELP::Display12SSTRoutes{0,8,0};}
+ unsigned kind=0;
 } state,*callbackXE=&state;
 unsigned records;
 void tglTransitionRecord(unsigned stage,bool done,void *,uint32_t ddi,uint64_t before,uint8_t after,const uint64_t *d,unsigned size){
@@ -32,7 +33,7 @@ int main(){
  for(unsigned kind=0;kind<3;++kind)for(unsigned cap=0;cap<3;++cap)for(unsigned requested=0;requested<3;++requested)
  for(unsigned bad=0;bad<10;++bad){
   memset(p,0,sizeof(p));memset(ctl,0,sizeof(ctl));memset(config,0,sizeof(config));
-  state={};state.tglObservationController=ctl;
+  state={};state.kind=kind;state.tglObservationController=ctl;
   config[0]=kind?3:0;config[2]=kind?1:0;
   uint32_t *cp=config;memcpy(p+0x548,&cp,sizeof(cp));
   uint32_t backend=kind==2?3:(kind?4:1);memcpy(p+0x550,&backend,4);
