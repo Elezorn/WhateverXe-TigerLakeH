@@ -4952,12 +4952,11 @@ bool XE::processDisplay13Framebuffer(KernelPatcher &patcher,size_t index,mach_vm
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBGTTHooksReady",display13FBGTTHooksReady);
 	display13FBTopologyHooksReady=processDisplay13FramebufferTopology(patcher,index,address,size);
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBTopologyHooksReady",display13FBTopologyHooksReady);
-	display13FBPowerBackendReady=display13FBPowerReferencesReady && display13FBEngineEnableHookReady &&
-		display13FBLifecycleHooksReady && display13FBDBUFHooksReady && display13FBWatermarkHooksReady;
-	display13FBClockReady=display13FBClockReadoutHooksReady && display13FBClockSetHookReady && display13FBLifecycleHooksReady;
-	display13FBMemoryReady=display13FBMemoryHooksReady && display13FBGTTHooksReady && display13FBABIReady && display13FBBootHandoffHookReady;
-	const bool backend=display13FBPowerBackendReady && display13FBClockReady && display13FBMemoryReady &&
-		display13FBIRQReady && display13FBWatermarkLayoutReady && display13FBOutputHooksReady && display13FBTopologyHooksReady;
+ using C=XELP::DisplayContract;const auto installed=display13Available();
+ display13FBPowerBackendReady=C{C::Power13,installed}.ready();
+ display13FBClockReady=C{C::Clock13,installed}.ready();
+ display13FBMemoryReady=C{C::MemoryGroup13,installed}.ready();
+ const bool backend=C::display13(installed).ready();
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FramebufferBackendReady",backend);
 	return true; // Installed routes; actual startup/scanout still require runtime checks.
 }
@@ -6561,12 +6560,12 @@ bool XE::wrapDisplay13FramebufferInit(IOService *fb,IOService *controller,uint32
 
 bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	auto s=callbackXE;auto pci=OSDynamicCast(IOPCIDevice,provider);
-	const bool ready=s->adlnDetected && s->adlnKernelReady && s->display13FBPowerReferencesReady &&
-		s->display13FBPowerBackendReady && s->display13FBClockReadoutHooksReady && s->display13FBClockSetHookReady &&
-		s->display13FBClockReady && s->display13FBIRQReady && s->display13FBMemoryHooksReady &&
-		s->display13FBEngineEnableHookReady && s->display13FBLifecycleHooksReady && s->display13FBDBUFHooksReady && s->display13FBWatermarkLayoutReady && s->display13FBWatermarkHooksReady && s->display13FBOutputHooksReady &&
-		s->display13FBBootHandoffHookReady && s->display13FBGTTHooksReady && s->display13FBMemoryReady && s->display13FBABIReady && s->display13FBTopologyHooksReady &&
-		pci && xelpAlderLakeNDevice(pci);
+ const auto contract=XELP::DisplayContract::display13(s->display13Available());
+ const bool ready=s->adlnDetected && s->adlnKernelReady && contract.ready() && pci && xelpAlderLakeNDevice(pci);
+ uint64_t contractRecord[]={1,contract.required,contract.available,contract.missing()};
+ that->setProperty("WEXDisplayStartupContract",contractRecord,sizeof(contractRecord));
+ if(!contract.ready())for(uint64_t bit=1;bit;bit<<=1)if(contract.missing()&bit)
+  SYSLOG("igfx","Display13 missing operation %s",XELP::DisplayContract::name(bit));
 	that->setProperty("N97FramebufferBackendReady",ready);
 	if(!ready)return false;
 	auto property=provider->getProperty("xelp-hdmi-wiring");
@@ -10920,6 +10919,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			KernelPatcher::RouteRequest hpdRequest("__ZN17AppleIntelPortHAL11getHPDStateEv",
 				wrapTGLHPDState, orgTGLHPDState);
 			const bool hpdOK = patcher.routeMultiple(index, &hpdRequest, 1, address, size);
+   tglHPDHookReady=hpdOK;
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGHPDObservationRouted", hpdOK);
 			patcher.clearError();
 			KernelPatcher::RouteRequest laneRequest("__ZN17AppleIntelPortHAL26getDklPhyLaneConfigBitMaskEv",
@@ -10998,11 +10998,10 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     }
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSLanePowerReady",adlsPowerReady);
     // Native startup remains closed if any required ADL-S adapter is absent.
-    adlsDisplayHooksReady=ready && adlsPowerReady && adlsPortInitReady && orgTGLEnableCombo && tglPortByDDI &&
-     orgTGLGetOSInformation && orgTGLRegisterWrite && orgTGLRegisterRead && hpdOK &&
-     (!adlsWiring.dp || (tglTrainingLeaseReady && tglSinkFramingReady && tglComboSignalReady &&
-       tglComboAUXLifetimeReady && tglAUXParentReady && tglTCNativeFunctions.complete() &&
-       tglModeResultReady && tglNativeLegacyHPDCaller));
+    const auto contract=XELP::DisplayContract::adls(display12Available(),adlsWiring.dp!=0);
+    adlsDisplayHooksReady=contract.ready();
+    uint64_t contractRecord[]={1,contract.required,contract.available,contract.missing()};
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayStartupContract",contractRecord,sizeof(contractRecord));
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayHooksReady",adlsDisplayHooksReady);
    }
    tglRecordStartOrder(1,nullptr);
@@ -11135,6 +11134,71 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiring",q,sizeof(q));return admitted;
 }
 
+XELP::DisplayContract::Mask XE::display12Available() const {
+ using C=XELP::DisplayContract;C::Mask a=0;
+ if(tglSonomaSurfaceFramebufferReady)a|=C::Surface;
+ if(tglPlatformNVRAMReady)a|=C::NVRAM;
+ if(tglFBIRQReady)a|=C::IRQ;
+ if(tglProbeReady)a|=C::Probe;
+ if(tglFramebufferInitReady)a|=C::Framebuffer;
+ if(tglTopologyReady)a|=C::Topology;
+ if(tglPanelPowerPropertyReady)a|=C::PanelPower;
+ if(tglEDPTranscoderReady)a|=C::PanelTranscoder;
+ if(tglDekelReady)a|=C::Dekel;
+ if(tglGMBusReady)a|=C::GMBus;
+ if(tglTrainingLeaseReady)a|=C::Lease;
+ if(tglEnablePG)a|=C::PowerGet;
+ if(tglDisablePG)a|=C::PowerPut;
+ if(tglPortByDDI)a|=C::PortLookup;
+ if(orgTGLPathLookup)a|=C::PathLookup;
+ if(orgTGLAddPath)a|=C::PathAdd;
+ if(orgTGLFreePath)a|=C::PathFree;
+ if(orgTGLTrainingEnd)a|=C::TrainingEnd;
+ if(orgTGLTraining)a|=C::Training;
+ if(orgTGLTrainingBegin)a|=C::TrainingBegin;
+ if(orgTGLAllocatePathResources)a|=C::PathAllocate;
+ if(tglSinkFramingReady)a|=C::Framing;
+ if(tglComboSignalReady)a|=C::ComboSignal;
+ if(tglComboAUXLifetimeReady)a|=C::ComboAUX;
+ if(tglAUXParentReady)a|=C::AUXParent;
+ if(tglTCNativeFunctions.complete())a|=C::TCNative;
+ if(tglModeResultReady)a|=C::Mode;
+ if(tglNativeLegacyHPDCaller)a|=C::HPDCaller;
+ if(tglDPAltFiaReady)a|=C::AltFIA;
+ if(tglNativeFiaReady)a|=C::NativeFIA;
+ if(tglModeTransitionLock)a|=C::ModeLock;
+ if(adlsClockReady)a|=C::ClockAdapter;
+ if(adlsPowerReady)a|=C::PowerAdapter;
+ if(adlsPortInitReady)a|=C::PortInit;
+ if(orgTGLEnableCombo)a|=C::EnableCombo;
+ if(orgTGLGetOSInformation)a|=C::OSInformation;
+ if(orgTGLRegisterRead)a|=C::MMIORead;
+ if(orgTGLRegisterWrite)a|=C::MMIOWrite;
+ if(tglHPDHookReady)a|=C::HPD;
+ if(tglClockOffCaller)a|=C::ClockOrder;
+ return a;
+}
+
+XELP::DisplayContract::Mask XE::display13Available() const {
+ using C=XELP::DisplayContract;C::Mask a=0;
+ if(display13FBPowerReferencesReady)a|=C::PowerRefs13;
+ if(display13FBEngineEnableHookReady)a|=C::Engine13;
+ if(display13FBLifecycleHooksReady)a|=C::Lifecycle13;
+ if(display13FBDBUFHooksReady)a|=C::DBUF13;
+ if(display13FBWatermarkHooksReady)a|=C::WM13;
+ if(display13FBClockReadoutHooksReady)a|=C::ClockRead13;
+ if(display13FBClockSetHookReady)a|=C::ClockSet13;
+ if(display13FBMemoryHooksReady)a|=C::Memory13;
+ if(display13FBGTTHooksReady)a|=C::GTT13;
+ if(display13FBABIReady)a|=C::ABI13;
+ if(display13FBBootHandoffHookReady)a|=C::Handoff13;
+ if(display13FBIRQReady)a|=C::IRQ13;
+ if(display13FBWatermarkLayoutReady)a|=C::WMLayout13;
+ if(display13FBOutputHooksReady)a|=C::Output13;
+ if(display13FBTopologyHooksReady)a|=C::Topology13;
+ return a;
+}
+
 bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  if(callbackXE->adlsDetected && (!callbackXE->adlsNativeReady || !callbackXE->adlsDisplayHooksReady)) {
   that->setProperty("ADLSFramebufferPrerequisitesMissing",true);return false;
@@ -11171,17 +11235,23 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  if(!tglLoadHDMIWiring(provider)) {
   that->setProperty("TGLStartBlockedByHDMIWiring",true);return false;
  }
-	if (!tglSonomaSurfaceFramebufferReady || !callbackXE->tglPlatformNVRAMReady || !callbackXE->tglFBIRQReady || !callbackXE->tglProbeReady || !callbackXE->tglFramebufferInitReady || !callbackXE->tglDekelReady ||
-		(callbackXE->tglHDMIB && !callbackXE->tglGMBusReady) ||
-		!callbackXE->tglTopologyReady || !callbackXE->tglPanelPowerPropertyReady || !callbackXE->tglEDPTranscoderReady ||
-		(callbackXE->tglTrainingLeaseRequested && (!callbackXE->tglTrainingLeaseReady ||
-			!callbackXE->tglEnablePG || !callbackXE->tglDisablePG ||
-			!callbackXE->tglPortByDDI || !callbackXE->orgTGLPathLookup ||
-			!callbackXE->orgTGLAddPath || !callbackXE->orgTGLFreePath || !callbackXE->orgTGLTrainingEnd ||
-			!callbackXE->orgTGLTraining || !callbackXE->orgTGLTrainingBegin || !callbackXE->orgTGLAllocatePathResources))) {
-		IORegistryEntry::getRegistryRoot()->setProperty("TGLFramebufferStartBlockedByVtable", true);
-		return false;
-	}
+ // Evaluate firmware candidates, not only currently registered/live ports:
+ // a hotplug route must have the same operations available as a boot route.
+ auto self=callbackXE;
+ XELP::DisplayContract::Routes routes;
+ routes.hdmi=self->tglHDMIB;routes.panel=self->firmwarePorts.panel.valid;
+ routes.combo=self->adlsDetected && self->adlsWiring.dp;
+ routes.legacy=self->tglTCWiring.legacy || self->tglTCAutoCandidates;
+ routes.alt=self->tglDPAltCandidates;routes.leaseRequested=self->tglTrainingLeaseRequested;
+ const auto contract=XELP::DisplayContract::display12(self->display12Available(),routes);
+ uint64_t contractRecord[]={1,contract.required,contract.available,contract.missing()};
+ that->setProperty("WEXDisplayStartupContract",contractRecord,sizeof(contractRecord));
+ if(!contract.ready()) {
+  for(uint64_t bit=1;bit;bit<<=1)if(contract.missing()&bit)
+   SYSLOG("igfx","Display12 missing operation %s",XELP::DisplayContract::name(bit));
+  IORegistryEntry::getRegistryRoot()->setProperty("TGLFramebufferStartBlockedByVtable",true);
+  return false;
+ }
 
  // r88: use the native provider-workloop mode so IRQ registration does not
  // depend on a WindowServer framebuffer open after accelerator startup.

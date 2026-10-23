@@ -17,6 +17,7 @@
 #include "kern_vbt.hpp"
 #include "kern_alderlake_s.hpp"
 #include "kern_xelp_donor.hpp"
+#include "kern_xelp_display_contract.hpp"
 
 #include "kern_dvmt.hpp"
 #include <Headers/kern_patcher.hpp>
@@ -58,6 +59,8 @@ public:
 	bool processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
 
 private:
+ XELP::DisplayContract::Mask display12Available() const;
+ XELP::DisplayContract::Mask display13Available() const;
 	// Do not inline either helper into the small kext-load dispatcher.
 	__attribute__((noinline)) bool processAlderLakeNLoadOnly(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
 	__attribute__((noinline)) bool processAlderLakeNRejectedAccelerator(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
@@ -77,7 +80,7 @@ private:
 	bool adlnRequested {false};
 	bool adlnDetected {false};
     bool adlsDetected {},adlsNativeReady {},adlsDisplayHooksReady {};
-    bool adlsPortInitReady {};
+    bool adlsPortInitReady {},tglHPDHookReady {};
     bool adlsPLLTableReady {},adlsClockReady {},adlsPowerReady {};
     mach_vm_address_t orgADLSPowerPG {};
     static uint8_t *adlsPowerTarget(void *power);
