@@ -16640,12 +16640,8 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 			auto base = *reinterpret_cast<volatile uint8_t **>(access + 0x50);
 			const auto size = *reinterpret_cast<uint32_t *>(access + 0x60);
 			if (base && size >= mapping.ddiBuffer + 4 && size >= 0x60544 + 0x1000 * transcoder) {
-				auto clock = reinterpret_cast<volatile uint32_t *>(base + 0x46140 + 4 * transcoder);
-				auto func = reinterpret_cast<volatile uint32_t *>(base + 0x60400 + 0x1000 * transcoder);
 				auto buffer = reinterpret_cast<volatile uint32_t *>(base + mapping.ddiBuffer);
 				const auto lanes = *reinterpret_cast<uint32_t *>(pb + 0x124);
-				const uint32_t routeClock = (config[0] + 1) << 28;
-				const uint32_t routePort = (config[0] + 1) << 27;
 				const auto mainPower = *reinterpret_cast<volatile uint32_t *>(base + 0x45404);
 				const auto ioPower = *reinterpret_cast<volatile uint32_t *>(base + 0x45454);
 				// The selected port and pipe determine the required TGL power wells.
@@ -16654,29 +16650,13 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 				const uint32_t ioMask = 3U << (2 * mapping.ddi);
 				const bool powered = mainPower != 0xFFFFFFFFU && ioPower != 0xFFFFFFFFU &&
 					(mainPower & mainMask) == mainMask && (ioPower & ioMask) == ioMask;
-				// Do not sample the route/output bank when its power contract failed.
-				const auto clockBefore = powered ? *clock : 0U;
-				const auto funcBefore = powered ? *func : 0U;
-				const auto bufferBefore = powered ? *buffer : 0U;
-				uint32_t reason = 0;
-				if (!powered) reason = 5;
-				else if (lanes != 1 && lanes != 2 && lanes != 4) reason = 1;
-				else if ((funcBefore | bufferBefore) & 0x80000000U) reason = 2;
-				else if ((clockBefore & 0xF0000000U) && (clockBefore & 0xF0000000U) != routeClock) reason = 3;
-				else if ((funcBefore & 0x78000000U) && (funcBefore & 0x78000000U) != routePort) reason = 4;
-				const uint32_t clockWanted = (clockBefore & 0x0FFFFFFFU) | routeClock;
-				const uint32_t funcWanted = (funcBefore & ~0x7F00000EU) | routePort | 0x02000000U |
-					((lanes - 1) << 1 & 0xEU);
-				uint32_t clockAfter = clockBefore, funcAfter = funcBefore;
-				if (!reason) {
-					*clock = clockWanted;
-					clockAfter = *clock;
-					if (clockAfter == clockWanted) {
-						*func = funcWanted;
-						funcAfter = *func;
-						if (funcAfter != funcWanted) reason = 7;
-					} else reason = 6;
-				}
+				const auto read=[&](uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);};
+				const auto write=[&](uint32_t reg,uint32_t value){*reinterpret_cast<volatile uint32_t *>(base+reg)=value;};
+				const auto programmed=XELP::SSTProgram::prepare(read,write,mapping.ddi,transcoder,lanes,powered);
+				const auto reason=programmed.reason;
+				const auto clockBefore=programmed.clockBefore,clockWanted=programmed.clockWanted,clockAfter=programmed.clockAfter;
+				const auto funcBefore=programmed.funcBefore,funcWanted=programmed.funcWanted,funcAfter=programmed.funcAfter;
+				const auto bufferBefore=programmed.bufferBefore;
 				static uint32_t sequence {};
 				uint32_t record[] {__sync_add_and_fetch(&sequence, 1), reason, transcoder, lanes,
 					clockBefore, clockWanted, clockAfter, funcBefore, funcWanted, funcAfter, bufferBefore, powered ? *buffer : 0U,
@@ -16718,7 +16698,6 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 			auto base = *reinterpret_cast<volatile uint8_t **>(access + 0x50);
 			const uint32_t reg = 0x60540 + 0x1000*transcoder;
 			if (base && *reinterpret_cast<uint32_t *>(access + 0x60) >= reg + 4) {
-				auto tp = reinterpret_cast<volatile uint32_t *>(base + reg);
 				const auto mainPower = *reinterpret_cast<volatile uint32_t *>(base + 0x45404);
 				const auto ioPower = *reinterpret_cast<volatile uint32_t *>(base + 0x45454);
 				const uint32_t mainMask = mapping.mainPowerMask(transcoder);
@@ -16728,18 +16707,16 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 					tglObserveActivation(callbackXE->tglObservationController, port, path, 1, true, result);
 					return result;
 				}
-				const auto before = *tp;
-				auto wanted = (before & ~0x40000U) | (uint32_t(p[0x11A]) << 18);
-				// Match the negotiated sink setting, not merely its capability.
-				// External DP never receives this eDP-only DPCD write.
-				const bool alternateSR = config[2] == 0 && callbackXE->tglSinkFramingReady && p[0x118] <= 1;
-				if (alternateSR) wanted = (wanted & ~0x40U) | (uint32_t(p[0x118]) << 6);
-				const bool activeSST = (before & 0x88000000U) == 0x80000000U;
-				if (activeSST && before != wanted) *tp = wanted;
+				const auto read=[&](uint32_t off){return *reinterpret_cast<volatile uint32_t *>(base+off);};
+				const auto write=[&](uint32_t off,uint32_t value){*reinterpret_cast<volatile uint32_t *>(base+off)=value;};
+				const auto framing=XELP::SSTProgram::framing(read,write,transcoder,p[0x11A],
+					config[2]==0,callbackXE->tglSinkFramingReady,p[0x118],true);
+				const auto before=framing.before,wanted=framing.wanted;
+				const auto activeSST=framing.active,alternateSR=framing.alternate;
 				uint64_t record[13] {}, uptime;
 				clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, record);
 				record[1] = pattern; record[2] = p[0x11A]; record[3] = before;
-				record[4] = wanted; record[5] = *tp; record[6] = activeSST;
+				record[4] = wanted; record[5] = framing.after; record[6] = activeSST;
 				record[7] = *reinterpret_cast<uint32_t *>(p + 0x124);
 				record[8] = reinterpret_cast<uintptr_t>(path); record[9] = transcoder; record[10] = mapping.ddi;
 				record[11] = alternateSR; record[12] = p[0x118];

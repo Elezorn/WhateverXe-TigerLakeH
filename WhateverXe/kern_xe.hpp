@@ -15,6 +15,7 @@
 #include "kern_tgl_combo_dp.hpp"
 #include "kern_display13_hdmi_wiring.hpp"
 #include "kern_xelp_platform.hpp"
+#include "kern_xelp_sst_program.hpp"
 #include "kern_vbt.hpp"
 #include "kern_alderlake_s.hpp"
 #include "kern_xelp_panel_pwm.hpp"

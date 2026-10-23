@@ -1,4 +1,5 @@
 #include "kern_alderlake_s.hpp"
+#include "kern_xelp_sst_program.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
