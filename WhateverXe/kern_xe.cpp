@@ -16052,8 +16052,10 @@ bool XE::adlsClockTarget(void *controller,void *port,void *otherPort) {
     auto config=*reinterpret_cast<uint32_t **>(p+0x548);
     auto access=*reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(controller)+0xC40);
     if(!config)return false;
-    AlderLakeS::Port route;
-    return self->adlsWiring.bound(self->tglPlatformCopy,config) && AlderLakeS::Port::resolve(config[0],route) && access &&
+    AlderLakeS::Port route;uint32_t slot;
+    return self->adlsWiring.bound(self->tglPlatformCopy,config) &&
+        XELP::ADLSComboBackend::clockSlot(XELP::Donor::C004FC1A,config[0],slot) &&
+        AlderLakeS::Port::resolve(config[0],route) && slot==route.phy && access &&
         *reinterpret_cast<void **>(p+0x578)==access && *reinterpret_cast<uint32_t *>(p+0x5B8)==route.phyBase()+0x10C &&
         *reinterpret_cast<uint32_t *>(access+0x60)>=0x16429C;
 }

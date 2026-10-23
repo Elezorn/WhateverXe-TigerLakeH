@@ -6,9 +6,10 @@
 #include <stdint.h>
 #include "kern_vbt.hpp"
 #include "kern_xelp_panel_power.hpp"
+#include "kern_xelp_display_resources.hpp"
 
 namespace AlderLakeS {
-constexpr uint32_t PortMask=0x79; // A, TC1, TC2, TC3, TC4
+constexpr uint32_t PortMask=XELP::ADLSComboResources::physicalMask(); // A, TC1, TC2, TC3, TC4
 // Initial GT qualification is the measured UHD770 D0 configuration. Do not
 // infer fused EU/engine resources for other products from their family name.
 inline bool identity(uint32_t pci,uint32_t revision) {return pci==0x46908086 && revision==0x0C;}
@@ -22,13 +23,13 @@ struct GT {
     }
 };
 // The donor has three Combo clock slots. D/E need a separate clock allocator.
-constexpr uint32_t ComboBackendMask=0x19; // physical A/TC1/TC2, PHY A/B/C
+constexpr uint32_t ComboBackendMask=XELP::ADLSComboBackend::mask(XELP::Donor::C004FC1A); // physical A/TC1/TC2, PHY A/B/C
 struct Port {
     uint32_t ddi {},phy {},buffer {},clock {},clockShift {},clockOff {},hpd {};
     static bool resolve(uint32_t ddi,Port &out) {
         out={};
         if(ddi>6 || !(PortMask&(1U<<ddi)))return false;
-        const auto phy=ddi ? ddi-2 : 0;
+        const auto phy=XELP::ADLSComboResources::phy(ddi);
         const uint32_t off[]={10,11,24,4,5};
         out={ddi,phy,0x64000+0x100*ddi,phy<3?0x164280U:0x1642BCU,
              2*(phy%3),1U<<off[phy],1U<<(ddi?ddi+21:16)};

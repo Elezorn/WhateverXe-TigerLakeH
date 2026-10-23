@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "kern_xelp_devices.hpp"
+#include "kern_xelp_display_resources.hpp"
 namespace XELP {
 struct Profile {
     uint32_t identity {}, revision {}; // Physical config-space identity, never spoofed.
@@ -73,9 +74,11 @@ struct ProbeConfig {
            !same(profile,identify(profile.identity,profile.revision,profile.effectiveIdentity)))return false;
         // ADL-S firmware routes use the donor's three Combo PHY slots.
         // Its TC label grants neither Type-C nor Dekel register access.
-        if(profile.family==Family::AlderLakeS)
-            return profile.display==Display::XeD && combo && !(combo&~0x19U) && comboBackend==0x19 &&
-                !(excluded&~0x1FFU) && !(excluded&combo) && !legacy && !typeC && !legacyBackend;
+        if(profile.family==Family::AlderLakeS) {
+            const auto capacity=ADLSComboBackend::mask(profile.donor);
+            return profile.display==Display::XeD && combo && !(combo&~capacity) && comboBackend==capacity &&
+                !(excluded&~PortMask) && !(excluded&combo) && !legacy && !typeC && !legacyBackend;
+        }
         if((combo&~7U) || ((legacy|typeC|excluded|legacyBackend)&~0x1F8U) ||
            (comboBackend&~7U) || (legacy&typeC) || (legacy&excluded) || (typeC&excluded))return false;
         if(profile.display==Display::XeD)return comboBackend==7;

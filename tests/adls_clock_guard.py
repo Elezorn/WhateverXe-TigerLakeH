@@ -41,7 +41,7 @@ int main(){
  at<uint32_t>(access,0x60)=0x164298;assert(!XE::adlsClockTarget(ctl,port,nullptr));at<uint32_t>(access,0x60)=0x1000000;
  for(unsigned i=0;i<6;++i){c[i]^=1;assert(!XE::adlsClockTarget(ctl,port,nullptr));c[i]^=1;}
  assert(!XE::adlsClockTarget(ctl,port,access));assert(!XE::adlsClockTarget(access,port,nullptr));
- for(unsigned ddi:{0u,3u,4u})for(bool isDP:{false,true}) {
+ for(unsigned ddi:{0u,3u,4u,5u,6u})for(bool isDP:{false,true}) {
   state.adlsWiring={};state.adlsWiring.valid=true;
   (isDP?state.adlsWiring.dp:state.adlsWiring.hdmi)=1U<<ddi;
   state.adlsWiring.pin[ddi]=isDP?(ddi?ddi+6:1):12;
@@ -49,7 +49,7 @@ int main(){
   uint32_t config[]={ddi,state.adlsWiring.pin[ddi],isDP?1U:2U,0,isDP?0x400U:0x800U,isDP?0x201U:0x202U};
   auto bound=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);memcpy(bound,config,sizeof(config));
   at<void *>(port,0x548)=bound;at<uint32_t>(port,0x5B8)=route.phyBase()+0x10C;
-  assert(XE::adlsClockTarget(ctl,port,nullptr));
+  assert(XE::adlsClockTarget(ctl,port,nullptr)==(ddi<=4));
   state.adlsWiring.valid=false;assert(!XE::adlsClockTarget(ctl,port,nullptr));
  }
  state={};state.adlsClockReady=true;state.tglObservationController=ctl;state.adlsWiring.valid=true;state.adlsWiring.panel=1;
