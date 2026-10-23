@@ -22,6 +22,7 @@
 #define KERN_TGL_COMBO_SIGNAL_HPP
 #include <stdint.h>
 #include "kern_alderlake_s.hpp"
+#include "kern_xelp_combo_policy.hpp"
 struct TGLComboSignal {
     uint32_t base {},lanes {},level {},swing {},scalar {},cursor {},post1 {};
     bool low {};
@@ -32,39 +33,25 @@ struct TGLComboSignal {
         if(ddi>1 || (count!=1 && count!=2 && count!=4) || hobl ||
            (rate!=6 && rate!=10 && !(lowSwing && rate==20)) ||
            voltage>3 || emphasis>3 || voltage+emphasis>3)return false;
-        static const uint8_t first[]={0,4,7,9};
-        static const uint8_t normal[10][4]={
-            {0xA,0x32,0x3F,0},{0xA,0x4F,0x37,8},{0xC,0x71,0x2F,0x10},{6,0x7D,0x2B,0x14},
-            {0xA,0x4C,0x3F,0},{0xC,0x73,0x34,0xB},{6,0x7F,0x2F,0x10},
-            {0xC,0x6C,0x3C,3},{6,0x7F,0x35,0xA},{6,0x7F,0x3F,0}
-        };
-        static const uint8_t reduced[10][4]={
-            {0,0x7F,0x3F,0},{8,0x7F,0x38,7},{1,0x7F,0x33,0xC},{9,0x7F,0x31,0xE},
-            {8,0x7F,0x3F,0},{1,0x7F,0x38,7},{9,0x7F,0x35,0xA},
-            {1,0x7F,0x3F,0},{9,0x7F,0x38,7},{9,0x7F,0x3F,0}
-        };
-        base=ddi ? 0x6C000:0x162000;lanes=count;level=first[voltage]+emphasis;low=lowSwing;
-        const auto row=low ? reduced[level]:normal[level];
-        swing=row[0];scalar=row[1];cursor=row[2];post1=row[3];return true;
+        XELP::ComboPolicy policy;
+        if(!policy.select(XELP::ComboPolicy::Platform::TGL,rate,true,lowSwing,false,voltage,emphasis))return false;
+        base=ddi?0x6C000:0x162000;lanes=count;low=lowSwing;assign(policy);return true;
     }
-    // ADL-S fixed DP on the resolved Combo PHY. RBR/HBR uses the TGL normal table;
-    // HBR2/HBR3 uses Intel's ADL-S external DP coefficients.
+    // The platform adapter chooses coordinates; electrical policy contains no
+    // physical DDI, donor field or board-specific connector condition.
     bool selectADLS(uint32_t ddi,uint32_t count,uint32_t rate,uint32_t voltage,uint32_t emphasis) {
-        if(rate!=6 && rate!=10 && rate!=20 && rate!=30)return false;
-        if(!select(1,count,6,false,false,voltage,emphasis))return false;
+        if(count!=1 && count!=2 && count!=4)return false;
         AlderLakeS::Port route;
         if(!AlderLakeS::Port::resolve(ddi,route) || !(AlderLakeS::ComboBackendMask&(1U<<ddi)))return false;
-        base=route.phyBase();
-        if(rate>=20) {
-            static const uint8_t high[10][4]={
-                {0xA,0x35,0x3F,0},{0xA,0x4F,0x37,8},{0xC,0x63,0x31,0xE},{6,0x7F,0x2C,0x13},
-                {0xA,0x47,0x3F,0},{0xC,0x63,0x37,8},{6,0x73,0x32,0xD},
-                {0xC,0x58,0x3F,0},{6,0x7F,0x35,0xA},{6,0x7F,0x3F,0}
-            };
-            const auto row=high[level];swing=row[0];scalar=row[1];cursor=row[2];post1=row[3];
-        }
-        return true;
+        XELP::ComboPolicy policy;
+        if(!policy.select(XELP::ComboPolicy::Platform::ADLS,rate,false,false,false,voltage,emphasis))return false;
+        base=route.phyBase();lanes=count;low=false;assign(policy);return true;
     }
+    void assign(const XELP::ComboPolicy &p) {
+        level=p.level;swing=p.coefficients.swing;scalar=p.coefficients.scalar;
+        cursor=p.coefficients.cursor;post1=p.coefficients.post1;
+    }
+
     // Caller owns this live port's power. Pre-read all lane words before any
     // write; refuse an inaccessible bank without a partial programming sequence.
     template<class Read,class Write> bool program(Read read,Write write) const {
