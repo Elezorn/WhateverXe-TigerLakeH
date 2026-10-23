@@ -11,8 +11,9 @@ struct PanelPower {
  // outside the native Combo panel coordinates; each needs its own adapter.
  static bool nativePPS0(const VBT::Ports &v,Family family) {
   const auto &p=v.panel;
-  const bool backend=(family==Family::TigerLake && p.ddi<2) ||
-                     (family==Family::AlderLakeS && p.ddi==0);
+  const auto adapter=displayAdapter(family);
+  const bool backend=(adapter==DisplayAdapter::TGL && p.ddi<2) ||
+                     (adapter==DisplayAdapter::ADLS && p.ddi==0);
   if(!backend || !v.valid() || v.unmapped || !p.valid ||
      !p.backlightValid || !p.pwmPresent || p.backlightType!=2 || p.controller)return false;
   const auto &port=v.port[p.ddi];const auto aux=p.ddi?0x10U:0x40U;

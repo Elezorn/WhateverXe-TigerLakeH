@@ -15,6 +15,7 @@ int main() {
  }
  panel.controller=0;panel.backlightType=2;
  assert(P::nativePPS0(v,XELP::Family::AlderLakeS));
+ assert(P::nativePPS0(v,XELP::Family::RaptorLakeS));
  v.present|=2;v.port[1]=v.port[0];assert(!P::nativePPS0(v,XELP::Family::TigerLake));v.present=1;
  const uint32_t zero[5]={};
  auto plan=P::select(panel,zero,0,0,0);

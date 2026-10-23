@@ -30,8 +30,9 @@ static bool hardwareAllowed(void *controller) {
     auto service = static_cast<IOService *>(controller);
     auto pci = OSDynamicCast(IOPCIDevice, service->getProvider());
     const auto profile=XELP::deviceProfile(pci);
-    if(!profile.admitted() || (profile.family!=XELP::Family::TigerLake && profile.family!=XELP::Family::AlderLakeS))return false;
-    if(profile.family==XELP::Family::TigerLake)
+    const auto adapter=XELP::displayAdapter(profile.family);
+    if(!profile.admitted() || (adapter!=XELP::DisplayAdapter::TGL && adapter!=XELP::DisplayAdapter::ADLS))return false;
+    if(adapter==XELP::DisplayAdapter::TGL)
         __atomic_store_n(&legacyTGLAccess,manager(controller),__ATOMIC_RELEASE);
     return true;
 }

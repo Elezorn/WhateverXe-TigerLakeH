@@ -72,6 +72,22 @@ int main(int argc,char **argv){
                      {0x68c6,9,0,0x30},{1,0,0},{0x100,0,0}});
  auto ds=parse(desktop.data(),desktop.size(),Family::AlderLakeS);
  assert(ds.valid() && ds.present==0x39 && ds.port[3].fixedTMDS() && ds.port[3].ddc==2);
+ // Same Display adapter across product families, without admitting a new GT.
+ auto rs=parse(desktop.data(),desktop.size(),Family::RaptorLakeS);
+ assert(rs.valid() && rs.present==ds.present && rs.unmapped==ds.unmapped && rs.ambiguous==ds.ambiguous);
+ for(unsigned d=0;d<PortCount;++d)assert(!memcmp(&rs.port[d],&ds.port[d],sizeof(Port)));
+ const unsigned desktopDP[]={10,7,8,9,11},desktopHD[]={0,1,2,3,12},physicalDDI[]={0,3,4,5,6};
+ for(unsigned p=0;p<5;++p)for(auto dvo:{desktopDP[p],desktopHD[p]}) {
+  assert(ddi(Family::RaptorLakeS,dvo)==physicalDDI[p]);
+  auto v=table({{0x60d6,dvo,0,p?0x10*p:0x40}});
+  auto parsed=parse(v.data(),v.size(),Family::RaptorLakeS);
+  assert(parsed.valid() && parsed.present==(1U<<physicalDDI[p]));
+ }
+ for(unsigned dvo=0;dvo<256;++dvo)
+  assert(ddi(Family::RaptorLakeS,dvo)==ddi(Family::AlderLakeS,dvo));
+ for(auto family:{Family::Unknown,Family::RocketLake,Family::AlderLakeP,Family::RaptorLakeP})
+  assert(parse(desktop.data(),desktop.size(),family).status==Status::Platform);
+
  auto a=parse(adl.data(),adl.size(),Family::AlderLakeN);assert(a.valid()&&a.present==0xB&&a.hdmi(3).hdmi==3);
  assert(ddi(Family::TigerLake,9)==3&&ddi(Family::AlderLakeN,13)==3&&ddi(Family::AlderLakeN,19)==6);
  assert(ddi(Family::AlderLakeN,9)==PortCount&&ddi(Family::TigerLake,8)==PortCount);

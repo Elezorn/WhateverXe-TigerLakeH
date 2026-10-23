@@ -12,6 +12,15 @@ struct IO {
  uint32_t read(uint32_t r){reads.push_back(r);return regs.at(r);}
 };
 int main() {
+ static_assert(sizeof(Profile)==28 && sizeof(ProbeConfig)==60,"Keep existing provider ABI3 layout");
+ for(auto id:{0xA7808086U,0xA7828086U,0xA7888086U,0xA78B8086U}) {
+  auto p=identify(id,12);
+  assert(displayAdapter(p.family)==DisplayAdapter::ADLS && p.gt==GT::Unknown && !p.admitted());
+  ProbeConfig c;c.profile=p;c.combo=0x19;c.comboBackend=0x19;
+  assert(!c.valid()); // A known Display adapter is not runtime qualification.
+  assert(!identify(id,12,0x46908086).admitted());
+ }
+
  for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,12U,255U}) {
   const auto p=identify((id<<16)|0x8086,rev);
   const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4;

@@ -81,7 +81,7 @@ struct ProbeConfig {
            !same(profile,identify(profile.identity,profile.revision,profile.effectiveIdentity)))return false;
         // ADL-S firmware routes use the donor's three Combo PHY slots.
         // Its TC label grants neither Type-C nor Dekel register access.
-        if(profile.family==Family::AlderLakeS) {
+        if(displayAdapter(profile.family)==DisplayAdapter::ADLS) {
             const auto capacity=ADLSComboBackend::mask(profile.donor);
             return profile.display==Display::XeD && combo && !(combo&~capacity) && comboBackend==capacity &&
                 !(excluded&~PortMask) && !(excluded&combo) && !legacy && !typeC && !legacyBackend;
