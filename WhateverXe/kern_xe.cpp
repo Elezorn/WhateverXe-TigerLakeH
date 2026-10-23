@@ -14890,21 +14890,28 @@ uint32_t XE::wrapTGLAGDCPortStatus(void *controller, void *request, void *output
 	const auto r = FunctionCast(wrapTGLAGDCPortStatus, callbackXE->orgTGLAGDCPortStatus)(controller, request, output);
 	uint64_t value = r == 0 && output ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(output) + 8) : 0;
 	auto s = callbackXE;
-	if (s->tglInactivePorts && s->tglPortByIndex && r == 0 && output &&
-		(id == 6 || id == 7) && controller && controller == s->tglObservationController &&
+	const auto &w=s->tglTCWiring;const auto &v=s->firmwarePorts;
+ // Explicitly unspecified wiring remains unknown. Firmware absence is useful
+ // only when every digital child was mapped; do not hide an unparsed output.
+ const uint32_t excluded=!s->tglTCWiringLoaded || !w.valid ? 0 : s->tglTCWiringExplicit ? w.excluded :
+  v.valid() && !v.unmapped ? TGLTCWiring::Mask&~v.present : 0;
+ if (req && s->tglInactivePorts && s->tglPortByIndex && r == 0 && output &&
+  s->xeProfile.family==XELP::Family::TigerLake && !s->adlsDetected &&
+  id>=4 && id<=9 && (excluded&(1U<<(id-1))) && controller && controller == s->tglObservationController &&
 		*reinterpret_cast<void **>(static_cast<uint8_t *>(controller) + 0xD40) == s->tglPlatformCopy) {
 		auto port = static_cast<uint8_t *>(reinterpret_cast<void *(*)(uint32_t)>(s->tglPortByIndex)(id - 1));
 		auto config = port ? *reinterpret_cast<uint32_t **>(port + 0x548) : nullptr;
-		if (config && config[0] == id - 1 && config[1] == id + 5 && config[2] == 1) {
+		if (config == reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(s->tglPlatformCopy)+0x20+24*(id-1)) &&
+   config[0] == id - 1 && config[1] == id + 5 && config[2] == 1) {
 			const uint32_t mode = *reinterpret_cast<uint32_t *>(port + 0x550);
 			const uint32_t state = *reinterpret_cast<uint32_t *>(port + 0x554);
 			const uint32_t sinkCount = port[0xF8];
 			const uint64_t native = value;
 			// DP1 probePortState resets mode to 0 on D0/AUX failure but leaves
 			// state=2. GetPortStatus tests only state>1, causing AGDC to spend
-			// seconds reading capabilities of these inactive TC ports. Report
-			// disconnection only for the measured DDI5/6 mode-0 case. Keep
-			// native state, HPD, power and all active ports untouched.
+			// seconds reading capabilities of absent TC ports. The immutable
+   // wiring excludes this physical port and the exact native record is bound.
+   // Change only the reported stale result, never native mode/state or power.
 			if (value == 1 && mode == 0 && state == 2 && sinkCount == 0) {
 				*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(output) + 8) = 0;
 				value = 0;
