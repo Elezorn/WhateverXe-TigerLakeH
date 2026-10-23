@@ -10817,6 +10817,11 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				}
 				if (ready) tglPG1FuseReadCaller = fn + 0x2C7;
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLPG1PollReady", ready);
+				const bool fuseReady=ready && size>=0x5B640+0x6E1 &&
+					XELPDonor::powerWellFuseSites(reinterpret_cast<const uint8_t *>(fn),size-0x5B640);
+				if(fuseReady)tglPGFuseWaitFunction=fn;
+				IORegistryEntry::getRegistryRoot()->setProperty("TGLPG234PollReady",fuseReady);
+				if(!fuseReady)SYSLOG("igfx","PG2/3/4 fuse wait: donor sites unavailable");
 			}
             if(adlsDisplaySelected) {
                 const auto symbol="__ZN17AppleIntelPortHAL4initEP10PortConfig";
@@ -14996,6 +15001,18 @@ uint32_t XE::wrapTGLRegisterRead(void *access, unsigned long reg) {
  if(trace)tglTransitionRecord(35,true,access,reg,tglConnectionCaller(__builtin_return_address(0)),value);
 	const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
 	auto s = callbackXE;
+	// Only the qualified donor post-ACK fuse reads receive this bounded poll.
+	if(reg==0x42000) {
+		const auto mask=XELPDonor::powerWellFuseMask(s->tglPGFuseWaitFunction,caller);
+		if(mask) {
+			struct IO {
+				void *access;uint32_t (*read)(void *,unsigned long);
+				void delayUs(unsigned us){IODelay(us);}
+				uint32_t readStatus(){return read(access,0x42000);}
+			} io {access,reinterpret_cast<uint32_t (*)(void *,unsigned long)>(s->orgTGLRegisterRead)};
+			value=XELPDonor::waitPowerWellFuse(io,value,mask).value;
+		}
+	}
 	if (reg == 0x42000 && s->tglPG1FuseReadCaller && caller == s->tglPG1FuseReadCaller) {
 		// Exact donor PG1 fuse check, after its power-state ACK and 5us delay.
 		// Return only real hardware status. A missing bit still terminates;

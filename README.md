@@ -150,6 +150,8 @@ its X-tiled scanout path is unsupported. Display 12 tiling selection is unchange
 | Alder Lake-N | Big Sur/Tahoe: automatic Y tiling without an EFI `AAPL,GfxYTile` setting |
 
 These results cover tested systems, not every GPU, display, adapter or dock.
+The listed resolutions describe test coverage; they are not a fixed resolution
+limit imposed by WEX.
 
 On Big Sur–Tahoe, WebKit GPU access to the Data GPU drivers uses its valid
 Apple platform signature and service identifier, independently of Safari’s

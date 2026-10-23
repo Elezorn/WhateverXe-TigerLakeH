@@ -107,6 +107,7 @@ GPU backendの選択と実機検証範囲は独立しています。未検証の
 | Alder Lake-N | Big Sur/Tahoe：EFIの`AAPL,GfxYTile`設定なしでのYタイル自動選択 |
 
 検証した機器での結果であり、すべてのGPU・ディスプレイ・アダプター・ドックでの動作を保証するものではありません。
+記載した解像度は検証範囲であり、WEXが設けた固定の解像度制限ではありません。
 
 Big Sur〜Tahoeでは、有効なApple platform署名とサービス識別子でWebKit GPUを判定し、
 Safariのインストール先や更新による配置変更に依存せずData側GPUドライバへのアクセスを扱います。

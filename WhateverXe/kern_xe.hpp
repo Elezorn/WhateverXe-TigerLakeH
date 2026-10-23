@@ -311,6 +311,7 @@ private:
 	static volatile uint8_t *tglClockOrderTarget(void *controller, void *port, void *path, void *fb);
 	static void wrapTGLDisableClocks(void *controller, void *port, void *otherPort);
 	mach_vm_address_t tglPG1FuseReadCaller {};
+	mach_vm_address_t tglPGFuseWaitFunction {};
 	mach_vm_address_t tglComboPLLFractionCaller {};
 	bool tglSinkFramingReady {};
 	bool tglComboAUXGateReady {};
