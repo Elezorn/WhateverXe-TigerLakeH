@@ -11176,6 +11176,8 @@ XELP::DisplayContract::Mask XE::display12Available() const {
  if(orgTGLRegisterWrite)a|=C::MMIOWrite;
  if(tglHPDHookReady)a|=C::HPD;
  if(tglClockOffCaller)a|=C::ClockOrder;
+ if(tglComboAUXGateReady)a|=C::ComboAUXGate;
+ if(tglPanelDepthReady)a|=C::PanelDepth;
  return a;
 }
 

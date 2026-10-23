@@ -62,13 +62,15 @@ struct DisplayContract {
   Output13=1ULL<<52,
   Topology13=1ULL<<53,
   ClockOrder=1ULL<<54,
+  ComboAUXGate=1ULL<<55,
+  PanelDepth=1ULL<<56,
  };
  Mask required {},available {};
  Mask missing() const {return required&~available;}
  bool ready() const {return !missing();}
  static constexpr Mask Base12=Surface|NVRAM|IRQ|Probe|Framebuffer|Topology|PanelPower|PanelTranscoder|Dekel;
  static constexpr Mask Training12=Lease|PowerGet|PowerPut|PortLookup|PathLookup|PathAdd|PathFree|TrainingEnd|Training|TrainingBegin|PathAllocate|ClockOrder;
- static constexpr Mask Combo12=Framing|ComboSignal|ComboAUX;
+ static constexpr Mask Combo12=Framing|ComboSignal|ComboAUX|ComboAUXGate|TCNative|MMIORead|MMIOWrite;
  static constexpr Mask Fixed12=AUXParent|TCNative|Mode|HPDCaller;
  static constexpr Mask Alt12=TCNative|Mode|ModeLock|AltFIA|NativeFIA;
  static constexpr Mask PlatformADLS=ClockAdapter|PowerAdapter|PortInit|EnableCombo|PortLookup|OSInformation|MMIORead|MMIOWrite|HPD;
@@ -86,6 +88,7 @@ struct DisplayContract {
   if(r.hdmi)required|=GMBus;
   if(r.leaseRequested||r.combo||r.legacy||r.alt)required|=Training12;
   if(r.panel||r.combo)required|=Combo12;
+  if(r.panel)required|=PanelDepth;
   if(r.combo||r.legacy)required|=Fixed12;
   if(r.legacy||r.alt)required|=Framing|ModeLock;
   if(r.alt)required|=Alt12;
@@ -152,6 +155,8 @@ struct DisplayContract {
    case Output13:return "Output13";
    case Topology13:return "Topology13";
    case ClockOrder:return "ClockOrder";
+   case ComboAUXGate:return "ComboAUXGate";
+   case PanelDepth:return "PanelDepth";
    default:return "Unknown";
   }
  }

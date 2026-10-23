@@ -27,7 +27,7 @@ METHODS
 };
 int main() {
  State s;
- assert(s.display12Available()==((1ULL<<39)-1|C::ClockOrder));
+ assert(s.display12Available()==((1ULL<<39)-1|C::ClockOrder|C::ComboAUXGate|C::PanelDepth));
  assert(s.display13Available()==C::Backend13);
  // TGL: candidate not yet registered, native donor setup is complete.
  // Missing framing, AUX, mode lock or cleanup must fail before any hotplug.
@@ -43,6 +43,10 @@ int main() {
  s.adlsDetected=true;s.adlsWiring.dp=1;
  s.tglComboSignalReady=false;assert(s.start().missing()==C::ComboSignal);
  s.tglComboSignalReady=true;
+ s.adlsDetected=false;s.adlsWiring.dp=0;s.firmwarePorts.panel.valid=true;
+ s.tglTCNativeFunctions.valid=false;assert(s.start().missing()==C::TCNative);s.tglTCNativeFunctions.valid=true;
+ s.tglComboAUXGateReady=false;assert(s.start().missing()==C::ComboAUXGate);s.tglComboAUXGateReady=true;
+ s.tglPanelDepthReady=false;assert(s.start().missing()==C::PanelDepth);
  return 0;
 }
 '''
