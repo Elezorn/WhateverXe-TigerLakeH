@@ -3778,7 +3778,9 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97BringupVersion", 1ULL, 32);
 	pci->setProperty("N97NativeStartAllowed", false);
 	const auto revision = pci->configRead8(8);
-	const bool admitted = adlnRequested && adlnKernelReady && xelpAlderLakeNDevice(pci);
+	const bool renderRequested = adlnRequested && adlnKernelReady && xelpAlderLakeNDevice(pci);
+    const bool displayRequested = display13FramebufferRequested && xelpDisplay13Device(pci);
+    const bool admitted = renderRequested || displayRequested;
 	pci->setProperty("N97Admission", admitted);
 	pci->setProperty("N97PhysicalIdentity", pci->configRead32(0), 32);
 	pci->setProperty("N97PhysicalRevision", revision, 32);
@@ -3793,11 +3795,11 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
     auto wiring=OSDynamicCast(OSData,property);
     const auto board=XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
         wiring?wiring->getLength():0,firmwarePorts,3);
-    if(adlnNativeRequested && !Display13FBTopology::supportedWiring(board)) {
+    if(displayRequested && !Display13FBTopology::supportedWiring(board)) {
         pci->setProperty("N97NativeRoutingUnavailable",true);return;
     }
-	auto bootDDI=adlnNativeRequested ? UINT32_MAX : 1U;
-	uint64_t connector[] {1,adlnNativeRequested,wiring!=nullptr,board.valid,board.hdmi,bootDDI};
+	auto bootDDI=displayRequested ? UINT32_MAX : 1U;
+	uint64_t connector[] {1,displayRequested,wiring!=nullptr,board.valid,board.hdmi,bootDDI};
 	pci->setProperty("N97NativeBootConnector",connector,sizeof(connector));
 	pci->setProperty("N97DisplayVersion", AlderLakeN::DisplayVersion, 32);
 	pci->setProperty("N97GTStep", "A0");
@@ -3805,7 +3807,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97GGC", pci->configRead16(0x50), 32);
 	if (!(pci->configRead16(4) & 2)) return;
 	const bool linearTest = display13FramebufferRequested;
-	const bool gtTest = checkKernelArgument("-wex-adln-gt") || adlnNativeRequested;
+	const bool gtTest = renderRequested && (checkKernelArgument("-wex-adln-gt") || adlnNativeRequested);
 	auto map = pci->mapDeviceMemoryWithRegister(0x10,
 		(linearTest || gtTest ? 0 : kIOMapReadOnly) | kIOMapInhibitCache);
 	if (!map) return;
@@ -3839,14 +3841,14 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	auto result = AlderLakeN::readDisplay(io, barReady);
 	pci->setProperty("N97Display13Boot", &result, sizeof(result));
 	bool bootstrapReady=true;
-	if(adlnNativeRequested && linearTest && (result.activePipes&(result.activePipes-1))) {
+	if(displayRequested && linearTest && (result.activePipes&(result.activePipes-1))) {
 		auto parked=Display13Boot::normalize(io,result,barReady && Display13FBTopology::multiOutputWiring(board) && xelpMemoryMatches(pci),board,xelpMemory);
 		pci->setProperty("N97DualGOPNormalize",&parked,sizeof(parked));
 		result=AlderLakeN::readDisplay(io,barReady);
 		pci->setProperty("N97DualGOPAfter",&result,sizeof(result));
 		bootstrapReady=parked.status==Display13Boot::Status::Complete;
 	}
-	if(adlnNativeRequested && bootstrapReady) {
+	if(displayRequested && bootstrapReady) {
 		uint32_t trans=UINT32_MAX;
 		if(AlderLakeN::value(result,0x60400,trans))bootDDI=Display13FBTopology::bootstrapDDI(board,
 			result.status==AlderLakeN::ReadoutStatus::Complete,result.poweredPipes,result.activePipes,trans);
@@ -3955,35 +3957,15 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 				scan.planeRestored,scan.ptesRestored,scan.retained);
 		}
 	}
+    bool renderReady=false;
 	if (gtTest) {
 		uint32_t edram=UINT32_MAX;
 		auto gt=AlderLakeN::readGT(io,barReady && xelpMemoryMatches(pci),
 			adlnNativeRequested ? &edram : nullptr);
 		if (adlnNativeRequested) {
             adlnNativeSubslices=gt.resources.nativeSubslices; adlnL3Banks=gt.resources.l3Banks; adlnNativeEUs=gt.resources.eus;
-			AlderLakeN::LinearPlan plan;
-			auto display=AlderLakeN::readDisplay(io,barReady);
-			auto optionProperty=pci->getProperty("IOMemoryDescriptorOptions");
-			auto opts=OSDynamicCast(OSNumber,optionProperty);
-			const uint64_t mapperOptions=opts ? opts->unsigned64BitValue() : 0;
-			const auto systemMapper=reinterpret_cast<uintptr_t>(IOMapper::gSystem);
-			const bool physicalOptions=(opts && (mapperOptions&kIOMemoryMapperNone)) ||
-				((!optionProperty || opts) && !mapperOptions && !systemMapper);
-			uint64_t mapperAdmission[] {1,mapperOptions,systemMapper,physicalOptions};
-			IORegistryEntry::getRegistryRoot()->setProperty("N97NativeMapperAdmission",mapperAdmission,sizeof(mapperAdmission));
-			bool prefix=bootstrapReady && AlderLakeN::linearPlan(display,plan,bootDDI)==AlderLakeN::LinearStatus::Ready && plan.pipe==0 &&
-				xelpMemory.range(plan.surface,AlderLakeN::ScanoutBytes,true);
-			for (unsigned i=0;prefix && i<xelpMemory.bytes/4096;++i)
-				prefix=io.readPTE(0x800000+8*i)==xelpMemory.pte(uint64_t(i)*4096);
-			auto aperture=pci->getDeviceMemoryWithRegister(0x18);
-			adlnNativeReady=gt.status==AlderLakeN::GTStatus::Complete && !(edram&1) && prefix &&
-				aperture && aperture->getLength()==0x10000000 && page_size==4096 &&
-				physicalOptions && (pci->configRead16(4)&6)==6 &&
-				checkKernelArgument("-allow3d") && checkKernelArgument("-disablegfxfirmware") &&
-				!checkKernelArgument("-wex-adln-scanout") && !checkKernelArgument("-wex-adln-gpu");
-			pci->setProperty("N97NativePreflight",adlnNativeReady);
-			pci->setProperty("N97NativeReservedGGTT",prefix);
-			pci->setProperty("N97NativeEDRAM",edram,32);
+            renderReady=gt.status==AlderLakeN::GTStatus::Complete && !(edram&1);
+            pci->setProperty("N97NativeEDRAM",edram,32);
 		}
 		pci->setProperty("N97GTReadout",&gt,sizeof(gt));
 		pci->setProperty("N97GTTopologyReady",gt.status==AlderLakeN::GTStatus::Complete);
@@ -3991,6 +3973,29 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 			static_cast<uint32_t>(gt.status),gt.requestedMask,gt.releasedMask,gt.releaseFailedMask,
 			gt.resources.eus,gt.resources.l3Banks);
 	}
+    if(displayRequested) {
+        auto display=AlderLakeN::readDisplay(io,barReady);
+        auto optionProperty=pci->getProperty("IOMemoryDescriptorOptions");
+        auto opts=OSDynamicCast(OSNumber,optionProperty);
+        const uint64_t mapperOptions=opts ? opts->unsigned64BitValue() : 0;
+        const auto systemMapper=reinterpret_cast<uintptr_t>(IOMapper::gSystem);
+        const bool physicalOptions=(opts && (mapperOptions&kIOMemoryMapperNone)) ||
+            ((!optionProperty || opts) && !mapperOptions && !systemMapper);
+        uint64_t mapperAdmission[] {1,mapperOptions,systemMapper,physicalOptions};
+        IORegistryEntry::getRegistryRoot()->setProperty("N97NativeMapperAdmission",mapperAdmission,sizeof(mapperAdmission));
+        const bool prefix=Display13Boot::reservedPrefix(io,display,bootstrapReady,bootDDI,xelpMemory);
+        auto aperture=pci->getDeviceMemoryWithRegister(0x18);
+        const bool memoryReady=
+            aperture && aperture->getLength()==0x10000000 && page_size==4096 &&
+            physicalOptions && (pci->configRead16(4)&6)==6 &&
+            checkKernelArgument("-allow3d") && checkKernelArgument("-disablegfxfirmware") &&
+            !checkKernelArgument("-wex-adln-scanout") && !checkKernelArgument("-wex-adln-gpu");
+        // This shared admission remains the conjunction of all three
+        // certificates; selecting a Display adapter never admits a GT.
+        adlnNativeReady=renderReady && prefix && memoryReady;
+        pci->setProperty("N97NativePreflight",adlnNativeReady);
+        pci->setProperty("N97NativeReservedGGTT",prefix);
+    }
 	if (gtTest && checkKernelArgument("-wex-adln-gpu")) {
 		AlderLakeN::GPUResult gpu;
 		static IOBufferMemoryDescriptor *pinnedGPU=nullptr;
@@ -4134,7 +4139,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
     }
     if(!xeProfile.admitted())return;
     xelpSelectedGPU=physicalGPU;xelpSelectedProfile=xeProfile;
-	if (adlnDetected) {
+	if (adlnDetected || display13FramebufferRequested) {
         xelpReadFirmware(physicalGPU);
         tglDeviceId=physicalGPU->configRead16(2);
         modDVMTCalcFix.processKernel(patcher,info);

@@ -6,6 +6,12 @@
 struct IO {
     std::map<uint32_t,uint32_t> regs;
     std::vector<AlderLakeN::Register> writes;
+    uint32_t pteReads {},badPTE {UINT32_MAX};
+    XELPMemory::Layout memory=XELPMemory::decode(0x03C1,0x7A800000,0);
+    uint64_t readPTE(uint32_t reg) {
+        assert(reg==0x800000+8*pteReads);++pteReads;
+        return memory.pte(uint64_t(reg-0x800000)/8*4096)^(reg==badPTE?4096:0);
+    }
     bool noFrames {},noStop {},noIdle {},changePeer {};
     uint32_t changeRegister {},failWrite {};
     IO() {
@@ -49,7 +55,49 @@ static Display13OutputWiring protocols(unsigned dpMask) {
     for(unsigned d=0;d<3;++d)if(!(w.hdmi&(1U<<d)))w.ddc[d]=0;
     assert(w.described());return w;
 }
+static IO singleGOP(unsigned ddi,unsigned pipe=0) {
+    IO io;
+    for(unsigned p=0;p<3;++p) {
+        const auto b=0x1000*p;
+        io.regs[0x70008+b]=p==pipe?0xC0000000:0;
+        io.regs[0x70180+b]=p==pipe?0x84000008:0;
+        io.regs[0x60400+b]=p==pipe?0x80030000|((ddi+1)<<27):0;
+        if(p==pipe) {
+            io.regs[0x70188+b]=120;io.regs[0x70190+b]=0x0437077F;
+            io.regs[0x60000+b]=0x0897077F;io.regs[0x6000C+b]=0x04640437;
+        }
+    }
+    return io;
+}
+static void prefixCertificates() {
+    unsigned cases=0;
+    for(unsigned ddi=0;ddi<3;++ddi)for(unsigned gms:{1U,2U,3U}) {
+        auto io=singleGOP(ddi);io.memory=XELPMemory::decode((gms<<8)|0xC1,0x7A800000,0);
+        const auto display=AlderLakeN::readDisplay(io,true);
+        assert(Display13Boot::reservedPrefix(io,display,true,ddi,io.memory));
+        assert(io.pteReads==io.memory.bytes/4096 && io.writes.empty());
+        for(unsigned i:{0U,unsigned(io.memory.bytes/8192),unsigned(io.memory.bytes/4096-1)}) {
+            auto bad=io;bad.pteReads=0;bad.badPTE=0x800000+8*i;
+            assert(!Display13Boot::reservedPrefix(bad,display,true,ddi,bad.memory));
+            assert(bad.pteReads==i+1 && bad.writes.empty());++cases;
+        }
+        for(unsigned fail=0;fail<7;++fail) {
+            auto bad=singleGOP(ddi);auto mem=io.memory;
+            if(fail==1)bad=singleGOP(ddi,1);
+            if(fail==2)dp(bad,0,ddi,4,true);
+            if(fail==3)mem.valid=false;
+            if(fail==4)mem.allocationEnd=AlderLakeN::ScanoutBytes-4096;
+            if(fail==5)bad.regs[0x701AC]=4096;
+            assert(!Display13Boot::reservedPrefix(bad,AlderLakeN::readDisplay(bad,true),fail!=0,
+                                                  fail==6?3:ddi,mem));
+            assert(!bad.pteReads && bad.writes.empty());++cases;
+        }
+        ++cases;
+    }
+    printf("PASS %u Display boot certificates: physical layouts, PTE corruption, no-read rejection\n",cases);
+}
 int main() {
+    prefixCertificates();
     IO io;const auto before=io.regs;
     const auto r=Display13Boot::normalize(io,AlderLakeN::readDisplay(io,true),true,wiring,memory);
     assert(r.status==Display13Boot::Status::Complete && r.after==1 && r.stage==7 && r.writes==10);

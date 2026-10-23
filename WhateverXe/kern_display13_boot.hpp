@@ -7,6 +7,18 @@
 #include "kern_display13_fb_topology.hpp"
 #include "kern_xelp_memory_layout.hpp"
 namespace Display13Boot {
+// Certificate for the existing linear TMDS boot path. Render qualification is
+// separate; callers must also qualify the physical owner, BAR and memory layout.
+// DP/other-pipe adoption requires a separate boot contract, not a wider default.
+template<class IO> bool reservedPrefix(IO &io,const AlderLakeN::DisplayReadout &display,
+                                      bool bootstrapReady,unsigned ddi,const XELPMemory::Layout &memory) {
+    AlderLakeN::LinearPlan plan;
+    if(!bootstrapReady || AlderLakeN::linearPlan(display,plan,ddi)!=AlderLakeN::LinearStatus::Ready ||
+       plan.pipe!=0 || !memory.range(plan.surface,AlderLakeN::ScanoutBytes,true))return false;
+    for(unsigned i=0;i<memory.bytes/4096;++i)
+        if(io.readPTE(0x800000+8*i)!=memory.pte(uint64_t(i)*4096))return false;
+    return true;
+}
 enum class Status : uint32_t {Unavailable,Complete,Topology,Readback,Timeout,PeerChanged};
 struct Result {
     uint32_t version {1};Status status {Status::Unavailable};
