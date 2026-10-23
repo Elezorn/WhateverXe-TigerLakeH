@@ -89,7 +89,8 @@ struct DisplayContract {
   if(r.leaseRequested||r.combo||r.legacy||r.alt)required|=Training12;
   if(r.panel||r.combo)required|=Combo12;
   if(r.panel)required|=PanelDepth;
-  if(r.combo||r.legacy)required|=Fixed12;
+  if(r.combo)required|=AUXParent;
+  if(r.legacy)required|=Fixed12;
   if(r.legacy||r.alt)required|=Framing|ModeLock;
   if(r.alt)required|=Alt12;
   return {required,installed};

@@ -11050,7 +11050,10 @@ bool XE::wrapTGLGetOSInformation(void *controller) {
  auto copy=reinterpret_cast<uint8_t *>(self->tglPlatformCopy);
  if(copy!=platform)memcpy(copy,platform,sizeof(self->tglPlatformCopy));
  const bool wiringApplied=self->adlsDetected ? self->adlsWiring.apply(copy,sizeof(self->tglPlatformCopy)) :
-    self->tglHDMIWiring.supported(self->tglHDMIBackendMask,self->tglHDMIB) && self->tglHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy));
+    self->tglHDMIWiring.supported(self->tglHDMIBackendMask,self->tglHDMIB) &&
+    TGLComboDP::accepts(self->tglComboDPMask,copy,sizeof(self->tglPlatformCopy)) &&
+    self->tglHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy)) &&
+    TGLComboDP::apply(self->tglComboDPMask,copy,sizeof(self->tglPlatformCopy));
  if(!self->tglHDMIWiringLoaded || !wiringApplied) {
   IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiringGuardFailed",true);return false;
  }
@@ -11130,6 +11133,8 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
  const auto &w=self->tglHDMIWiring;
  self->tglHDMIB=w.valid && w.hdmi && !(w.hdmi&~self->tglHDMIBackendMask);
  const bool admitted=w.supported(self->tglHDMIBackendMask,self->tglHDMIB);
+ self->tglComboDPMask=admitted?TGLComboDP::fromFirmware(self->firmwarePorts,w.hdmi):0;
+ IORegistryEntry::getRegistryRoot()->setProperty("TGLComboDPRoutes",self->tglComboDPMask,32);
  uint32_t q[]={361,self->tglHDMIWiringExplicit,w.valid,w.hdmi,w.ddc[0],w.ddc[1],w.ddc[2],self->tglHDMIBackendMask,admitted};
  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiring",q,sizeof(q));return admitted;
 }
@@ -11242,7 +11247,7 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  auto self=callbackXE;
  XELP::DisplayContract::Routes routes;
  routes.hdmi=self->tglHDMIB;routes.panel=self->firmwarePorts.panel.valid;
- routes.combo=self->adlsDetected && self->adlsWiring.dp;
+ routes.combo=self->adlsDetected ? self->adlsWiring.dp!=0 : self->tglComboDPMask!=0;
  routes.legacy=self->tglTCWiring.legacy || self->tglTCAutoCandidates;
  routes.alt=self->tglDPAltCandidates;routes.leaseRequested=self->tglTrainingLeaseRequested;
  const auto contract=XELP::DisplayContract::display12(self->display12Available(),routes);
@@ -16638,11 +16643,12 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
 	const auto &panel=self->firmwarePorts.panel;
 	const bool adls=self->adlsDetected && self->adlsWiring.boundDP(self->tglPlatformCopy,config);
+ const bool fixed=!self->adlsDetected && TGLComboDP::bound(self->tglComboDPMask,self->tglPlatformCopy,config);
     XELP::Display12SSTRoute route;
-    const XELP::Display12SSTRoutes routes{adls?self->adlsWiring.dp:0,0,0};
+    const XELP::Display12SSTRoutes routes{adls?self->adlsWiring.dp:fixed?self->tglComboDPMask:0,0,0};
     if(!config || !routes.resolve(config[0],config[2],*reinterpret_cast<uint32_t *>(p+0x550),route) ||
         !route.retainComboAUX() || p[0x117])return false;
-    if(!adls && (config[0]>1 || config[2]!=0 || config[3]!=0 ||
+    if(!adls && !fixed && (config[0]>1 || config[2]!=0 || config[3]!=0 ||
         !panel.valid || panel.ddi!=config[0] || (self->firmwarePorts.port[config[0]].flags&0x17)))return false;
 	auto access=*reinterpret_cast<uint8_t **>(p+0x578);
 	if(!access || *reinterpret_cast<void **>(ctl+0xC40)!=access)return false;
@@ -16651,7 +16657,7 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	const auto rate=*reinterpret_cast<uint32_t *>(p+0x128);
 	if(!(adls ? selected.selectADLS(config[0],lanes,rate,swing,emphasis):
         selected.select(config[0],lanes,rate,panel.lowSwing,panel.hobl,swing,emphasis,
-            XELP::ComboPolicy::tigerLake(self->xeProfile.identity))))return false;
+            XELP::ComboPolicy::tigerLake(self->xeProfile.identity),!fixed)))return false;
 	// The native fields identify this very bank. No guessed framebuffer index
 	// or cross-port reads; power must already belong to the training caller.
 	if(*reinterpret_cast<uint32_t *>(p+0x620)!=selected.base+0x804 ||
@@ -16995,6 +17001,7 @@ void XE::tglComboAUXReference(void *port,bool acquire) {
 		(s->xeProfile.family!=XELP::Family::TigerLake && !s->adlsDetected) || *f.controllerSlot!=ctl)return;
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
 	const bool adls=s->adlsDetected && s->adlsWiring.boundDP(s->tglPlatformCopy,config);
+ const bool fixed=!s->adlsDetected && TGLComboDP::bound(s->tglComboDPMask,s->tglPlatformCopy,config);
     if(!config || (config[0]>1 && !adls))return;
 	const auto ddi=config[0];
 	auto &owner=s->tglComboAUXOwners[ddi];
@@ -17009,12 +17016,12 @@ void XE::tglComboAUXReference(void *port,bool acquire) {
 	const uint32_t buffer=0x64000+0x100*ddi,mask=3U<<(2*ddi);
 	if(*reinterpret_cast<uint32_t *>(p+0x590)!=buffer)return;
     XELP::Display12SSTRoute route;
-    const XELP::Display12SSTRoutes routes{adls?s->adlsWiring.dp:0,0,0};
+    const XELP::Display12SSTRoutes routes{adls?s->adlsWiring.dp:fixed?s->tglComboDPMask:0,0,0};
 	if(acquire && (config[3]!=0 || p[0x117] ||
         !routes.resolve(ddi,config[2],*reinterpret_cast<uint32_t *>(p+0x550),route) || !route.retainComboAUX() ||
         !s->firmwarePorts.valid() || !(s->firmwarePorts.present&(1U<<ddi)) ||
         !s->firmwarePorts.port[ddi].dp() ||
-        (!adls && (config[2]!=0 || !s->firmwarePorts.port[ddi].internal()))))return;
+        (!adls && !fixed && (config[2]!=0 || !s->firmwarePorts.port[ddi].internal()))))return;
 	const auto io=wrapTGLRegisterRead(access,0x45454);
 	if(io==~0U || (io&mask)!=mask)return;
 	const auto bufferState=wrapTGLRegisterRead(access,buffer);

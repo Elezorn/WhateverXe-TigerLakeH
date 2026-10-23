@@ -13,13 +13,14 @@ if len(sys.argv)>1:
   assert b[at:at+len(expected)]==expected
 code=r'''
 #include "kern_alderlake_s.hpp"
+#include "kern_tgl_combo_dp.hpp"
 #include "kern_xelp_sst_route.hpp"
 #include "kern_tgl_combo_signal.hpp"
 #include <cassert>
 #include <map>
 #include <cstdio>
 struct State {
- bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
+ uint32_t tglComboDPMask=0;bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  void *tglObservationController=nullptr;bool tglActive=true,tglComboSignalReady=true;
  struct {uint32_t identity=0x9A498086;XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;
@@ -91,6 +92,30 @@ int main(){
   assert(result==0);
   const unsigned post=rate==30?8:low?7:id==0x9A608086?8:9;
   assert(((registers[0x162890]>>12)&63)==post);
+ }
+
+ // External TGL Combo uses DP electrical values even if a different panel
+ // advertises low-swing/HOBL. It requires an exact immutable port record.
+ for(unsigned ddi:{0u,1u})for(unsigned rate:{6u,10u,20u,30u})for(unsigned bad=0;bad<5;++bad) {
+  alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};
+  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
+  state={};state.tglComboDPMask=1U<<ddi;state.tglObservationController=ctl;
+  state.firmwarePorts.status=XELP::VBT::Status::Valid;
+  state.firmwarePorts.panel={true,true,true,0,ddi^1};
+  const uint32_t c[]={ddi,ddi+1,1,0,0x400,0x201};
+  auto config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);memcpy(config,c,sizeof(c));
+  const auto base=ddi?0x6c000U:0x162000U;
+  store(p,0x548,config);store(p,0x550,1U);store(p,0x578,access+0);store(ctl,0xC40,access+0);
+  store(p,0x124,4U);store(p,0x128,rate);store(p,0x620,base+0x804);store(p,0x5C8,base+0x28);
+  store(access,0x60,0x200000U);store(access,0x50,ctl+0);
+  registers.clear();registers[0x45404]=3;registers[0x45454]=3U<<(2*ddi);reads=writes=records=0;
+  if(bad==1)state.tglComboDPMask=0;
+  if(bad==2)store(p,0x548,c+0);
+  if(bad==3)config[1]^=1;
+  if(bad==4)store(p,0x550,3U);
+  uint32_t result=99;assert(run(p,0,1,nullptr,result)==(bad==0));
+  assert(bool(writes)==(bad==0));
+  if(!bad){assert(result==0);assert(((registers[base+0x890]>>12)&63)==(rate>10?9u:8u));}
  }
  for(unsigned ddi:{0u,3u,4u})for(unsigned bad=0;bad<12;++bad) {
   alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};

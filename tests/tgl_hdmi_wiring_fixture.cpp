@@ -10,6 +10,7 @@
 #include "kern_tgl_hdmi_wiring.hpp"
 #include "kern_vbt.hpp"
 #include "kern_alderlake_s.hpp"
+#include "kern_tgl_combo_dp.hpp"
 #include "kern_xelp_donor.hpp"
 struct OSObject {virtual ~OSObject()=default;};
 struct OSData:OSObject {std::vector<uint8_t> data;void *getBytesNoCopy(){return data.data();}uint32_t getLength(){return data.size();}};
@@ -27,7 +28,7 @@ void clock_get_uptime(uint64_t *p){*p=0;}void absolutetime_to_nanoseconds(uint64
 void *current_thread(){return reinterpret_cast<void *>(1);}
 struct XE {
  bool tglHDMIB=true,tglStolenMemoryReady=false;
- bool adlsDetected=false;
+ uint32_t tglComboDPMask=0;bool adlsDetected=false;
  struct {uint32_t fStolenMemorySize=0;} framebufferPatch;
  XELP::VBT::Ports firmwarePorts;
  // FIELDS
@@ -116,6 +117,20 @@ int main(){
  assert(XE::tglLoadHDMIWiring(&firmware)&&!object.tglHDMIWiringExplicit&&object.tglHDMIWiring.hdmi==2);
  assert(XE::wrapTGLGetOSInformation(controller));
  assert(reinterpret_cast<uint32_t *>(platform()+0x38)[1]==2);
+ // Fixed Combo DP composes with HDMI and a panel-free A/B native topology.
+ for(unsigned mask:{1u,2u,3u}) {
+  setup();object.firmwarePorts.status=XELP::VBT::Status::Valid;object.firmwarePorts.present=3;
+  for(unsigned d=0;d<2;++d)object.firmwarePorts.port[d]=mask&(1U<<d) ?
+   XELP::VBT::Port{0x60d6,d?7u:10u,0,d?0x10u:0x40u,0xc0,0} :
+   XELP::VBT::Port{0x60d2,d?1u:0u,d+1,0,0xc0,0};
+  IOService provider;assert(XE::tglLoadHDMIWiring(&provider)&&object.tglComboDPMask==mask);
+  assert(XE::wrapTGLGetOSInformation(controller));
+  for(unsigned d=0;d<2;++d) {
+   auto config=reinterpret_cast<uint32_t *>(platform()+0x20+24*d);
+   assert(config[2]==(mask&(1U<<d)?1u:2u));
+   if(mask&(1U<<d))assert(TGLComboDP::bound(mask,platform(),config));
+  }
+ }
  // An explicitly malformed override still rejects a usable firmware default.
  setup();object.firmwarePorts.status=XELP::VBT::Status::Valid;
  object.firmwarePorts.present=2;object.firmwarePorts.port[1]={0x60d2,1,2};

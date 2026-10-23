@@ -12,6 +12,7 @@
 #include "kern_tgl_tc_native.hpp"
 #include "kern_tgl_native_fia.hpp"
 #include "kern_tgl_hdmi_wiring.hpp"
+#include "kern_tgl_combo_dp.hpp"
 #include "kern_display13_hdmi_wiring.hpp"
 #include "kern_xelp_platform.hpp"
 #include "kern_vbt.hpp"
@@ -405,11 +406,11 @@ private:
  // Native mode setter owns FIA1 bits 0/1 correctly on modular TGL. Later
  // instances need the new mode backend, regardless of available PHY math.
  uint32_t tglTCAutoCandidates {},tglTCAutoRegistered {};
- uint32_t tglDPAltCandidates {};
+ uint32_t tglDPAltCandidates {},tglComboDPMask {};
  XELP::Display12SSTRoutes tglSSTRoutes() const {
   auto routes=tglTCWiring.sstRoutes(tglAUXParentMask,
    tglTCAutoCandidates&__atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE),tglDPAltCandidates);
-  if(adlsDetected && adlsWiring.valid)routes.combo=adlsWiring.dp;
+  routes.combo=adlsDetected ? (adlsWiring.valid?adlsWiring.dp:0) : tglComboDPMask;
   return routes;
  }
  bool tglDPSSTEligible(uint32_t ddi) const {return tglSSTRoutes().eligible(ddi);}

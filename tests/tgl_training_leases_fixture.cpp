@@ -348,11 +348,13 @@ void endCompletion() {
 
 void routeLifecycleMatrix() {
  unsigned sequences=0;
- for(unsigned mode:{1u,3u,4u})for(unsigned ddi=0;ddi<9;++ddi)for(unsigned pipe=0;pipe<3;++pipe)
+ for(unsigned adapter:{0u,1u,3u,4u})for(unsigned ddi=0;ddi<9;++ddi)for(unsigned pipe=0;pipe<3;++pipe)
  for(unsigned initial=0;initial<3;++initial) {
-  if(mode==1 ? (ddi!=0&&ddi!=3&&ddi!=4) : ddi<3)continue;
+  const unsigned mode=adapter?adapter:1;
+  if(adapter==0 ? ddi>1 : adapter==1 ? (ddi!=0&&ddi!=3&&ddi!=4) : ddi<3)continue;
   setup();
-  if(mode==1){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=1U<<ddi;}
+  if(adapter==0){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.tglComboDPMask=1U<<ddi;}
+  if(adapter==1){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=1U<<ddi;}
   if(mode==3){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.tglDPAltCandidates=1U<<ddi;}
   ports[ddi].at<uint32_t>(0x550)=mode;
   for(unsigned i=0;i<pipe;++i)used[i]=true;
@@ -407,8 +409,8 @@ void routeLifecycleMatrix() {
   for(unsigned i=0;i<pipe;++i)used[i]=false;
   clean();++sequences;
  }
- assert(sequences==135);
- puts("PASS 135 actual-wrapper route/pipe/initial-state sequences: 540 train/abort/reconnect cycles, inherited ownership and stop admission (not OS sleep/wake)");
+ assert(sequences==153);
+ puts("PASS 153 actual-wrapper route/pipe/initial-state sequences: 612 train/abort/reconnect cycles, inherited ownership and stop admission (not OS sleep/wake)");
 }
 int main(int argc, char **argv) {
  if(argc==2) {

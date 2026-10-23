@@ -95,11 +95,13 @@ int main(){
  }
  // Reuse the actual wrapper for every admitted ADL-S Combo route on every
  // pipe, independent of which connector/pipe a physical fixture happened to use.
- for(unsigned d:{0u,3u,4u})for(unsigned p=0;p<3;++p)
+ for(bool adls:{false,true})for(unsigned d:{0u,1u,3u,4u})for(unsigned p=0;p<3;++p)
  for(unsigned lanes:{1u,2u,4u})for(unsigned framing=0;framing<2;++framing)
  for(unsigned pat=0;pat<6;++pat){
+  if(adls?d==1:d>1)continue;
   reset(d,p,pat);object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);
-  object.adlsDetected=true;object.adlsWiring.valid=true;object.adlsWiring.dp=1U<<d;
+  object.adlsDetected=adls;object.adlsWiring.valid=adls;object.adlsWiring.dp=adls?1U<<d:0;
+  object.tglComboDPMask=adls?0:1U<<d;
   config[2]=1;field(port,0x550,1U);field(port,0x124,lanes);port[0x11A]=framing;
   emitTP=true;expectPre=pat==1;
   reg(0x45454)=3U<<(2*d);reg(0x45404)=p==2?0xFF:(d==0&&p==0?3:0x3F);

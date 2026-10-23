@@ -8,12 +8,13 @@ if len(sys.argv)>1:
  b=Path(sys.argv[1]).read_bytes();assert b[0x5fc56:0x5fc5f]==bytes.fromhex('554889e553504889fb');assert b[0x5fc6d:0x5fc73]==bytes.fromhex('8bb790050000')
 code=r'''
 #include "kern_alderlake_s.hpp"
+#include "kern_tgl_combo_dp.hpp"
 #include "kern_xelp_sst_route.hpp"
 #include <cassert>
 #include <map>
 #include <cstdio>
 struct Functions {bool ready=true;void **controllerSlot=nullptr;void(*getAux)(void*)=nullptr;void(*putAux)(void*)=nullptr;bool complete(){return ready;}};
-struct State {bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};void *tglObservationController=nullptr;bool tglActive=true,tglComboAUXLifetimeReady=true;
+struct State {uint32_t tglComboDPMask=0;bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};void *tglObservationController=nullptr;bool tglActive=true,tglComboAUXLifetimeReady=true;
  struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;Functions tglTCNativeFunctions;void *tglComboAUXOwners[9]{};
 } state,*callbackXE=&state;
@@ -22,17 +23,22 @@ uint32_t wrapTGLRegisterRead(void *,unsigned long reg){++reads;return regs[reg];
 void tglTransitionRecord(unsigned stage,bool,void *,unsigned,unsigned,unsigned,const void *,unsigned){assert(stage==74);}
 FUNCTION
 int main(){
- for(unsigned testDDI:{0u,3u,4u})for(bool adls:{false,true})for(unsigned bad=0;bad<15;++bad){
+ for(unsigned testDDI:{0u,1u,3u,4u})for(unsigned kind=0;kind<3;++kind)for(unsigned bad=0;bad<15;++bad){
+ const bool adls=kind==1,fixed=kind==2;if(adls?testDDI==1:testDDI>1)continue;
  alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},power[0x100]{},access[0x100]{};uint32_t local[6]{};uint32_t *config=local;
- unsigned ddi=adls?testDDI:0,mask=3U<<(2*ddi),buffer=0x64000+256*ddi;
+ unsigned ddi=testDDI,mask=3U<<(2*ddi),buffer=0x64000+256*ddi;
  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
  state={};if(adls) {
   state.adlsDetected=true;state.adlsWiring.valid=true;state.adlsWiring.dp=1U<<ddi;state.adlsWiring.pin[ddi]=ddi?ddi+6:1;state.xeProfile.family=XELP::Family::AlderLakeS;
   config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);const uint32_t c[]={ddi,ddi?ddi+6:1,1,0,0x400,0x201};memcpy(config,c,sizeof(c));
  }
+ if(fixed) {
+  state.tglComboDPMask=1U<<ddi;config=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x20+24*ddi);
+  const uint32_t c[]={ddi,ddi+1,1,0,0x400,0x201};memcpy(config,c,sizeof(c));
+ } else if(!adls)config[0]=ddi;
  state.tglObservationController=ctl;void *global=ctl;
  state.tglTCNativeFunctions.controllerSlot=&global;
- state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.present=1U<<ddi;state.firmwarePorts.port[ddi].type=adls?0x60d6:0x1806;
+ state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.present=1U<<ddi;state.firmwarePorts.port[ddi].type=(adls||fixed)?0x60d6:0x1806;
  store(p,0x548,config+0);store(p,0x550,1U);store(p,0x578,access+0);store(p,0x590,buffer);
  store(ctl,0xC8,power+0);store(ctl,0xC40,access+0);store(power,0x10,ctl+0);store(power,0x78,access+0);
  store(access,0x60,0x200000U);store(access,0x50,ctl+0);
@@ -48,7 +54,7 @@ int main(){
  if(bad==6)config[2]=2;
  if(bad==7)state.firmwarePorts.present=0;
  if(bad==8)store(power,0x78,ctl+0);
- if(bad==9)store(p,0x590,0x64100U);
+ if(bad==9)store(p,0x590,buffer+0x100);
  if(bad==10)regs[0x45454]=0;
  if(bad==11)regs[buffer]=0x80000001;
  if(bad==12){state.xeProfile.family=XELP::Family::AlderLakeN;state.adlsDetected=false;}

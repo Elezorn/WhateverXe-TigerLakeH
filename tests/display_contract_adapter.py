@@ -21,7 +21,7 @@ FIELDS
  struct {struct {bool valid=false;}panel;}firmwarePorts;
  struct {unsigned dp=0;}adlsWiring;
  struct {unsigned legacy=0;}tglTCWiring;
- unsigned tglTCAutoCandidates=0,tglDPAltCandidates=0;
+ unsigned tglTCAutoCandidates=0,tglDPAltCandidates=0,tglComboDPMask=0;
 METHODS
  C start() const {ADAPTER}
 };

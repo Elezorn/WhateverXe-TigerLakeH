@@ -28,14 +28,14 @@ struct TGLComboSignal {
     bool low {};
     bool select(uint32_t ddi,uint32_t count,uint32_t rate,bool lowSwing,bool hobl,
                 uint32_t voltage,uint32_t emphasis,
-                XELP::ComboPolicy::Platform platform=XELP::ComboPolicy::Platform::TGL) {
+                XELP::ComboPolicy::Platform platform=XELP::ComboPolicy::Platform::TGL,bool panel=true) {
         // HOBL needs a training-failure retry policy, so keep that native
         // operation intact. At HBR3 Linux ignores both panel swing flags.
-        if(ddi>1 || (count!=1 && count!=2 && count!=4) || (hobl && rate!=30) ||
+        if(ddi>1 || (count!=1 && count!=2 && count!=4) || (panel && hobl && rate!=30) ||
            (platform!=XELP::ComboPolicy::Platform::TGL && platform!=XELP::ComboPolicy::Platform::TGLUY))return false;
         XELP::ComboPolicy policy;
-        if(!policy.select(platform,rate,true,lowSwing,false,voltage,emphasis))return false;
-        base=ddi?0x6C000:0x162000;lanes=count;linkRate=rate;low=lowSwing;assign(policy);return true;
+        if(!policy.select(platform,rate,panel,lowSwing,false,voltage,emphasis))return false;
+        base=ddi?0x6C000:0x162000;lanes=count;linkRate=rate;low=panel && lowSwing;assign(policy);return true;
     }
     // The platform adapter chooses coordinates; electrical policy contains no
     // physical DDI, donor field or board-specific connector condition.
