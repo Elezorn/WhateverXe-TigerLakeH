@@ -68,6 +68,29 @@ template<class IO> bool valid(IO &io, uint32_t reg, uint32_t &value) {
     return value != UINT32_MAX;
 }
 
+// Read-only proof for a caller already holding leases. The same owner lock
+// must cover this snapshot and the subsequent register operation. Hardware
+// left on by firmware is not a logical reference; no acquisition or polling
+// is performed here. TC ownership/health is a separate transport contract.
+template<class IO> bool held(IO &io,const State &s,uint32_t domains) {
+    if(!s.ready || s.faulted || s.suspended || !domains || (domains&~All))return false;
+    domains=dependencies(domains);
+    if(domains&~s.allowed)return false;
+    uint32_t driverMask=0,ddiMask=0,auxMask=0,fuseMask=1U<<27;
+    for(unsigned d=0;d<Count;++d)if(domains&(1U<<d)) {
+        if(!s.refs[d] || !((s.owned|s.borrowed)&(1U<<d)))return false;
+        const auto mask=request(d)|enabled(d);
+        if(control(d)==DDI)ddiMask|=mask;
+        else if(control(d)==AUX)auxMask|=mask;
+        else {driverMask|=mask;fuseMask|=fuse(d);}
+    }
+    const uint32_t registers[]={Driver,DDI,AUX,Fuses},masks[]={driverMask,ddiMask,auxMask,fuseMask};
+    for(unsigned i=0;i<4;++i)if(masks[i]) {
+        uint32_t value;if(!valid(io,registers[i],value) || (value&masks[i])!=masks[i])return false;
+    }
+    return true;
+}
+
 // No writes and no adoption of pre-existing driver requests. BIOS/KVMR/debug
 // ownership is left to the hardware and is never rewritten by this layer.
 template<class IO> bool initialize(IO &io, State &s,uint32_t allowed=LegacyDomains) {

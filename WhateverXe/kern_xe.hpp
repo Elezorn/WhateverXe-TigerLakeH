@@ -120,6 +120,13 @@ private:
 	bool display13FBWatermarkLayoutReady {false};
 	bool display13FBWatermarkHooksReady {false};
 	bool display13FBOutputHooksReady {false};
+ bool display13FBSSTHooksReady {};
+ mach_vm_address_t orgDisplay13TrainingPattern {},orgDisplay13SignalLevels {};
+ bool processDisplay13FramebufferSST(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ static uint8_t *display13SSTPort(void *port);
+ static bool display13HDMIPort(void *port);
+ static uint32_t wrapDisplay13TrainingPattern(void *path,uint32_t pattern);
+ static uint32_t wrapDisplay13SignalLevels(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig);
 	mach_vm_address_t xelpProviderProbe {},xelpProviderConfigureProbe {};
     bool xelpBindProbe(void *controller);
 	bool display13FBTopologyHooksReady {false};

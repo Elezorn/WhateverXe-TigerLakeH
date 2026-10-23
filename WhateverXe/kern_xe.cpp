@@ -4384,7 +4384,7 @@ static bool display13FBAssociations(const void *controller,size_t controllerByte
 // framebuffer mutex and display-owner lock keep its graph stable; retained FB
 // identities and published backing are checked independently by the caller.
 static TGLFBBinding::Readout adlnInspectPathBinding(IOService *fb,OSObject *path,
-                                                 const void *platform,const Display13OutputWiring &wiring) {
+                                                 const void *platform,const Display13OutputWiring &wiring,bool attached=true) {
 	auto controller=static_cast<IOService *>(display13FBPower.controller);
 	if(!controller || !fb || !path || controller->getMetaClass()->getClassSize()<0x1C20 ||
 		fb->getMetaClass()->getClassSize()<0x4B90 || path->getMetaClass()->getClassSize()<0x3730)return {};
@@ -4395,7 +4395,7 @@ static TGLFBBinding::Readout adlnInspectPathBinding(IOService *fb,OSObject *path
 		{path,path->getMetaClass()->getClassSize()}, {plane,plane ? plane->getMetaClass()->getClassSize() : 0},
 		{port,port ? port->getMetaClass()->getClassSize() : 0}, display13FBExpectedOwner(controller)
 	};
-	return TGLFBBinding::inspect(objects,platform,wiring,true);
+	return TGLFBBinding::inspect(objects,platform,wiring,attached);
 }
 
 
@@ -4531,6 +4531,13 @@ struct Display13FBPowerIO {
 		*reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+r)=v;
 	}
 	void delayUs(unsigned us) { IODelay(us); }
+};
+// Only used after native object/BAR binding and the power lease proof. The
+// common SST/signal sequencers choose all addresses; no caller register input.
+struct Display13FBSSTIO {
+ IOMemoryMap *map;
+ uint32_t read(uint32_t reg) const {return *reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+reg);}
+ void write(uint32_t reg,uint32_t value) {*reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+reg)=value;}
 };
 struct Display13FBDBUFIO {
 	IOMemoryMap *map;
@@ -6063,9 +6070,122 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
     };
     const bool ready=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
     IORegistryEntry::getRegistryRoot()->setProperty("N97FBGMBusObservationReady",ready);
-    const bool complete=ready && processDisplay13FramebufferColor(patcher,index,address,size);
+    const bool complete=ready && processDisplay13FramebufferColor(patcher,index,address,size) &&
+        processDisplay13FramebufferSST(patcher,index,address,size);
     adlnComboPLLFractionCaller=complete ? address+0x6D973 : 0;
     return complete;
+}
+
+bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ // Install the bounded Combo backend independently of selecting DP at startup.
+ // Startup still requires AUX/probe and DP boot-handoff operation closure.
+ const char *pattern="__ZN21AppleIntelDisplayPath22setLinkTrainingPatternE19LinkTrainingPattern";
+ const char *signal="__ZN17AppleIntelPortHAL29setVoltageSwingAndPreEmphasisEjjP15PortDriveConfig";
+ const uint8_t patternEntry[]={0x55,0x48,0x89,0xe5,0x48,0xff,0x05,0x05,0x73,0x05,0x00,0x48,0xff,0x05,0x3e,0x6b};
+ const uint8_t signalEntry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec};
+ const uint8_t pcsABI[]={0x8b,0xb3,0x20,0x06,0x00,0x00},lanesABI[]={0x8b,0xb3,0xc8,0x05,0x00,0x00};
+ const uint8_t successABI[]={0x31,0xc0,0x48,0x83,0xc4,0x28};
+ if(!adlnDetected || !display13FBABIReady || !display13FBPowerReferencesReady || size<0x955C8)return false;
+ const auto p=patcher.solveSymbol<mach_vm_address_t>(index,pattern,address,size);patcher.clearError();
+ const auto s=patcher.solveSymbol<mach_vm_address_t>(index,signal,address,size);patcher.clearError();
+ if(p!=address+0x955B8 || s!=address+0x60AE0 ||
+    memcmp(reinterpret_cast<void *>(p),patternEntry,sizeof(patternEntry)) ||
+    memcmp(reinterpret_cast<void *>(s),signalEntry,sizeof(signalEntry)) ||
+    memcmp(reinterpret_cast<void *>(address+0x60EB9),pcsABI,sizeof(pcsABI)) ||
+    memcmp(reinterpret_cast<void *>(address+0x61468),lanesABI,sizeof(lanesABI)) ||
+    memcmp(reinterpret_cast<void *>(address+0x61478),successABI,sizeof(successABI)))return false;
+ KernelPatcher::RouteRequest routes[] {
+  {pattern,wrapDisplay13TrainingPattern,orgDisplay13TrainingPattern},
+  {signal,wrapDisplay13SignalLevels,orgDisplay13SignalLevels}
+ };
+ display13FBSSTHooksReady=patcher.routeMultiple(index,routes,arrsize(routes),address,size);patcher.clearError();
+ return display13FBSSTHooksReady;
+}
+
+// Called with the display owner lock held. The native caller owns the port;
+// require its retained platform record and BAR association before sampling it.
+uint8_t *XE::display13SSTPort(void *port) {
+ auto s=callbackXE;auto &c=display13FBPower;auto object=static_cast<OSObject *>(port);
+ if(!s->adlnDetected || s->xeProfile.display!=XELP::Display::XeLPD || !s->display13FBSSTHooksReady ||
+    !object || object->getMetaClass()->getClassSize()<0x624 || !c.controller ||
+    c.controller!=s->adlnTopologyController || !adlnWriterMappingBound() ||
+    c.clockFaulted || c.memoryFaulted || c.clockStopped || !s->adlnOutputWiring.described())return nullptr;
+ auto p=static_cast<uint8_t *>(port);auto config=Display13FBMemory::field<uint32_t *>(p,0x548);
+ if(!Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring) ||
+    !(s->adlnOutputWiring.dp&(1U<<config[0])) || p[0x117] ||
+    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] || Display13FBMemory::field<uint32_t>(p,0x550)!=1 ||
+    Display13FBMemory::field<void *>(p,0x578)!=c.access)return nullptr;
+ return p;
+}
+
+bool XE::display13HDMIPort(void *port) {
+ auto s=callbackXE;auto object=static_cast<OSObject *>(port);
+ if(!object || object->getMetaClass()->getClassSize()<0x580)return false;
+ auto config=Display13FBMemory::field<uint32_t *>(port,0x548);
+ return Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring) && s->adlnOutputWiring.matchesHDMI(config);
+}
+
+uint32_t XE::wrapDisplay13SignalLevels(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig) {
+ auto s=callbackXE;auto &c=display13FBPower;
+ // No protocol replacement for HDMI; preserve the donor's existing behavior.
+ if(!s->adlnOutputWiring.dp || display13HDMIPort(port))
+  return FunctionCast(wrapDisplay13SignalLevels,s->orgDisplay13SignalLevels)(port,swing,emphasis,overrideConfig);
+ if(!c.lock)return kIOReturnNotReady;
+ IOLockLock(c.lock);auto p=display13SSTPort(port);uint32_t result=kIOReturnNotReady;
+ if(p && !overrideConfig) {
+  const auto ddi=Display13FBMemory::field<uint32_t>(p,0x120);TGLComboSignal selected;
+  Display13FBPowerIO io{c.map};
+  if(selected.selectADLP(ddi,Display13FBMemory::field<uint32_t>(p,0x124),Display13FBMemory::field<uint32_t>(p,0x128),swing,emphasis) &&
+     Display13FBMemory::field<uint32_t>(p,0x620)==selected.base+0x804 &&
+     Display13FBMemory::field<uint32_t>(p,0x5C8)==selected.base+0x28 &&
+     Display13FBMemory::field<uint32_t>(c.access,0x60)>=selected.base+0xBA0 && c.bridge.ddiHeld(io,ddi)) {
+   Display13FBSSTIO registers{c.map};
+   if(selected.program([&](uint32_t r){return registers.read(r);},
+       [&](uint32_t r,uint32_t v){registers.write(r,v);} ))result=0;
+  }
+ }
+ IOLockUnlock(c.lock);return result;
+}
+
+uint32_t XE::wrapDisplay13TrainingPattern(void *path,uint32_t pattern) {
+ auto s=callbackXE;auto &c=display13FBPower;
+ if(!s->adlnOutputWiring.dp)return FunctionCast(wrapDisplay13TrainingPattern,s->orgDisplay13TrainingPattern)(path,pattern);
+ auto object=static_cast<OSObject *>(path);
+ if(!c.lock || !object || object->getMetaClass()->getClassSize()<0x3730)return kIOReturnNotReady;
+ if(display13HDMIPort(Display13FBMemory::field<void *>(path,0x3648)))
+  return FunctionCast(wrapDisplay13TrainingPattern,s->orgDisplay13TrainingPattern)(path,pattern);
+ // Never hold the nonrecursive power lock over donor training or AUX calls.
+ // Both register stages revalidate the graph, logical leases and live power.
+ const auto program=[&](bool before) {
+  IOLockLock(c.lock);bool ok=false;
+  auto p=display13SSTPort(Display13FBMemory::field<void *>(path,0x3648));
+  auto fb=Display13FBMemory::field<IOService *>(path,0x32B0);
+  const auto binding=p ? adlnInspectPathBinding(fb,object,s->adlnPlatform,s->adlnOutputWiring,false) : TGLFBBinding::Readout{};
+  Display13FBPowerIO io{c.map};
+  if(binding.status==TGLFBBinding::Status::Complete && c.bridge.outputHeld(io,binding.ddi,binding.pipe)) {
+   Display13FBSSTIO registers{c.map};
+   const auto read=[&](uint32_t r){return registers.read(r);};
+   const auto write=[&](uint32_t r,uint32_t v){registers.write(r,v);};
+   if(before) {
+    ok=true;
+    if(pattern==1) {
+     const auto r=XELP::SSTProgram::prepare(read,write,binding.ddi,binding.pipe,Display13FBMemory::field<uint32_t>(p,0x124),true);
+     // An already-active, identical route needs no rewrite. Never repair an
+     // active neighbor or a failed posting read by falling through to native.
+     ok=r.bufferBefore!=UINT32_MAX && r.clockBefore!=UINT32_MAX && r.funcBefore!=UINT32_MAX &&
+        (!r.reason || (r.reason==2 && r.clockBefore==r.clockWanted && r.funcBefore==r.funcWanted));
+    }
+   } else {
+    const auto r=XELP::SSTProgram::framing(read,write,binding.pipe,p[0x11A],false,false,0,true);
+    ok=r.ready && r.after!=UINT32_MAX && !(r.after&0x08000000U) && (!r.active || r.after==r.wanted);
+   }
+  }
+  IOLockUnlock(c.lock);return ok;
+ };
+ if(!program(true))return kIOReturnNotReady;
+ const auto result=FunctionCast(wrapDisplay13TrainingPattern,s->orgDisplay13TrainingPattern)(path,pattern);
+ if(result || pattern>5)return result;
+ return program(false)?0:kIOReturnNotReady;
 }
 uint32_t XE::wrapDisplay13GMBus(IOService *controller,uint32_t bus,uint32_t speed,void *request) {
     static uint32_t count {}; const auto call=__sync_add_and_fetch(&count,1);
