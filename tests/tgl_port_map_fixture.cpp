@@ -17,6 +17,7 @@ struct IORegistryEntry {
  void *getProperty(const char *) { return nullptr; }
 };
 struct XE {
+ bool adlsDetected=false,adlsDPWiring=false;
  // FIELDS
  IOSimpleLock *tglDekelLock;
  uintptr_t orgTGLReadDekel,orgTGLWriteDekel;

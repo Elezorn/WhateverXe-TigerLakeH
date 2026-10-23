@@ -9,7 +9,7 @@ code='''#include "kern_alderlake_s.hpp"
 #include <cstdio>
 struct XE {
  bool adlsClockReady=true;void *tglObservationController;uint8_t tglPlatformCopy[0x1c0] {};
- AlderLakeS::HDMI adlsHDMIWiring;static bool adlsClockTarget(void*,void*,void*);
+ bool adlsDPWiring=false;AlderLakeS::HDMI adlsHDMIWiring;static bool adlsClockTarget(void*,void*,void*);
 };
 XE state;XE *callbackXE=&state;
 FUNCTION
@@ -30,7 +30,17 @@ int main(){
  for(unsigned i=0;i<6;++i){c[i]^=1;assert(!XE::adlsClockTarget(ctl,port,nullptr));c[i]^=1;}
  state.adlsHDMIWiring.selected|=1;assert(!XE::adlsClockTarget(ctl,port,nullptr));state.adlsHDMIWiring.selected=8;
  state.adlsClockReady=false;assert(!XE::adlsClockTarget(ctl,port,nullptr));
- puts("PASS ADL-S runtime clock guard: exact owner, immutable TC1 configuration, mapped Combo B and no shared port");
+ state.adlsClockReady=true;state.adlsDPWiring=true;
+ uint32_t dp[]={4,10,1,0,0x400,0x201};c=reinterpret_cast<uint32_t *>(state.tglPlatformCopy+0x80);
+ memcpy(c,dp,sizeof(dp));at<void *>(port,0x548)=c;at<uint32_t>(port,0x5B8)=0x16010C;
+ assert(XE::adlsClockTarget(ctl,port,nullptr));assert(XE::adlsClockTarget(ctl,port,port));
+ state.adlsDPWiring=false;assert(!XE::adlsClockTarget(ctl,port,nullptr));state.adlsDPWiring=true;
+ at<void *>(port,0x548)=dp;assert(!XE::adlsClockTarget(ctl,port,nullptr));at<void *>(port,0x548)=c;
+ at<uint32_t>(port,0x5B8)=0x6C10C;assert(!XE::adlsClockTarget(ctl,port,nullptr));at<uint32_t>(port,0x5B8)=0x16010C;
+ at<uint32_t>(access,0x60)=0x164298;assert(!XE::adlsClockTarget(ctl,port,nullptr));at<uint32_t>(access,0x60)=0x1000000;
+ for(unsigned i=0;i<6;++i){c[i]^=1;assert(!XE::adlsClockTarget(ctl,port,nullptr));c[i]^=1;}
+ assert(!XE::adlsClockTarget(ctl,port,access));assert(!XE::adlsClockTarget(access,port,nullptr));
+ puts("PASS ADL-S runtime clock guard: exact owner, immutable TC1/TC2 configurations, mapped Combo B/C and no shared port");
 }'''.replace('FUNCTION',function)
 with tempfile.TemporaryDirectory(prefix='adls-clock-guard-') as d:
  d=Path(d);(d/'test.cpp').write_text(code)

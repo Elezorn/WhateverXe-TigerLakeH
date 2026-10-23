@@ -23,6 +23,7 @@ void clock_get_uptime(uint64_t *p){*p=1;}
 void absolutetime_to_nanoseconds(uint64_t t,uint64_t *p){*p=t;}
 unsigned observations,nativeCalls;
 struct XE {
+ bool adlsDetected=false,adlsDPWiring=false;
  // FIELDS
  bool tglActive=true,tglSinkFramingReady=true;void *tglObservationController{};uintptr_t orgTGLTrainingPattern{};
  static uint32_t wrapTGLTrainingPattern(void *,uint32_t);

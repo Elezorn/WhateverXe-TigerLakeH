@@ -34,12 +34,18 @@ int main() {
     firmware.port[3]={0x60d2,1,2,0,0xc0,0};
     firmware.port[4]={0x60d6,8,3,0x20,0xc0,0};
     firmware.port[5]={0x68c6,9,0,0x30,0xc0,0};
+    assert(DP::qualified(firmware));
+    for(unsigned i=0;i<6;++i){auto bad=firmware;reinterpret_cast<uint32_t *>(&bad.port[4])[i]^=1;assert(!DP::qualified(bad));}
+    auto dupe=firmware;dupe.port[5].aux=0x20;assert(!DP::qualified(dupe));
     auto h=HDMI::fromFirmware(firmware);assert(h.valid && h.selected==8 && h.pin[3]==9);
     alignas(8) uint8_t platform[0x1C0] {};platform[0x12]=9;
     for(unsigned d=0;d<9;++d) {
         const uint32_t c[]={d,d>=3?d+6:d+1,1,d>=3?1U:0U,0x400,0x201};
         memcpy(platform+0x20+24*d,c,sizeof(c));
     }
+    assert(DP::apply(platform,sizeof(platform)) && DP::matches(reinterpret_cast<uint32_t *>(platform+0x80)));
+    assert(!DP::apply(platform,sizeof(platform)));
+    reinterpret_cast<uint32_t *>(platform+0x80)[3]=1;
     uint8_t before[sizeof(platform)];memcpy(before,platform,sizeof(before));
     assert(h.apply(platform,sizeof(platform)));
     assert(h.matches(reinterpret_cast<uint32_t *>(platform+0x68)) && h.usesDDC(9) && !h.usesDDC(2));

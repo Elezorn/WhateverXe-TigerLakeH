@@ -178,7 +178,10 @@ struct TGLSSTTrainingPort {
   const bool edp = physicalDDI < 2 && kind == 0 && backend == 1;
   const bool tc = physicalDDI >= 3 && physicalDDI <= 8 &&
    kind == 1 && (backend == 3 || backend == 4) && qualifiedTC;
-  if (!edp && !tc) return false;
+  // qualifiedTC is the caller's generation/wiring admission. ADL-S TC2
+  // is Combo C in mode1, while its physical lane power remains PW3.
+  const bool adls = physicalDDI==4 && kind==1 && backend==1 && qualifiedTC;
+  if (!edp && !tc && !adls) return false;
   out.ddi = physicalDDI; out.ddiBuffer = 0x64000 + 0x100 * physicalDDI;
   out.combo = edp;
   return true;

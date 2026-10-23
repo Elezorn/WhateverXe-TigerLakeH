@@ -12,7 +12,7 @@ code=r'''
 #define FunctionCast(fn,p) reinterpret_cast<decltype(&fn)>(p)
 struct XE {
  bool adlsDetected=true,adlsPowerReady=true;void *tglObservationController;
- AlderLakeS::HDMI adlsHDMIWiring;uintptr_t orgADLSPowerPG,orgTGLPowerDDIState;
+ bool adlsDPWiring=false;AlderLakeS::HDMI adlsHDMIWiring;uintptr_t orgADLSPowerPG,orgTGLPowerDDIState;
  static uint8_t *adlsPowerTarget(void*);
  static void wrapADLSPowerPG(void*,bool,uint32_t);
  static void wrapTGLPowerDDIState(void*,bool,uint32_t);
@@ -31,12 +31,13 @@ int main(){
  state.orgADLSPowerPG=reinterpret_cast<uintptr_t>(pg);state.orgTGLPowerDDIState=reinterpret_cast<uintptr_t>(ddi);
  at<void*>(power,0x10)=ctl;at<void*>(ctl,0xC8)=power;at<void*>(power,0x78)=access;at<void*>(ctl,0xC40)=access;
  assert(XE::adlsPowerTarget(power)==power);assert(!XE::adlsPowerTarget(nullptr));unsigned count=0;
- for(unsigned active:{0U,1U,7U})for(unsigned mask=0;mask<256;++mask)for(bool on:{false,true}){
-  at<uint32_t>(power,0x3C)=active;calls.clear();XE::wrapADLSPowerPG(power,on,mask);
-  assert(calls.size()==1&&calls[0].target==(mask|(active?0x2A:0))&&calls[0].enable==on);
+ for(bool dp:{false,true})for(unsigned activeDP:{0U,1U,7U})for(unsigned active:{0U,1U,7U})for(unsigned mask=0;mask<256;++mask)for(bool on:{false,true}){
+  state.adlsDPWiring=dp;at<uint32_t>(power,0x40)=activeDP;at<uint32_t>(power,0x3C)=active;calls.clear();XE::wrapADLSPowerPG(power,on,mask);
+  assert(calls.size()==1&&calls[0].target==(mask|((active || (dp && activeDP))?0x2A:0))&&calls[0].enable==on);
   assert(at<uint32_t>(power,0x3C)==active);++count;
  }
- for(unsigned bits=0;bits<16;++bits)for(unsigned tc:{0U,0x80U}){
+ state.adlsDPWiring=true;
+ for(unsigned bits=0;bits<16;++bits)for(unsigned tc:{0U,0x80U,0x200U,0x280U}){
   unsigned expected=0;for(unsigned i=0;i<4;++i){at<uint32_t>(power,0x20+4*i)=(bits>>i)&1;if((bits>>i)&1)expected|=2U<<(2*i);}
   uint8_t before[sizeof(power)];memcpy(before,power,sizeof(power));calls.clear();XE::wrapTGLPowerDDIState(power,false,tc);
   assert(calls.size()==2);assert(calls[tc?0:1].kind==0&&calls[tc?0:1].target==(expected|(tc?0x2A:0)));

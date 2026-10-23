@@ -293,6 +293,7 @@ private:
 	bool tglHDMIB {false};
  TGLHDMIWiring tglHDMIWiring;
  AlderLakeS::HDMI adlsHDMIWiring;
+ bool adlsDPWiring {};
  bool tglHDMIWiringLoaded {},tglHDMIWiringExplicit {},tglHDMIWiringApplied {};
  uint32_t tglHDMIBackendMask {3}; // TGL-U combo PHY A/B; C is absent
  static bool tglLoadHDMIWiring(IOService *provider);
@@ -343,7 +344,7 @@ private:
 	mach_vm_address_t orgTGLEnablePort {};
 	mach_vm_address_t orgTGLDisablePort {};
 	bool tglComboAUXLifetimeReady {};
-	void *tglComboAUXOwners[2] {};
+	void *tglComboAUXOwners[9] {};
 	static void tglComboAUXReference(void *port,bool acquire);
 	static uint32_t wrapTGLDisablePort(void *port);
 	mach_vm_address_t orgTGLSignalLevels {};
@@ -404,10 +405,10 @@ private:
  uint32_t tglTCAutoCandidates {},tglTCAutoRegistered {};
  uint32_t tglDPAltCandidates {};
  bool tglDPSSTEligible(uint32_t ddi) const {
-  return tglLegacyTCEligible(ddi) || (ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
+  return (adlsDetected && adlsDPWiring && ddi==4) || tglLegacyTCEligible(ddi) || (ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
  }
  bool tglDPSSTMode(uint32_t ddi,uint32_t mode) const {
-  return (mode==4 && tglLegacyTCEligible(ddi)) ||
+  return (mode==1 && adlsDetected && adlsDPWiring && ddi==4) || (mode==4 && tglLegacyTCEligible(ddi)) ||
    (mode==3 && ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
  }
  uintptr_t tglNativeLegacyHPDCaller {};
@@ -433,7 +434,7 @@ private:
  }
 	uint32_t tglAUXParentRefs[9] {};
 	bool tglAUXParentEligible(uint32_t ddi) const {
-		return tglAUXParentReady && tglLegacyTCEligible(ddi);
+		return tglAUXParentReady && (tglLegacyTCEligible(ddi) || (adlsDetected && adlsDPWiring && ddi==4));
 	}
 	static void wrapTGLEnableAUXPower(void *power, uint32_t ddi);
 	static void wrapTGLDisableAUXPower(void *power, uint32_t ddi);

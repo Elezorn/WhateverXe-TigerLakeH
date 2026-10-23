@@ -35,6 +35,18 @@ int main() {
   // Missing bank declines before the first write.
   writes.clear();regs[s.base+0xA9C]=~0U;assert(!s.program(read,write)&&writes.empty());
  }
+ for(unsigned lanes:{0u,1u,2u,3u,4u})for(unsigned rate:{0u,6u,10u,12u,20u,30u})
+ for(unsigned v=0;v<5;++v)for(unsigned e=0;e<5;++e) {
+  TGLComboSignal s;bool ok=(lanes==1||lanes==2||lanes==4)&&(rate==6||rate==10||rate==20||rate==30)&&v<4&&e<4&&v+e<=3;
+  assert(s.selectADLS(lanes,rate,v,e)==ok);if(!ok)continue;
+  assert(s.base==0x160000&&!s.low);
+  std::map<unsigned,unsigned> regs;
+  assert(s.program([&](unsigned r){return regs[r];},[&](unsigned r,unsigned value){
+   assert(r>=0x160000&&r<0x160BA0);
+   if(r==0x160694)for(unsigned n=0;n<4;++n)regs[0x160894+0x100*n]=value;
+   regs[r]=value;
+  }));
+ }
  TGLComboSignal s;assert(s.select(0,1,10,false,false,0,0));
  assert(s.swing==0xA&&s.scalar==0x32&&s.cursor==0x3F&&!s.post1);
  // Silent dropped coefficient write must not report successful programming.

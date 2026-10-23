@@ -4038,7 +4038,7 @@ bool XE::xelpBindProbe(void *controller) {
     XELP::ProbeConfig config;config.profile=xeProfile;
     if(adlsDetected) {
         if(!tglHDMIWiringApplied || !adlsHDMIWiring.valid || adlsHDMIWiring.selected!=8)return false;
-        config.combo=config.comboBackend=8;
+        config.combo=config.comboBackend=adlsDPWiring?24:8;
     } else if(xeProfile.display==XELP::Display::XeD) {
         if(!tglHDMIWiringApplied || !tglTCWiringLoaded || !tglTCWiring.valid)return false;
         config.combo=tglHDMIWiring.hdmi;config.comboBackend=7;
@@ -9953,9 +9953,10 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				// r319: the donor's combo PLL tables still contain ICL MMIO
 				// addresses. TGL moved DPLL0/1 CFGCR0/1 (Linux v6.12 i915_reg.h).
 				// Correct both reads and writes through the native tables; retain
-				// native divisors, power/lock sequencing and the unused third slot.
+				// native divisors and power/lock sequencing. ADL-S also uses slot2.
 				const uint64_t before[] {0x164000,0x164080,0x164200,0x164004,0x164084,0x164204};
-				const uint64_t after[] {0x164284,0x16428C,0x164200,0x164288,0x164290,0x164204};
+				const uint64_t after[] {0x164284,0x16428C,adlsDetected?0x164294ULL:0x164200ULL,
+                    0x164288,0x164290,adlsDetected?0x164298ULL:0x164204ULL};
 				auto fn = patcher.solveSymbol<mach_vm_address_t>(index,
 					"__ZN31AppleIntelFramebufferController12enableClocksEP14AppleIntelPortS1_P11ClockParams", address, size);
 				auto site = reinterpret_cast<uint8_t *>(address + 0x9A0E8);
@@ -10946,6 +10947,10 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     // guards below. The removed instructions are profiling counters.
     const uint8_t adlsClockOnFind[]={0x48,0xff,0x05,0xbe,0x86,0x07,0x00,0x48,0x63,0x00,0x48,0x83,0xf8,0x03};
     const uint8_t adlsClockOnReplace[]={0x48,0x63,0x00,0x48,0x83,0xe8,0x02,0x48,0x83,0xf8,0x03,0x0f,0x1f,0x00};
+    const uint8_t adlsClockSelectCPLLFind[]={0x83,0xc8,0x10};
+    const uint8_t adlsClockSelectCPLLReplace[]={0x83,0xc8,0x20};
+    const uint8_t adlsClockSelectCFind[]={0x83,0xf9,0x02};
+    const uint8_t adlsClockSelectCReplace[]={0x83,0xf9,0x04};
     const uint8_t adlsClockSelectFind[]={0x83,0xf9,0x01};
     const uint8_t adlsClockSelectReplace[]={0x83,0xf9,0x03};
     const uint8_t adlsClockOffFind[]={0x48,0xff,0x05,0xe9,0x79,0x07,0x00,0x48,0x8b,0x8b,0x48,0x05,0x00,0x00,0x4c,0x63,0x21,0x49,0x83,0xfc,0x03};
@@ -10961,6 +10966,8 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
      fn==address+0x6CE10 && size>0x6DCBD && !memcmp(reinterpret_cast<void *>(fn),entry,sizeof(entry));
     struct Site {uint32_t offset;const uint8_t *find,*replace;size_t bytes;};
     const Site sites[]={{0x6CFD3,adlsClockOnFind,adlsClockOnReplace,sizeof(adlsClockOnFind)},
+     {0x6D4A2,adlsClockSelectCPLLFind,adlsClockSelectCPLLReplace,sizeof(adlsClockSelectCPLLFind)},
+     {0x6D219,adlsClockSelectCFind,adlsClockSelectCReplace,sizeof(adlsClockSelectCFind)},
      {0x6D222,adlsClockSelectFind,adlsClockSelectReplace,sizeof(adlsClockSelectFind)},
      {0x6DCA8,adlsClockOffFind,adlsClockOffReplace,sizeof(adlsClockOffFind)},
      {0x53B66,adlsClockBusFind,adlsClockBusReplace,sizeof(adlsClockBusFind)}};
@@ -10991,7 +10998,9 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSLanePowerReady",adlsPowerReady);
     // Native startup remains closed if any required ADL-S adapter is absent.
     adlsDisplayHooksReady=ready && adlsPowerReady && adlsPortInitReady && orgTGLEnableCombo && tglPortByDDI &&
-     orgTGLGetOSInformation && orgTGLRegisterWrite && orgTGLRegisterRead && hpdOK;
+     orgTGLGetOSInformation && orgTGLRegisterWrite && orgTGLRegisterRead && hpdOK &&
+     (!adlsDPWiring || (tglTrainingLeaseReady && tglSinkFramingReady && tglComboSignalReady &&
+       tglComboAUXLifetimeReady && tglAUXParentReady && tglTCNativeFunctions.complete()));
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayHooksReady",adlsDisplayHooksReady);
    }
    tglRecordStartOrder(1,nullptr);
@@ -11039,13 +11048,15 @@ bool XE::wrapTGLGetOSInformation(void *controller) {
  }
  auto copy=reinterpret_cast<uint8_t *>(self->tglPlatformCopy);
  if(copy!=platform)memcpy(copy,platform,sizeof(self->tglPlatformCopy));
- const bool wiringApplied=self->adlsDetected ? self->adlsHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy)) :
+ const bool wiringApplied=self->adlsDetected ? (self->adlsHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy)) &&
+     (!self->adlsDPWiring || AlderLakeS::DP::apply(copy,sizeof(self->tglPlatformCopy)))) :
     self->tglHDMIWiring.supported(self->tglHDMIBackendMask,self->tglHDMIB) && self->tglHDMIWiring.apply(copy,sizeof(self->tglPlatformCopy));
  if(!self->tglHDMIWiringLoaded || !wiringApplied) {
   IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiringGuardFailed",true);return false;
  }
  auto config=reinterpret_cast<uint32_t *>(copy+0x20);
  platform=copy;self->tglHDMIWiringApplied=true;
+ if(self->adlsDetected)IORegistryEntry::getRegistryRoot()->setProperty("ADLSDPWiringApplied",self->adlsDPWiring);
  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIWiringApplied",self->adlsDetected?self->adlsHDMIWiring.selected:self->tglHDMIWiring.hdmi,32);
  // Preserve the existing TC2 machine's diagnostic names for old collectors.
  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMIBTopologyApplied",bool(self->tglHDMIWiring.hdmi&2));
@@ -11104,6 +11115,7 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
    // The legacy five-word property addresses TGL Combo A/B/C, not ADL-S.
    if(provider && provider->getProperty("tgl-hdmi-wiring"))return false;
    self->adlsHDMIWiring=AlderLakeS::HDMI::fromFirmware(self->firmwarePorts);
+   self->adlsDPWiring=AlderLakeS::DP::qualified(self->firmwarePorts);
    self->tglHDMIB=self->adlsHDMIWiring.valid && self->adlsHDMIWiring.selected==8;
   }
   return self->tglHDMIB;
@@ -15781,16 +15793,19 @@ bool XE::adlsClockTarget(void *controller,void *port,void *otherPort) {
     auto p=static_cast<uint8_t *>(port);
     auto config=*reinterpret_cast<uint32_t **>(p+0x548);
     auto access=*reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(controller)+0xC40);
-    return config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(self->tglPlatformCopy)+0x68) &&
-        self->adlsHDMIWiring.matches(config) && access &&
-        *reinterpret_cast<void **>(p+0x578)==access && *reinterpret_cast<uint32_t *>(p+0x5B8)==0x6C10C &&
-        *reinterpret_cast<uint32_t *>(access+0x60)>=0x164294;
+    if(!config)return false;
+    const bool hdmi=self->adlsHDMIWiring.matches(config);
+    const bool dp=self->adlsDPWiring && AlderLakeS::DP::matches(config);
+    return (hdmi || dp) && config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(self->tglPlatformCopy)+0x20+24*config[0]) && access &&
+        *reinterpret_cast<void **>(p+0x578)==access && *reinterpret_cast<uint32_t *>(p+0x5B8)==(dp?0x16010CU:0x6C10CU) &&
+        *reinterpret_cast<uint32_t *>(access+0x60)>=0x16429C;
 }
 
 void XE::wrapADLSEnableClocks(void *controller,void *port,void *otherPort,uint32_t *params) {
     AlderLakeS::HDMIClock encoded;
     if(!adlsClockTarget(controller,port,otherPort) ||
-       !AlderLakeS::HDMIClock::encode(params,*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(controller)+0xEA8),encoded)) {
+       ((*reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port)+0x548))[2]==2 &&
+       !AlderLakeS::HDMIClock::encode(params,*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(controller)+0xEA8),encoded))) {
         IORegistryEntry::getRegistryRoot()->setProperty("ADLSClockEnableRejected",true);return;
     }
     tglTransitionRecord(71,false,port,encoded.cfg0,encoded.cfg1,0);
@@ -15800,13 +15815,17 @@ void XE::wrapADLSEnableClocks(void *controller,void *port,void *otherPort,uint32
 
 bool XE::wrapADLSPortInit(void *port,uint32_t *config) {
     const bool result=FunctionCast(wrapADLSPortInit,callbackXE->orgADLSPortInit)(port,config);
-    if(!result || !callbackXE->adlsDetected || !config || config[0]!=3)return result;
+    if(!result || !callbackXE->adlsDetected || !config || (config[0]!=3 && config[0]!=4))return result;
     auto bytes=static_cast<uint8_t *>(port);
-    const bool ready=callbackXE->adlsPortInitReady && callbackXE->adlsHDMIWiring.matches(config) &&
-        config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(callbackXE->tglPlatformCopy)+0x68) &&
+    const bool dp=config[0]==4;
+    if(dp && !callbackXE->adlsDPWiring)return result;
+    const bool ready=callbackXE->adlsPortInitReady &&
+        (dp ? AlderLakeS::DP::matches(config):callbackXE->adlsHDMIWiring.matches(config)) &&
+        config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(callbackXE->tglPlatformCopy)+0x20+24*config[0]) &&
         *reinterpret_cast<uint32_t **>(bytes+0x548)==config &&
-        AlderLakeS::comboBRegisters(reinterpret_cast<uint32_t *>(bytes+0x580),0x128/4);
-    IORegistryEntry::getRegistryRoot()->setProperty("ADLSComboBPortReady",ready);
+        (dp ? AlderLakeS::comboCRegisters(reinterpret_cast<uint32_t *>(bytes+0x580),0x128/4):
+              AlderLakeS::comboBRegisters(reinterpret_cast<uint32_t *>(bytes+0x580),0x128/4));
+    IORegistryEntry::getRegistryRoot()->setProperty(dp?"ADLSComboCPortReady":"ADLSComboBPortReady",ready);
     return ready;
 }
 
@@ -15817,14 +15836,14 @@ void XE::wrapTGLEnableCombo(void *port) {
         if(!config || !callbackXE->adlsPortInitReady)return;
         if(config[0]==0) {FunctionCast(wrapTGLEnableCombo,callbackXE->orgTGLEnableCombo)(port);return;}
         // The donor's power-engine startup enumerates Combo slots0..2.
-        // ADL-S Combo B belongs to physical TC1, constructed separately.
-        if(config[0]==1 && callbackXE->tglPortByDDI)
-            port=reinterpret_cast<void *(*)(uint32_t)>(callbackXE->tglPortByDDI)(3);
-        else if(config[0]!=3)return;
+        // ADL-S Combo B/C belong to physical TC1/TC2, constructed separately.
+        if((config[0]==1 || (config[0]==2 && callbackXE->adlsDPWiring)) && callbackXE->tglPortByDDI)
+            port=reinterpret_cast<void *(*)(uint32_t)>(callbackXE->tglPortByDDI)(config[0]+2);
+        else if(config[0]!=3 && !(config[0]==4 && callbackXE->adlsDPWiring))return;
         b=static_cast<uint8_t *>(port);
         config=b?*reinterpret_cast<uint32_t **>(b+0x548):nullptr;
-        if(config && callbackXE->adlsHDMIWiring.matches(config) &&
-           *reinterpret_cast<uint32_t *>(b+0x5B8)==0x6C10C)
+        if(config && ((callbackXE->adlsHDMIWiring.matches(config) && *reinterpret_cast<uint32_t *>(b+0x5B8)==0x6C10C) ||
+           (callbackXE->adlsDPWiring && AlderLakeS::DP::matches(config) && *reinterpret_cast<uint32_t *>(b+0x5B8)==0x16010C)))
             FunctionCast(wrapTGLEnableCombo,callbackXE->orgTGLEnableCombo)(port);
         else IORegistryEntry::getRegistryRoot()->setProperty("ADLSComboBInitRejected",true);
         return;
@@ -16069,7 +16088,7 @@ void XE::wrapTGLRegisterWrite(void *access, unsigned long reg, uint32_t value) {
 		if (ctl && *reinterpret_cast<void **>(ctl + 0xC40) == access) {
 			const auto refCode = *reinterpret_cast<uint32_t *>(ctl + 0xEA8);
 			const auto nominal = value;
-			if (TGLComboPLLFraction::adjust(refCode, reg, value)) {
+			if (TGLComboPLLFraction::adjust(refCode, callbackXE->adlsDetected && reg==0x164294 ? 0x164284 : reg, value)) {
 				const uint64_t detail[] {refCode, nominal};
 				tglTransitionRecord(70,true,access,reg,nominal,value,detail,sizeof(detail));
 			}
@@ -16473,7 +16492,8 @@ uint8_t *XE::adlsPowerTarget(void *power) {
 
 void XE::wrapADLSPowerPG(void *power,bool enable,uint32_t requested) {
  auto p=adlsPowerTarget(power);
- const auto target=AlderLakeS::LanePower::target(requested,p && *reinterpret_cast<uint32_t *>(p+0x3C));
+ const auto target=AlderLakeS::LanePower::target(requested,p && (*reinterpret_cast<uint32_t *>(p+0x3C) ||
+  (callbackXE->adlsDPWiring && *reinterpret_cast<uint32_t *>(p+0x40))));
  tglTransitionRecord(73,false,power,requested,target,enable);
  FunctionCast(wrapADLSPowerPG,callbackXE->orgADLSPowerPG)(power,enable,target);
  tglTransitionRecord(73,true,power,requested,target,enable);
@@ -16486,14 +16506,15 @@ void XE::wrapTGLPowerDDIState(void *power, bool enable, uint32_t requested) {
 	tglObserveActivation(controller, nullptr, nullptr, 3, false, requested);
  // Acquire parent wells before DDI IO turns on; release after IO turns off.
  // Native reference counts remain untouched. The PG target is the union of
- // the native pipe consumers and the current TC1 lane consumer.
+ // the native pipe consumers and the current TC1/TC2 lane consumers.
  auto adls=adlsPowerTarget(power);
- if(adls && (requested&0x80)) {
+ const auto laneMask=callbackXE->adlsDPWiring?0x280U:0x80U;
+ if(adls && (requested&laneMask)) {
   const auto native=AlderLakeS::LanePower::pipeRequests(reinterpret_cast<uint32_t *>(adls+0x20));
   FunctionCast(wrapADLSPowerPG,callbackXE->orgADLSPowerPG)(power,true,AlderLakeS::LanePower::target(native,true));
  }
 	FunctionCast(wrapTGLPowerDDIState, callbackXE->orgTGLPowerDDIState)(power, enable, requested);
- if(adls && !(requested&0x80)) {
+ if(adls && !(requested&laneMask)) {
   const auto native=AlderLakeS::LanePower::pipeRequests(reinterpret_cast<uint32_t *>(adls+0x20));
   FunctionCast(wrapADLSPowerPG,callbackXE->orgADLSPowerPG)(power,false,native);
  }
@@ -16540,18 +16561,21 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	auto p=static_cast<uint8_t *>(port);
 	auto ctl=static_cast<uint8_t *>(self->tglObservationController);
 	if(!p || !ctl || overrideConfig || !self->tglActive || !self->tglComboSignalReady ||
-		self->xeProfile.family!=XELP::Family::TigerLake || !self->firmwarePorts.valid())return false;
+		(self->xeProfile.family!=XELP::Family::TigerLake && !self->adlsDetected) || !self->firmwarePorts.valid())return false;
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
 	const auto &panel=self->firmwarePorts.panel;
-	if(!config || config[0]>1 || config[2]!=0 || config[3]!=0 ||
-		*reinterpret_cast<uint32_t *>(p+0x550)!=1 || p[0x117] ||
-		!panel.valid || panel.ddi!=config[0] || (self->firmwarePorts.port[config[0]].flags&0x17))return false;
+	const bool adls=self->adlsDetected && self->adlsDPWiring && AlderLakeS::DP::matches(config) &&
+        config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(self->tglPlatformCopy)+0x80);
+    if(!config || *reinterpret_cast<uint32_t *>(p+0x550)!=1 || p[0x117])return false;
+    if(!adls && (config[0]>1 || config[2]!=0 || config[3]!=0 ||
+        !panel.valid || panel.ddi!=config[0] || (self->firmwarePorts.port[config[0]].flags&0x17)))return false;
 	auto access=*reinterpret_cast<uint8_t **>(p+0x578);
 	if(!access || *reinterpret_cast<void **>(ctl+0xC40)!=access)return false;
 	TGLComboSignal selected;
 	const auto lanes=*reinterpret_cast<uint32_t *>(p+0x124);
 	const auto rate=*reinterpret_cast<uint32_t *>(p+0x128);
-	if(!selected.select(config[0],lanes,rate,panel.lowSwing,panel.hobl,swing,emphasis))return false;
+	if(!(adls ? selected.selectADLS(lanes,rate,swing,emphasis):
+        selected.select(config[0],lanes,rate,panel.lowSwing,panel.hobl,swing,emphasis)))return false;
 	// The native fields identify this very bank. No guessed framebuffer index
 	// or cross-port reads; power must already belong to the training caller.
 	if(*reinterpret_cast<uint32_t *>(p+0x620)!=selected.base+0x804 ||
@@ -16561,7 +16585,8 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	const auto main=wrapTGLRegisterRead(access,0x45404);
 	const auto io=wrapTGLRegisterRead(access,0x45454);
 	const uint32_t ioMask=3U<<(2*config[0]);
-	if(main==~0U || io==~0U || (main&3)!=3 || (io&ioMask)!=ioMask)return false;
+	const uint32_t mainMask=adls?0x3FU:3U;
+	if(main==~0U || io==~0U || (main&mainMask)!=mainMask || (io&ioMask)!=ioMask)return false;
 	const auto read=[&](uint32_t reg){return wrapTGLRegisterRead(access,reg);};
 	const auto write=[&](uint32_t reg,uint32_t value){wrapTGLRegisterWrite(access,reg,value);};
 	const bool programmed=selected.program(read,write);
@@ -16891,9 +16916,11 @@ void XE::tglComboAUXReference(void *port,bool acquire) {
 	auto ctl=static_cast<uint8_t *>(s->tglObservationController);
 	auto &f=s->tglTCNativeFunctions; // shared native AUX API, not TC admission
 	if(!p || !ctl || !s->tglActive || !s->tglComboAUXLifetimeReady || !f.complete() ||
-		s->xeProfile.family!=XELP::Family::TigerLake || *f.controllerSlot!=ctl)return;
+		(s->xeProfile.family!=XELP::Family::TigerLake && !s->adlsDetected) || *f.controllerSlot!=ctl)return;
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
-	if(!config || config[0]>1)return;
+	const bool adls=s->adlsDetected && s->adlsDPWiring && AlderLakeS::DP::matches(config) &&
+        config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(s->tglPlatformCopy)+0x80);
+    if(!config || (config[0]>1 && !adls))return;
 	const auto ddi=config[0];
 	auto &owner=s->tglComboAUXOwners[ddi];
 	if(acquire ? owner!=nullptr : owner!=port)return;
@@ -16902,14 +16929,14 @@ void XE::tglComboAUXReference(void *port,bool acquire) {
 	if(!power || !access || *reinterpret_cast<void **>(power+0x10)!=ctl ||
 		*reinterpret_cast<void **>(power+0x78)!=access ||
 		*reinterpret_cast<void **>(p+0x578)!=access ||
-		*reinterpret_cast<uint32_t *>(access+0x60)<0x64200 ||
+		*reinterpret_cast<uint32_t *>(access+0x60)<(adls?0x64404U:0x64200U) ||
 		!*reinterpret_cast<void **>(access+0x50))return;
 	const uint32_t buffer=0x64000+0x100*ddi,mask=3U<<(2*ddi);
 	if(*reinterpret_cast<uint32_t *>(p+0x590)!=buffer)return;
-	if(acquire && (config[2]!=0 || config[3]!=0 || p[0x117] ||
-		*reinterpret_cast<uint32_t *>(p+0x550)!=1 || !s->firmwarePorts.valid() ||
-		!(s->firmwarePorts.present&(1U<<ddi)) || !s->firmwarePorts.port[ddi].internal() ||
-		!s->firmwarePorts.port[ddi].dp()))return;
+	if(acquire && (config[3]!=0 || p[0x117] || *reinterpret_cast<uint32_t *>(p+0x550)!=1 ||
+        !s->firmwarePorts.valid() || !(s->firmwarePorts.present&(1U<<ddi)) ||
+        !s->firmwarePorts.port[ddi].dp() ||
+        (!adls && (config[2]!=0 || !s->firmwarePorts.port[ddi].internal()))))return;
 	const auto io=wrapTGLRegisterRead(access,0x45454);
 	if(io==~0U || (io&mask)!=mask)return;
 	const auto bufferState=wrapTGLRegisterRead(access,buffer);

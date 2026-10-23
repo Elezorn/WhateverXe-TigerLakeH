@@ -118,7 +118,10 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 
 ### Planned
 
-- Alder Lake／Raptor LakeのS/H/P/U対応
+- Alder Lake／Raptor LakeのS/H/P/U対応。開発版のAlder Lake-S `4690`では、
+  Big SurのHDMIまたは固定DP単独出力とMetal／OpenGLアクセラレーションを確認しています。
+  未公開のグラフィックス資材変更が必要で、公開済みpkgでは対応しません。
+  USB-C、再接続、消灯／復帰、他のmacOSは未検証です。
 - Display 13のUSB-C / eDP対応
 
 ### Not Planned

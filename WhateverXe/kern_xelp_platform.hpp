@@ -71,10 +71,10 @@ struct ProbeConfig {
     bool valid() const {
         if(abi!=3 || bytes!=sizeof(ProbeConfig) || !profile.admitted() ||
            !same(profile,identify(profile.identity,profile.revision,profile.effectiveIdentity)))return false;
-        // Initial ADL-S transport is fixed HDMI on physical TC1/Combo B.
+        // ADL-S fixed HDMI TC1/Combo B and optional DP TC2/Combo C.
         // Its TC label grants neither Type-C nor Dekel register access.
         if(profile.family==Family::AlderLakeS)
-            return profile.display==Display::XeD && combo==8 && comboBackend==8 &&
+            return profile.display==Display::XeD && (combo==8 || combo==24) && comboBackend==combo &&
                 !legacy && !typeC && !excluded && !legacyBackend;
         if((combo&~7U) || ((legacy|typeC|excluded|legacyBackend)&~0x1F8U) ||
            (comboBackend&~7U) || (legacy&typeC) || (legacy&excluded) || (typeC&excluded))return false;

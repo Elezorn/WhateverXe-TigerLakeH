@@ -29,8 +29,12 @@ template<class IO> uint32_t legacyTGLMode(IO &io,uint32_t ddi,uint32_t selected)
 }
 template<class IO> uint32_t probeMode(IO &io,const ProbeBinding &b,uintptr_t manager,uintptr_t record,const uint32_t *c) {
     if(!b.bound(manager,record,c))return 0;
-    if(b.config.profile.family==Family::AlderLakeS)
-        return c[0]==3 && c[1]==9 && c[2]==2 && !c[3] && c[4]==0x800 && (c[5]&0xB)==2 ? 1 : 0;
+    if(b.config.profile.family==Family::AlderLakeS) {
+        if(!(b.config.combo&b.config.comboBackend&(1U<<c[0])))return 0;
+        const bool hdmi=c[0]==3 && c[1]==9 && c[2]==2 && !c[3] && c[4]==0x800 && (c[5]&0xB)==2;
+        const bool dp=c[0]==4 && c[1]==10 && c[2]==1 && !c[3] && c[4]==0x400 && c[5]==0x201;
+        return hdmi || dp ? 1 : 0;
+    }
     if(b.config.profile.display==Display::XeD)
         return legacyTGLMode(io,c[0],b.config.legacy&b.config.legacyBackend);
     // Display13 fixed Combo HDMI remains the only qualified transport.

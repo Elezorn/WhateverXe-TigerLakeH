@@ -93,6 +93,30 @@ struct HDMI {
         out.valid=true;return out;
     }
 };
+// First fixed external DP backend: VBT TC2 / AUX USBC2 / Combo C.
+// Reject reversal, LSPCON, internal and Type-C intent instead of guessing.
+struct DP {
+    static bool qualified(const XELP::VBT::Ports &ports) {
+        if(!ports.valid() || !(ports.present&16))return false;
+        const auto &p=ports.port[4];
+        if(p.type!=0x60D6 || p.dvo!=8 || p.ddc!=3 || p.aux!=0x20 ||
+           (p.flags&0x17) || (p.capabilities&3))return false;
+        for(unsigned d=0;d<XELP::PortCount;++d)
+            if(d!=4 && (ports.present&(1U<<d)) && ports.port[d].dp() && ports.port[d].aux==p.aux)return false;
+        return true;
+    }
+    static bool matches(const uint32_t *c) {
+        const uint32_t expected[]={4,10,1,0,0x400,0x201};
+        return c && !memcmp(c,expected,sizeof(expected));
+    }
+    static bool apply(void *platform,size_t bytes) {
+        if(!platform || bytes<0x1C0)return false;
+        auto p=static_cast<uint8_t *>(platform);
+        const uint32_t expected[]={4,10,1,1,0x400,0x201};
+        if(p[0x12]!=9 || memcmp(p+0x80,expected,sizeof(expected)))return false;
+        reinterpret_cast<uint32_t *>(p+0x80)[3]=0;return true;
+    }
+};
 struct PLL {
     uint32_t enable {},cfg0 {},cfg1 {};
     static bool resolve(uint32_t id,PLL &out) {
@@ -120,6 +144,20 @@ inline bool comboBRegisters(uint32_t *registers,size_t count) {
     };
     static_assert(sizeof(phy)==0x648-0x5AC+4,"Combo PHY register table span");
     memcpy(registers+(0x5AC-0x580)/4,phy,sizeof(phy));return true;
+}
+// The donor's EHL Combo C bank matches ADL-S PHY C. Keep physical
+// TC2's DDI/AUX register slots and translate only the separate PHY table.
+inline bool comboCRegisters(uint32_t *registers,size_t count) {
+    if(!registers || count!=0x128/4 || registers[4]!=0x64400 ||
+       registers[(0x64C-0x580)/4]!=0x46110)return false;
+    for(unsigned off=0x5AC;off<=0x648;off+=4)if(registers[(off-0x580)/4])return false;
+    uint32_t temporary[0x128/4] {};temporary[4]=0x64300;temporary[(0x64C-0x580)/4]=0x4610C;
+    if(!comboBRegisters(temporary,count))return false;
+    for(unsigned off=0x5AC;off<=0x648;off+=4) {
+        const auto index=(off-0x580)/4;
+        registers[index]=off==0x5AC ? 0x64C08 : temporary[index]-0x6C000+0x160000;
+    }
+    return true;
 }
 // Five-word ClockParams ABI at the exact donor's combo-HDMI call boundary.
 // Keep logical divisors separate from register encodings. Display WA
