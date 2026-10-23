@@ -10393,6 +10393,22 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 					patcher.clearError();
 				}
 				if (ready) tglPG1FuseReadCaller = fn + 0x2C7;
+				if (ready) {
+					// The donor checks the PG2 (bit 25) and PG3 (bit 24) fuse distribution status one
+					// microsecond after the power-state ACK, without any wait. Some TGL-H parts need longer
+					// and hit "PG2 power well fuse distribution failed". Locate each exact
+					// read -> bt sequence and give those reads the same bounded wait as PG1.
+					const uint8_t pre[] {0xBE,0x00,0x20,0x04,0x00,0xE8};
+					for (uint32_t off = 0x2C8; off + 14 <= 0x900 && tglPGFuseCount < arrsize(tglPGFuseCaller); ++off) {
+						auto q = reinterpret_cast<const uint8_t *>(fn + off);
+						if (!memcmp(q, pre, sizeof(pre)) && q[10] == 0x0F && q[11] == 0xBA && q[12] == 0xE0 && q[13] >= 0x10 && q[13] <= 0x1F) {
+							tglPGFuseCaller[tglPGFuseCount] = fn + off + 10;
+							tglPGFuseBit[tglPGFuseCount++] = q[13];
+						}
+					}
+					IORegistryEntry::getRegistryRoot()->setProperty("TGLPGFuseWaitSites", tglPGFuseCount, 32);
+					if (!tglPGFuseCount) SYSLOG("xe", "PG2/PG3 fuse wait sites not found; driver build differs from the expected one");
+				}
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLPG1PollReady", ready);
 			}
 			{
@@ -14256,6 +14272,17 @@ uint32_t XE::wrapTGLRegisterRead(void *access, unsigned long reg) {
  if(trace)tglTransitionRecord(35,true,access,reg,tglConnectionCaller(__builtin_return_address(0)),value);
 	const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
 	auto s = callbackXE;
+	if (reg == 0x42000 && s->tglPGFuseCount) {
+		for (uint32_t i = 0; i < s->tglPGFuseCount; ++i) {
+			if (caller != s->tglPGFuseCaller[i]) continue;
+			const uint32_t bit = 1U << s->tglPGFuseBit[i];
+			for (uint32_t waited = 0; !(value & bit) && waited < 1000; waited += 10) {
+				IODelay(10);
+				value = FunctionCast(wrapTGLRegisterRead, s->orgTGLRegisterRead)(access, reg);
+			}
+			break;
+		}
+	}
 	if (reg == 0x42000 && s->tglPG1FuseReadCaller && caller == s->tglPG1FuseReadCaller) {
 		// Exact donor PG1 fuse check, after its power-state ACK and 5us delay.
 		// Return only real hardware status. A missing bit still terminates;
