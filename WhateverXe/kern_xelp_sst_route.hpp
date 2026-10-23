@@ -14,12 +14,16 @@ struct Display12SSTRoute {
     bool valid() const {return transport!=Transport::None;}
     bool needsLease() const {return valid() && !panel;}
     bool retainComboAUX() const {return transport==Transport::Combo;}
-    uint32_t mainPowerMask(uint32_t pipe) const {
+    uint32_t lanePowerMask() const {return valid()?(1U<<(2*lanePG))-1:0;}
+    uint32_t powerGroup(uint32_t pipe) const {
         // Pipe A/B/C require PW1/PW3/PW4, independently of lane consumers.
         if(!valid() || pipe>=3)return 0;
         const uint32_t pipePG[]={1,3,4};
-        const auto pg=lanePG>pipePG[pipe]?lanePG:pipePG[pipe];
-        return (1U<<(2*pg))-1;
+        return lanePG>pipePG[pipe]?lanePG:pipePG[pipe];
+    }
+    uint32_t mainPowerMask(uint32_t pipe) const {
+        const auto pg=powerGroup(pipe);
+        return pg?(1U<<(2*pg))-1:0;
     }
 };
 

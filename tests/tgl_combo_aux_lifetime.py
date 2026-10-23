@@ -8,6 +8,7 @@ if len(sys.argv)>1:
  b=Path(sys.argv[1]).read_bytes();assert b[0x5fc56:0x5fc5f]==bytes.fromhex('554889e553504889fb');assert b[0x5fc6d:0x5fc73]==bytes.fromhex('8bb790050000')
 code=r'''
 #include "kern_alderlake_s.hpp"
+#include "kern_xelp_sst_route.hpp"
 #include <cassert>
 #include <map>
 #include <cstdio>

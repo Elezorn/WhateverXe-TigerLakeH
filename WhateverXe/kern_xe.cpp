@@ -14809,22 +14809,6 @@ uint32_t XE::wrapTGLAGDCAUX(void *controller, void *request, void *output) {
 		IORegistryEntry::getRegistryRoot()->setProperty(key, failure, sizeof(failure));
 	}
 	tglTrace(16, id, true, a, b, r, value);
-	// One read-only receiver-CRC capability probe after a successful late link
-	// status diagnostic. Reuse the native AGDC AUX entry and its exact request
-	// contract, outside IRQ context. Do not start a test or write sink state.
-	static uint32_t crcProbed {};
-	uint64_t uptime, ns;
-	clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, &ns);
-	if (!r && req && id == 5 && a == 0x200 && !req[13] && req[12] >= 8 &&
-		ns > 30000000000ULL && __sync_bool_compare_and_swap(&crcProbed, 0, 1)) {
-		uint8_t input[32] {}, out[32] {};
-		*reinterpret_cast<uint32_t *>(input) = 5;
-		*reinterpret_cast<uint32_t *>(input + 8) = 0x246;
-		input[12] = 1;
-		const auto result = FunctionCast(wrapTGLAGDCAUX, callbackXE->orgTGLAGDCAUX)(controller, input, out);
-		uint64_t record[] {ns, result, out[14], out[15], out[16], r};
-		IORegistryEntry::getRegistryRoot()->setProperty("TGLSinkCRCCapability", record, sizeof(record));
-	}
 	return r;
 }
 
@@ -14944,9 +14928,10 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 	auto s = callbackXE;
 	auto ctl = static_cast<uint8_t *>(controller);
 	auto port = static_cast<uint8_t *>(reinterpret_cast<void *(*)(uint32_t)>(s->tglPortByDDI)(lease.ddi));
-	if (!ctl || !port ||
-		*reinterpret_cast<void **>(ctl + 0xD40) != s->tglPlatformCopy ||
-		!s->tglDPSSTMode(lease.ddi,*reinterpret_cast<uint32_t *>(port + 0x550)) || port[0x117]) return 1;
+	if (!ctl || !port) return 1;
+	const auto route=s->tglSSTRoutes().external(lease.ddi,*reinterpret_cast<uint32_t *>(port + 0x550));
+	if (*reinterpret_cast<void **>(ctl + 0xD40) != s->tglPlatformCopy ||
+		!route.needsLease() || port[0x117]) return 1;
 	auto access = *reinterpret_cast<uint8_t **>(ctl + 0xC40);
 	auto power = *reinterpret_cast<void **>(ctl + 0xC8);
 	if (!access || !power || *reinterpret_cast<uint32_t *>(access + 0x60) < 0x16A000 ||
@@ -14992,8 +14977,9 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 	lease.path = path; lease.port = port; lease.fb = fb; lease.power = power;
 	lease.busy = true; lease.adopted = false; ++lease.generation;
 	lease.clocksActive = false; lease.endCleanupPending = false; lease.pipe = pipe;
-	// Same power-domain selection as native allocateDisplayPathResources.
-	lease.pg = pipe ? pipe + 2 : 1;
+	// Own both consumers. Pipe A alone needs PW1, but a TC-numbered lane
+	// still needs PW1..3 even when firmware/AUX/other displays hold no refs.
+	lease.pg = route.powerGroup(pipe);
 	static_cast<OSObject *>(lease.fb)->retain();
 	static_cast<OSObject *>(lease.port)->retain();
 	static_cast<OSObject *>(lease.power)->retain();
@@ -16573,7 +16559,10 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
 	const auto &panel=self->firmwarePorts.panel;
 	const bool adls=self->adlsDetected && self->adlsWiring.boundDP(self->tglPlatformCopy,config);
-    if(!config || *reinterpret_cast<uint32_t *>(p+0x550)!=1 || p[0x117])return false;
+    XELP::Display12SSTRoute route;
+    const XELP::Display12SSTRoutes routes{adls?self->adlsWiring.dp:0,0,0};
+    if(!config || !routes.resolve(config[0],config[2],*reinterpret_cast<uint32_t *>(p+0x550),route) ||
+        !route.retainComboAUX() || p[0x117])return false;
     if(!adls && (config[0]>1 || config[2]!=0 || config[3]!=0 ||
         !panel.valid || panel.ddi!=config[0] || (self->firmwarePorts.port[config[0]].flags&0x17)))return false;
 	auto access=*reinterpret_cast<uint8_t **>(p+0x578);
@@ -16592,7 +16581,7 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	const auto main=wrapTGLRegisterRead(access,0x45404);
 	const auto io=wrapTGLRegisterRead(access,0x45454);
 	const uint32_t ioMask=3U<<(2*config[0]);
-	const uint32_t mainMask=adls && config[0]>=3?0x3FU:3U;
+	const uint32_t mainMask=route.lanePowerMask();
 	if(main==~0U || io==~0U || (main&mainMask)!=mainMask || (io&ioMask)!=ioMask)return false;
 	const auto read=[&](uint32_t reg){return wrapTGLRegisterRead(access,reg);};
 	const auto write=[&](uint32_t reg,uint32_t value){wrapTGLRegisterWrite(access,reg,value);};
@@ -16939,7 +16928,10 @@ void XE::tglComboAUXReference(void *port,bool acquire) {
 		!*reinterpret_cast<void **>(access+0x50))return;
 	const uint32_t buffer=0x64000+0x100*ddi,mask=3U<<(2*ddi);
 	if(*reinterpret_cast<uint32_t *>(p+0x590)!=buffer)return;
-	if(acquire && (config[3]!=0 || p[0x117] || *reinterpret_cast<uint32_t *>(p+0x550)!=1 ||
+    XELP::Display12SSTRoute route;
+    const XELP::Display12SSTRoutes routes{adls?s->adlsWiring.dp:0,0,0};
+	if(acquire && (config[3]!=0 || p[0x117] ||
+        !routes.resolve(ddi,config[2],*reinterpret_cast<uint32_t *>(p+0x550),route) || !route.retainComboAUX() ||
         !s->firmwarePorts.valid() || !(s->firmwarePorts.present&(1U<<ddi)) ||
         !s->firmwarePorts.port[ddi].dp() ||
         (!adls && (config[2]!=0 || !s->firmwarePorts.port[ddi].internal()))))return;

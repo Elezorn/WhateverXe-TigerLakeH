@@ -101,7 +101,8 @@ void freePath(void *p) {
  }
  assert(false);
 }
-void enablePG(void *p, uint32_t pg) { std::lock_guard<std::mutex> lock(refLock); assert(p==power.data() && pg<8); ++pgRefs[pg]; }
+unsigned expectedPG=0;
+void enablePG(void *p, uint32_t pg) { std::lock_guard<std::mutex> lock(refLock); assert(p==power.data() && pg<8); if(expectedPG)assert(pg==expectedPG); ++pgRefs[pg]; }
 void disablePG(void *p, uint32_t pg) { std::lock_guard<std::mutex> lock(refLock); assert(p==power.data() && pg<8 && pgRefs[pg]>0); --pgRefs[pg]; if (protectOnPowerDrop && pgRefs[pg]==0) assert(mprotect(protectedMMIO, sizeof(mmio), PROT_NONE)==0); }
 uint32_t disablePort(void *p) {
  ++portDisables;
@@ -456,6 +457,24 @@ int main(int argc, char **argv) {
  }while(std::next_permutation(outs,outs+3));}while(std::next_permutation(ins,ins+3));
  assert(comboOrders==36);
  std::puts("PASS ADL-S Combo A/B/C: 36 three-port allocation/teardown orders using the shared lease implementation");
+ // Each reservation must own the union of lane and pipe domains itself.
+ // No inherited GOP/AUX refs or another monitor are available to mask a gap.
+ unsigned powerCases=0;
+ for(unsigned mode:{1u,3u,4u})for(unsigned d=0;d<9;++d)for(unsigned pipe=0;pipe<3;++pipe){
+  if(mode==1 ? (d!=0 && d!=3 && d!=4) : d<3)continue;
+  setup();
+  if(mode==1){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.adlsDetected=true;obj.adlsWiring.valid=true;obj.adlsWiring.dp=1U<<d;}
+  if(mode==3){obj.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);obj.tglDPAltCandidates=1U<<d;}
+  ports[d].at<uint32_t>(0x550)=mode;
+  for(unsigned i=0;i<pipe;++i)used[i]=true;
+  expectedPG=pipe==2?4:(pipe==1 || d>=3?3:1);
+  auto &lease=reserve(d);assert(lease.pipe==pipe&&lease.pg==expectedPG);
+  release(d);expectedPG=0;
+  for(unsigned i=0;i<pipe;++i)used[i]=false;
+  clean();++powerCases;
+ }
+ assert(powerCases==45);
+ std::puts("PASS 45 Combo/legacy/DP-alt port x pipe power unions without inherited refs");
  // Nested and concurrent training must not unmute another invocation.
  TGLTrainingScopes scopes;
  auto one=scopes.enter(1), nested=scopes.enter(1), two=scopes.enter(2);

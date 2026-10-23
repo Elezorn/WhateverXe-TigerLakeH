@@ -13,6 +13,7 @@ if len(sys.argv)>1:
   assert b[at:at+len(expected)]==expected
 code=r'''
 #include "kern_alderlake_s.hpp"
+#include "kern_xelp_sst_route.hpp"
 #include "kern_tgl_combo_signal.hpp"
 #include <cassert>
 #include <map>
