@@ -206,6 +206,50 @@ struct NativeBridge {
 
 };
 
+// Linux main_link_aux_power_domain_get/put: an active Combo DP link retains
+// AUX independently of the donor's per-transaction AUX counters. Caller holds
+// the bridge owner lock and retains the port object while owner is nonzero.
+// TC has additional ownership/health contracts and is not admitted here.
+struct MainLinkAUX {
+    Lease lease;
+    uintptr_t owner {};
+    unsigned port {UINT32_MAX};
+    template<class IO> Result begin(IO &io,NativeBridge &b,uintptr_t target,unsigned ddi) {
+        Result r;
+        if(!target || ddi>=2 || !b.ddiHeld(io,ddi))return r;
+        if(owner) {
+            if(owner==target && port==ddi && lease.owner==&b.state &&
+               lease.domains==dependencies(auxDomain(ddi)) && held(io,b.state,lease.domains))r.status=Status::Complete;
+            return r;
+        }
+        uint32_t buffer;
+        if(lease.owner || !valid(io,0x64000+0x100*ddi,buffer) || (buffer&0x80000000U))return r;
+        r=acquire(io,b.state,lease,auxDomain(ddi));
+        if(r.status==Status::Complete){owner=target;port=ddi;}
+        return r;
+    }
+    template<class IO> Result end(IO &io,NativeBridge &b,uintptr_t target,unsigned ddi) {
+        Result r;
+        if(!target || ddi>=2)return r;
+        if(!owner && !lease.owner){r.status=Status::Complete;return r;}
+        if(owner!=target || port!=ddi || lease.owner!=&b.state || lease.domains!=dependencies(auxDomain(ddi)) ||
+           !b.ddiHeld(io,ddi) || !held(io,b.state,lease.domains))return r;
+        // A real DDI lease also retains PW1, so this release cannot remove
+        // display/IRQ power; only AUX may be the final physical consumer.
+        // A partial enable/disable failure must keep both owner and lease.
+        for(unsigned us=0;;++us) {
+            uint32_t buffer;
+            if(!valid(io,0x64000+0x100*ddi,buffer) || (buffer&0x80000000U))return r;
+            if(buffer&0x80)break;
+            if(us==8){r.status=Status::StateTimeout;return r;}
+            io.delayUs(1);
+        }
+        r=release(io,b.state,lease);
+        if(r.status==Status::Complete){owner=0;port=UINT32_MAX;}
+        return r;
+    }
+};
+
 // Native object layout for this donor only. The kernel route additionally
 // checks exact image/prologues and the controller's physical PCI identity.
 // Validate CPU associations before any bridge begin/MMIO operation.

@@ -8,7 +8,10 @@
 #include "kern_tgl_combo_signal.hpp"
 #include "kern_xelp_sst_program.hpp"
 // NATIVE_OBJECTS
-struct OSObject {unsigned size;const OSObject *getMetaClass() const{return this;}unsigned getClassSize() const{return size;}};
+std::map<void *,unsigned> objectRefs;
+extern bool locked;
+struct OSObject {unsigned size;const OSObject *getMetaClass() const{return this;}unsigned getClassSize() const{return size;}
+ void retain(){assert(locked);++objectRefs[this];}void release(){assert(!locked&&objectRefs[this]);if(!--objectRefs[this])objectRefs.erase(this);}};
 struct IOService:OSObject {};
 constexpr unsigned kIOReturnNotReady=0xE00002D8;
 #define FunctionCast(fn,ptr) reinterpret_cast<decltype(&fn)>(ptr)
@@ -17,7 +20,7 @@ void IOLockLock(void*){assert(!locked);locked=true;}void IOLockUnlock(void*){ass
 struct Map {
  std::map<uint32_t,uint32_t> regs;
  std::vector<uint32_t> reads,writes;
- uint32_t base=0,drop=0;
+ uint32_t base=0,drop=0,delay=0,idleAfter=0,idleReg=0;
  Map():regs{{0x45404,0},{0x45454,0},{0x45444,0},{0x42000,0x8E380000}}{}
  uint32_t read(uint32_t reg){reads.push_back(reg);return regs.at(reg);}
  void write(uint32_t reg,uint32_t v){writes.push_back(reg);if(reg==drop)return;
@@ -29,11 +32,12 @@ struct Map {
 };
 struct Context {
  Display13Power::NativeBridge bridge;void *lock=reinterpret_cast<void *>(1),*controller=nullptr,*access=nullptr;
+ Display13Power::MainLinkAUX mainLink[2];alignas(void *) uint8_t powerBytes[0x80]{};void *power=powerBytes;
  Map *map=nullptr;bool clockFaulted=false,memoryFaulted=false,clockStopped=false;
 }display13FBPower;
 struct Display13FBPowerIO {
  Map *map;bool readable(uint32_t r){return map&&map->regs.count(r);}uint32_t read(uint32_t r){return map->read(r);}
- void write(uint32_t r,uint32_t v){map->write(r,v);}void delayUs(unsigned){}
+ void write(uint32_t r,uint32_t v){map->write(r,v);}void delayUs(unsigned us){map->delay+=us;if(map->idleReg&&map->delay>=map->idleAfter)map->regs.at(map->idleReg)|=0x80;}
 };
 struct Display13FBSSTIO {
  Map *map;uint32_t read(uint32_t r){assert(locked);return map->read(r);}
@@ -45,6 +49,9 @@ struct XE {
  bool adlnDetected=true,display13FBSSTHooksReady=true;XELP::Profile xeProfile;
  Display13OutputWiring adlnOutputWiring;void *adlnPlatform=nullptr,*adlnTopologyController=nullptr;
  uintptr_t orgDisplay13TrainingPattern=0,orgDisplay13SignalLevels=0;
+ uintptr_t orgDisplay13EnablePort=0,orgDisplay13DisablePort=0;
+ static bool display13MainLinkAUX(void*,bool);
+ static uint32_t wrapDisplay13EnablePort(void*);static uint32_t wrapDisplay13DisablePort(void*);
  static uint8_t *display13SSTPort(void*);static bool display13HDMIPort(void*);
  static uint32_t wrapDisplay13SignalLevels(void*,uint32_t,uint32_t,void*);
  static uint32_t wrapDisplay13TrainingPattern(void*,uint32_t);
@@ -52,10 +59,37 @@ struct XE {
 // BINDING
 // FUNCTIONS
 unsigned nativeSignal(void*,unsigned,unsigned,void*){assert(!locked);++calls;return nativeResult;}
+unsigned linkCalls=0,linkResult=0;bool changeBuffer=true,bufferIdle=true,loseLinkPower=false;
+unsigned (*realEnable)(void*)=nullptr,(*realDisable)(void*)=nullptr;void *currentPath=nullptr;unsigned portReplays=0;
+unsigned nativeEnable(void *port){assert(!locked);++linkCalls;
+ auto &c=display13FBPower;const auto ddi=Display13FBMemory::field<unsigned>(port,0x120);
+ Display13FBPowerIO io{c.map};assert(Display13Power::held(io,c.bridge.state,Display13Power::auxDomain(ddi)));
+ unsigned result=linkResult;
+ if(realEnable&&changeBuffer&&!linkResult){++portReplays;result=realEnable(port);}
+ else if(changeBuffer)c.map->regs.at(0x64000+0x100*ddi)=0x80000000;
+ if(loseLinkPower)c.map->regs.at(0x45444)=0;
+ return result;}
+unsigned nativeDisable(void *port){assert(!locked);++linkCalls;
+ const auto ddi=Display13FBMemory::field<unsigned>(port,0x120);
+ if(realDisable&&changeBuffer&&!linkResult){++portReplays;return realDisable(port);}
+ if(changeBuffer)display13FBPower.map->regs.at(0x64000+0x100*ddi)=bufferIdle?0x80:0;return linkResult;}
 uint32_t (*realPattern)(void *,uint32_t)=nullptr;
 void nativeWrite(void *access,uint64_t reg,uint32_t value){
  assert(!locked&&access==display13FBPower.access);display13FBPower.map->write(static_cast<uint32_t>(reg),value);
 }
+unsigned nativeRead(void *access,uint64_t reg){assert(!locked&&access==display13FBPower.access);return display13FBPower.map->read(static_cast<uint32_t>(reg));}
+unsigned portRead(void *port,uint32_t reg){assert(!locked&&reg==Display13FBMemory::field<unsigned>(port,0x590));return display13FBPower.map->read(reg);}
+void portWrite(void *port,uint32_t reg,uint32_t value){
+ assert(!locked&&reg==Display13FBMemory::field<unsigned>(port,0x590));
+ // Hardware model: DDI buffer enable clears idle; stop may acknowledge late.
+ value=(value&~0x80U)|(!(value&0x80000000U)&&bufferIdle?0x80U:0);
+ display13FBPower.map->write(reg,value);
+}
+void *firstPath(void *port){return Display13FBMemory::field<void *>(currentPath,0x3648)==port?currentPath:nullptr;}
+void nativeDelay(unsigned us){assert(us==5||us==8);}
+void nativeLog(const char*,...){}
+void jump(uint8_t *to,uintptr_t target){to[0]=0x48;to[1]=0xB8;memcpy(to+2,&target,8);to[10]=0xFF;to[11]=0xE0;}
+void redirect(uint8_t *image,unsigned at,unsigned stub,uintptr_t target){assert(image[at]==0xE8);jump(image+stub,target);const int32_t displacement=static_cast<int32_t>(stub-at-5);memcpy(image+at+1,&displacement,4);}
 unsigned nativePattern(void *path,unsigned pattern){
  assert(!locked);++calls;
  const auto pipe=Display13FBMemory::field<unsigned>(path,0x3640);
@@ -69,17 +103,22 @@ unsigned nativePattern(void *path,unsigned pattern){
 }
 void setup(Fixture &f,Map &map,unsigned ddi,unsigned pipe,unsigned lanes,unsigned rate){
  display13FBPower.~Context();new(&display13FBPower)Context;state={};calls=nativeResult=0;bound=true;loseAfterNative=false;
+ assert(objectRefs.empty());linkCalls=linkResult=0;changeBuffer=bufferIdle=true;loseLinkPower=false;
  auto &c=display13FBPower;c.controller=f.ctl;c.access=f.access;c.map=&map;
+ currentPath=f.path;
+ put(f.ctl,0xC8,c.power);put(c.power,0x10,static_cast<void *>(f.ctl));put(c.power,0x78,static_cast<void *>(f.access));
  f.wiring.hdmi=1U<<(1-ddi);f.wiring.dp=1U<<ddi;for(unsigned d=0;d<3;++d)f.wiring.ddc[d]=(f.wiring.hdmi&(1U<<d))?d+1:0;
  assert(Display13FBTopology::apply(f.platform,sizeof(f.platform),f.donor,f.wiring));
  state.adlnOutputWiring=f.wiring;state.adlnPlatform=f.platform;state.adlnTopologyController=f.ctl;state.xeProfile.display=XELP::Display::XeLPD;
  state.orgDisplay13TrainingPattern=reinterpret_cast<uintptr_t>(nativePattern);state.orgDisplay13SignalLevels=reinterpret_cast<uintptr_t>(nativeSignal);
+ state.orgDisplay13EnablePort=reinterpret_cast<uintptr_t>(nativeEnable);state.orgDisplay13DisablePort=reinterpret_cast<uintptr_t>(nativeDisable);
  static uintptr_t vtable[64]{};vtable[0x130/8]=reinterpret_cast<uintptr_t>(nativeWrite);put(f.access,0,static_cast<void *>(vtable));
  put(f.ctl,0,unsigned(sizeof(f.ctl)));put(f.fb,0,unsigned(sizeof(f.fb)));put(f.path,0,unsigned(sizeof(f.path)));
  put(f.plane,0,unsigned(sizeof(f.plane)));put(f.port,0,unsigned(sizeof(f.port)));
  put(f.port,0x578,static_cast<void *>(f.access));put(f.port,0x550,1U);put(f.port,0x124,lanes);put(f.port,0x128,rate);f.port[0x11A]=1;
  map.base=ddi?0x6C000:0x162000;
  put(f.port,0x620,map.base+0x804);put(f.port,0x5C8,map.base+0x28);put(f.access,0x60,0x200000U);
+ put(f.port,0x590,0x64000+0x100*ddi);
  for(auto reg:{0x804U,0x14U,0x28U,0x894U,0x604U,0x694U})map.regs[map.base+reg]=0;
  for(unsigned n=0;n<4;++n)for(auto reg:{0x888U,0x890U,0x894U,0x89CU})map.regs[map.base+0x100*n+reg]=0;
  map.regs[0x46140+4*pipe]=0;map.regs[0x60400+0x1000*pipe]=0;map.regs[0x64000+0x100*ddi]=0;map.regs[0x60540+0x1000*pipe]=0;
@@ -100,6 +139,13 @@ int main(int argc,char **argv){
   assert(!bytes.empty()&&bytes.size()<0x400000);
   image=static_cast<uint8_t *>(mmap(nullptr,0x400000,PROT_READ|PROT_WRITE|PROT_EXEC,MAP_ANON|MAP_PRIVATE,-1,0));assert(image!=MAP_FAILED);
   memcpy(image,bytes.data(),bytes.size());realPattern=reinterpret_cast<decltype(realPattern)>(image+0x955B8);
+  realEnable=reinterpret_cast<decltype(realEnable)>(image+0x5F9F4);realDisable=reinterpret_cast<decltype(realDisable)>(image+0x5FC56);
+  assert(Display13FBMemory::field<uint64_t>(image,0xC95A0)==0x1B446&&Display13FBMemory::field<uint64_t>(image,0xC95A8)==0x1B456);
+  put(image,0xC95A0,reinterpret_cast<uintptr_t>(image+0x1B446));put(image,0xC95A8,reinterpret_cast<uintptr_t>(image+0x1B456));
+  jump(image+0x1FE8E,reinterpret_cast<uintptr_t>(portRead));jump(image+0x1FEA8,reinterpret_cast<uintptr_t>(portWrite));
+  jump(image+0x5E344,reinterpret_cast<uintptr_t>(nativeRead));jump(image+0x91BCA,reinterpret_cast<uintptr_t>(firstPath));
+  for(unsigned at:{0x5FA33U,0x5FAC4U,0x5FBEBU,0x5FC4EU})redirect(image,at,0x300000,reinterpret_cast<uintptr_t>(nativeLog));
+  for(unsigned at:{0x5FBCBU,0x5FC99U})redirect(image,at,0x300020,reinterpret_cast<uintptr_t>(nativeDelay));
  }
  unsigned count=0,replays=0;
  for(unsigned ddi=0;ddi<2;++ddi)for(unsigned pipe=0;pipe<3;++pipe)for(unsigned lanes:{1U,2U,4U})
@@ -128,6 +174,17 @@ int main(int argc,char **argv){
   }
   const auto completedCalls=calls;
   Display13FBPowerIO io{&map};using Display13Power::Status;
+  auto &bridge=display13FBPower.bridge;const auto auxIndex=ddi?6:8;
+  assert(!XE::wrapDisplay13EnablePort(f.port)&&linkCalls==1&&objectRefs[f.port]==1);
+  assert(bridge.state.refs[auxIndex]==1&&!bridge.nativeAUXRefs(ddi));
+  assert(!XE::wrapDisplay13EnablePort(f.port)&&linkCalls==2&&objectRefs[f.port]==1&&bridge.state.refs[auxIndex]==1);
+  // Transactions retain/release their own lease while the link stays active.
+  for(unsigned transaction=0;transaction<3;++transaction){
+   assert(bridge.getAUX(io,ddi).status==Status::Complete&&bridge.state.refs[auxIndex]==2);
+   assert(bridge.putAUX(io,ddi).status==Status::Complete&&bridge.state.refs[auxIndex]==1);
+   assert(map.regs[0x45444]&(ddi?8:2));
+  }
+  assert(!XE::wrapDisplay13DisablePort(f.port)&&linkCalls==3&&objectRefs.empty()&&!bridge.state.refs[auxIndex]);
   assert(display13FBPower.bridge.putDDI(io,ddi).status==Status::Complete);
   assert(display13FBPower.bridge.putPG(io,pipe?pipe+2:1).status==Status::Complete);
   for(auto refs:display13FBPower.bridge.state.refs)assert(!refs);
@@ -177,6 +234,65 @@ int main(int argc,char **argv){
  {Fixture f(2,0,0);Map map;setup(f,map,0,0,2,10);put(f.port,0x548,static_cast<void *>(f.platform+0x38));nativeResult=17;
   assert(XE::wrapDisplay13SignalLevels(f.port,0,0,nullptr)==17&&calls==1);
   assert(XE::wrapDisplay13TrainingPattern(f.path,1)==17&&calls==2&&map.writes.empty());}
+ // Partial enable keeps AUX until a real stop; failure before enabling can
+ // unwind immediately. Late idle succeeds; absent idle retains the owner.
+ for(unsigned ddi=0;ddi<2;++ddi)for(unsigned fault=0;fault<6;++fault){
+  Fixture f(0,0,ddi);Map map;setup(f,map,ddi,0,2,10);auto &c=display13FBPower;const auto buffer=0x64000+0x100*ddi;
+  if(fault<2){linkResult=42;changeBuffer=fault==0;map.regs[buffer]=0x80;
+   assert(XE::wrapDisplay13EnablePort(f.port)==42&&linkCalls==1);
+   assert(bool(c.mainLink[ddi].owner)==(fault==0));}
+  else {
+   assert(!XE::wrapDisplay13EnablePort(f.port));
+   if(fault==2){bufferIdle=false;map.idleReg=buffer;map.idleAfter=4;}
+   if(fault==3)bufferIdle=false;
+   if(fault==4)changeBuffer=false;
+   if(fault==5)linkResult=42;
+   const auto result=XE::wrapDisplay13DisablePort(f.port);
+   assert(result==(fault==3||fault==4?kIOReturnNotReady:fault==5?42:0));
+   assert(bool(c.mainLink[ddi].owner)==(fault==3||fault==4));
+   if(fault==2)assert(map.delay==4);if(fault==3)assert(map.delay==8);
+  }
+  changeBuffer=bufferIdle=true;linkResult=0;
+  if(c.mainLink[ddi].owner)assert(!XE::wrapDisplay13DisablePort(f.port));
+  assert(objectRefs.empty()&&!c.mainLink[ddi].owner);
+ }
+ // Alien power owner/bank/record must never acquire a main-link reference.
+ for(unsigned fault=0;fault<6;++fault){
+  Fixture f(0,0,0);Map map;setup(f,map,0,0,4,20);auto &c=display13FBPower;
+  if(fault==0)put(f.ctl,0xC8,static_cast<void *>(f.port));
+  if(fault==1)put(c.power,0x10,static_cast<void *>(f.port));
+  if(fault==2)put(c.power,0x78,static_cast<void *>(f.port));
+  if(fault==3)put(f.port,0x590,0x64100U);
+  if(fault==4)map.regs[0x64000]=0x80000000;
+  if(fault==5)map.regs[0x64000]=~0U;
+  assert(XE::wrapDisplay13EnablePort(f.port)==kIOReturnNotReady&&!linkCalls&&objectRefs.empty()&&map.writes.empty());
+ }
+ // A native success with a lost AUX request is not a successful enable.
+ {Fixture f(0,0,0);Map map;setup(f,map,0,0,4,20);loseLinkPower=true;
+  assert(XE::wrapDisplay13EnablePort(f.port)==kIOReturnNotReady&&linkCalls==1&&objectRefs[f.port]==1);
+  assert(display13FBPower.mainLink[0].owner==reinterpret_cast<uintptr_t>(f.port));
+  loseLinkPower=false;map.regs[0x45444]=3;
+  assert(!XE::wrapDisplay13DisablePort(f.port)&&objectRefs.empty());}
+ // Two live Combo DP links share PW1, but neither owns the other's AUX.
+ for(unsigned first=0;first<2;++first){
+  Fixture f(0,0,0);Map map;setup(f,map,0,0,4,20);auto &c=display13FBPower;Display13FBPowerIO io{&map};
+  state.adlnOutputWiring.hdmi=0;state.adlnOutputWiring.dp=3;
+  for(auto &pin:state.adlnOutputWiring.ddc)pin=0;
+  assert(Display13FBTopology::apply(f.platform,sizeof(f.platform),f.donor,state.adlnOutputWiring));
+  alignas(void *) uint8_t peer[sizeof(f.port)];memcpy(peer,f.port,sizeof(peer));
+  put(peer,0x120,1U);put(peer,0x548,static_cast<void *>(f.platform+0x38));put(peer,0x590,0x64100U);map.regs[0x64100]=0x80;
+  using Display13Power::Status;assert(c.bridge.getDDI(io,1).status==Status::Complete);
+  void *ports[]={f.port,peer};
+  assert(!XE::wrapDisplay13EnablePort(ports[0])&&!XE::wrapDisplay13EnablePort(ports[1]));
+  assert(c.bridge.state.refs[8]==1&&c.bridge.state.refs[6]==1&&objectRefs.size()==2);
+  assert(!XE::wrapDisplay13DisablePort(ports[first])&&c.bridge.putDDI(io,first).status==Status::Complete);
+  const auto survivor=1-first;
+  assert(c.mainLink[survivor].owner==reinterpret_cast<uintptr_t>(ports[survivor]));
+  assert(map.regs[0x45444]&(survivor?8:2));
+  assert(c.bridge.getAUX(io,survivor).status==Status::Complete&&c.bridge.putAUX(io,survivor).status==Status::Complete);
+  assert(!XE::wrapDisplay13DisablePort(ports[survivor])&&objectRefs.empty());
+ }
  printf("PASS production Display13 signal/SST: %u compositions after peer release, 39 admission/power/MMIO faults, native error/power-loss/HDMI preservation\n",count);
- if(image){munmap(image,0x400000);printf("PASS %u exact native pattern/framing calls and unmodified donor counterexamples\n",replays);}
+ puts("PASS main-link AUX: transaction independence, 720 repeated-enable/stop cycles, partial failure/idle timeout/foreign owner guards");
+ if(image){munmap(image,0x400000);printf("PASS %u exact native pattern/framing calls and unmodified donor counterexamples; %u native port enable/disable calls\n",replays,portReplays);}
 }

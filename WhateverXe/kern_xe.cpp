@@ -4260,6 +4260,7 @@ struct Display13FBPipeContext {
 struct Display13FBPowerContext {
     Display13FBPipeContext pipe[3];
     Display13Power::NativeBridge bridge;
+    Display13Power::MainLinkAUX mainLink[2];
     Display13Power::Lease engine;
     Display13DBUF::State dbuf;
     Display13WM::Latency latency;
@@ -6085,10 +6086,17 @@ bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach
  const uint8_t signalEntry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec};
  const uint8_t pcsABI[]={0x8b,0xb3,0x20,0x06,0x00,0x00},lanesABI[]={0x8b,0xb3,0xc8,0x05,0x00,0x00};
  const uint8_t successABI[]={0x31,0xc0,0x48,0x83,0xc4,0x28};
+ const char *enable="__ZN17AppleIntelPortHAL10enablePortEv",*disable="__ZN17AppleIntelPortHAL11disablePortEv";
+ const uint8_t enableEntry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x53,0x50,0x49,0x89,0xff};
+ const uint8_t disableEntry[]={0x55,0x48,0x89,0xe5,0x53,0x50,0x48,0x89,0xfb};
  if(!adlnDetected || !display13FBABIReady || !display13FBPowerReferencesReady || size<0x955C8)return false;
  const auto p=patcher.solveSymbol<mach_vm_address_t>(index,pattern,address,size);patcher.clearError();
  const auto s=patcher.solveSymbol<mach_vm_address_t>(index,signal,address,size);patcher.clearError();
- if(p!=address+0x955B8 || s!=address+0x60AE0 ||
+ const auto e=patcher.solveSymbol<mach_vm_address_t>(index,enable,address,size);patcher.clearError();
+ const auto d=patcher.solveSymbol<mach_vm_address_t>(index,disable,address,size);patcher.clearError();
+ if(p!=address+0x955B8 || s!=address+0x60AE0 || e!=address+0x5F9F4 || d!=address+0x5FC56 ||
+    memcmp(reinterpret_cast<void *>(e),enableEntry,sizeof(enableEntry)) ||
+    memcmp(reinterpret_cast<void *>(d),disableEntry,sizeof(disableEntry)) ||
     memcmp(reinterpret_cast<void *>(p),patternEntry,sizeof(patternEntry)) ||
     memcmp(reinterpret_cast<void *>(s),signalEntry,sizeof(signalEntry)) ||
     memcmp(reinterpret_cast<void *>(address+0x60EB9),pcsABI,sizeof(pcsABI)) ||
@@ -6096,7 +6104,9 @@ bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach
     memcmp(reinterpret_cast<void *>(address+0x61478),successABI,sizeof(successABI)))return false;
  KernelPatcher::RouteRequest routes[] {
   {pattern,wrapDisplay13TrainingPattern,orgDisplay13TrainingPattern},
-  {signal,wrapDisplay13SignalLevels,orgDisplay13SignalLevels}
+  {signal,wrapDisplay13SignalLevels,orgDisplay13SignalLevels},
+  {enable,wrapDisplay13EnablePort,orgDisplay13EnablePort},
+  {disable,wrapDisplay13DisablePort,orgDisplay13DisablePort}
  };
  display13FBSSTHooksReady=patcher.routeMultiple(index,routes,arrsize(routes),address,size);patcher.clearError();
  return display13FBSSTHooksReady;
@@ -6123,6 +6133,48 @@ bool XE::display13HDMIPort(void *port) {
  if(!object || object->getMetaClass()->getClassSize()<0x580)return false;
  auto config=Display13FBMemory::field<uint32_t *>(port,0x548);
  return Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring) && s->adlnOutputWiring.matchesHDMI(config);
+}
+
+bool XE::display13MainLinkAUX(void *port,bool acquire) {
+ auto &c=display13FBPower;if(!c.lock)return false;
+ OSObject *retired=nullptr;bool ok=false;IOLockLock(c.lock);
+ auto p=display13SSTPort(port);
+ if(p && Display13Power::objectAssociations(c.power,0x80,c.controller,0xC60) &&
+    Display13FBMemory::field<void *>(c.power,0x10)==c.controller &&
+    Display13FBMemory::field<void *>(c.power,0x78)==c.access) {
+  const auto ddi=Display13FBMemory::field<uint32_t>(p,0x120);
+  if(ddi<2 && Display13FBMemory::field<uint32_t>(p,0x590)==0x64000+0x100*ddi) {
+   auto &link=c.mainLink[ddi];const auto previous=link.owner;Display13FBPowerIO io{c.map};
+   const auto result=acquire ? link.begin(io,c.bridge,reinterpret_cast<uintptr_t>(port),ddi) :
+       link.end(io,c.bridge,reinterpret_cast<uintptr_t>(port),ddi);
+   ok=result.status==Display13Power::Status::Complete;
+   if(!previous && link.owner)static_cast<OSObject *>(port)->retain();
+   if(previous && !link.owner)retired=reinterpret_cast<OSObject *>(previous);
+  }
+ }
+ IOLockUnlock(c.lock);
+ if(retired)retired->release(); // A destructor must not run under the owner lock.
+ return ok;
+}
+
+uint32_t XE::wrapDisplay13EnablePort(void *port) {
+ auto s=callbackXE;
+ if(!s->adlnOutputWiring.dp || display13HDMIPort(port))
+  return FunctionCast(wrapDisplay13EnablePort,s->orgDisplay13EnablePort)(port);
+ if(!display13MainLinkAUX(port,true))return kIOReturnNotReady;
+ const auto result=FunctionCast(wrapDisplay13EnablePort,s->orgDisplay13EnablePort)(port);
+ if(result)display13MainLinkAUX(port,false); // Retain AUX if partial enable left the buffer active.
+ return result ? result : display13MainLinkAUX(port,true) ? 0 : kIOReturnNotReady;
+}
+
+uint32_t XE::wrapDisplay13DisablePort(void *port) {
+ auto s=callbackXE;
+ if(!s->adlnOutputWiring.dp || display13HDMIPort(port))
+  return FunctionCast(wrapDisplay13DisablePort,s->orgDisplay13DisablePort)(port);
+ if(!display13MainLinkAUX(port,true))return kIOReturnNotReady;
+ const auto result=FunctionCast(wrapDisplay13DisablePort,s->orgDisplay13DisablePort)(port);
+ const bool released=display13MainLinkAUX(port,false);
+ return result ? result : released ? 0 : kIOReturnNotReady;
 }
 
 uint32_t XE::wrapDisplay13SignalLevels(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig) {

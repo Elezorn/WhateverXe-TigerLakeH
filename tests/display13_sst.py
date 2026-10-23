@@ -4,7 +4,8 @@ from pathlib import Path
 import hashlib,re,subprocess,sys,tempfile
 r=Path(__file__).resolve().parents[1];s=(r/'WhateverXe/kern_xe.cpp').read_text()
 functions='\n'.join(re.search(re.escape(sig)+r'.*?\n\}',s,re.S).group() for sig in [
- 'uint8_t *XE::display13SSTPort(', 'bool XE::display13HDMIPort(',
+ 'uint8_t *XE::display13SSTPort(', 'bool XE::display13HDMIPort(', 'bool XE::display13MainLinkAUX(',
+ 'uint32_t XE::wrapDisplay13EnablePort(', 'uint32_t XE::wrapDisplay13DisablePort(',
  'uint32_t XE::wrapDisplay13SignalLevels(', 'uint32_t XE::wrapDisplay13TrainingPattern('])
 binding=re.search(r'static TGLFBBinding::Readout adlnInspectPathBinding\(.*?\n\}',s,re.S).group()
 fixture=(r/'tests/tgl_fb_binding.cpp').read_text().split('int main()')[0]
@@ -13,7 +14,7 @@ code=(r/'tests/display13_sst_fixture.cpp').read_text().replace('// NATIVE_OBJECT
 if len(sys.argv)>1:
  b=Path(sys.argv[1]).read_bytes();assert hashlib.sha256(b).hexdigest()=='c004fc1ac9ee4157e2e12736f40fa6639bde025a279326beeb9dd48c9b445731'
  install=s[s.index('bool XE::processDisplay13FramebufferSST('):s.index('uint8_t *XE::display13SSTPort(')]
- for name,offset in [('patternEntry',0x955b8),('signalEntry',0x60ae0),('pcsABI',0x60eb9),('lanesABI',0x61468),('successABI',0x61478)]:
+ for name,offset in [('patternEntry',0x955b8),('signalEntry',0x60ae0),('enableEntry',0x5f9f4),('disableEntry',0x5fc56),('pcsABI',0x60eb9),('lanesABI',0x61468),('successABI',0x61478)]:
   a=re.search(name+r'\[\]=\{([^}]+)\}',install).group(1);v=bytes(int(x,0) for x in a.split(','))
   assert b[offset:offset+len(v)]==v
  print('PASS exact donor Display13 SST hook and Combo register-field preflight')
