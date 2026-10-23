@@ -159,7 +159,7 @@ template<class IO> DisplayReadout readDisplay(IO &io, bool admitted) {
     if (r.status != ReadoutStatus::Complete) return r;
     // Always-on / PW1 display state, including BIOS and DDI I/O ownership.
     const uint32_t common[] {0x45400, 0x45408, 0x4540C, 0x45450, 0x45454, 0x4545C,
-        0x45420, 0x45424, 0x42000, 0x42084,
+        0x45420, 0x45424, 0x45444, 0x42000, 0x42084,
         0x44300, 0x4438C, 0x45008, 0x4500C, 0x45010, 0x45014,
         0x46000, 0x46004, 0x164280, 0x164284, 0x164288, 0x16428C,
         0x64000, 0x64100, 0x64200};
@@ -228,9 +228,25 @@ inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi) {
         dn && !(dn&0xFF000000U) && lm && !(lm&0xFF000000U) && ln && !(ln&0xFF000000U) &&
         (dm&0xFFFFFF)<=dn;
 }
+enum class GOPProtocol : uint32_t {TMDS,DP};
+// Source and power must remain unchanged while only the plane is reinitialized.
+// This is an early, serialized bootstrap transaction, not a modeset or link
+// adoption certificate. A changed link stops further writes, including rollback.
+template<class IO> bool dpSourceUnchanged(IO &io,const DisplayReadout &r,unsigned pipe,unsigned ddi) {
+    if(pipe>=3 || ddi>=2)return false;
+    const uint32_t bank=pipe*0x1000;
+    const uint32_t regs[] {0x60400+bank,0x60404+bank,0x60540+bank,0x60030+bank,0x60034+bank,
+        0x60040+bank,0x60044+bank,0x70008+bank,0x46140+4*pipe,0x64000+0x100*ddi,
+        0x78000+0x200*pipe,0x78004+0x200*pipe,0x45404,0x45454,0x45444,0x42000};
+    for(auto reg:regs) {
+        uint32_t expected=0;
+        if(!value(r,reg,expected) || !io.readable(reg) || io.read(reg)!=expected)return false;
+    }
+    return true;
+}
 enum class LinearStatus : uint32_t {
     NotAdmitted, Ready, Success, NotSingleHDMI, NotLinearFHD, OtherPlaneActive,
-    StateChanged, NoVblank, DisableTimeout, EnableTimeout, RollbackFailed
+    StateChanged, NoVblank, DisableTimeout, EnableTimeout, RollbackFailed, InvalidDPSource
 };
 struct LinearPlan {
     uint32_t pipe {}, chicken {}, arb {}, control {}, stride {}, position {}, size {}, offset {}, surface {};
@@ -246,11 +262,12 @@ struct LinearResult {
 // plane on the explicitly selected Combo A/B/C. The default remains B for
 // the original standalone diagnostics. No new PLL/PHY/power-well cold
 // initialization, a new GGTT mapping, full modeset or accelerated scanout.
-inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned ddi=1) {
+inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned ddi=1,GOPProtocol protocol=GOPProtocol::TMDS) {
     p={};
     if (ddi>=3 || r.status!=ReadoutStatus::Complete || !r.activePipes || (r.activePipes&~7U) ||
         (r.activePipes & (r.activePipes-1)) || (r.activePipes&~r.poweredPipes) ||
-        (ddi==1 && r.activePipes!=r.hdmiBPipes))
+        (protocol!=GOPProtocol::TMDS && protocol!=GOPProtocol::DP) ||
+        (protocol==GOPProtocol::TMDS && ddi==1 && r.activePipes!=r.hdmiBPipes))
         return LinearStatus::NotSingleHDMI;
     while (!(r.activePipes & (1U<<p.pipe))) ++p.pipe;
     if (p.pipe>=3) return LinearStatus::NotSingleHDMI;
@@ -263,8 +280,10 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
         !value(r,0x701AC+delta,surfLive) || !value(r,0x60400+delta,trans) ||
         !value(r,0x70008+delta,pipeConf) || !value(r,0x60000+delta,htotal) || !value(r,0x6000C+delta,vtotal))
         return LinearStatus::NotLinearFHD;
-    if(!(trans&(1U<<31)) || ((trans>>27)&15)!=ddi+1 || ((trans>>24)&7)>1)
+    if(!(trans&(1U<<31)) || ((trans>>27)&15)!=ddi+1 ||
+       (protocol==GOPProtocol::TMDS && ((trans>>24)&7)>1))
         return LinearStatus::NotSingleHDMI;
+    if(protocol==GOPProtocol::DP && !dpSource(r,p.pipe,ddi))return LinearStatus::InvalidDPSource;
     p.geometry=XELPGeometry::linear(p.control,p.stride,p.size,p.position,p.offset);
     if(!p.geometry.valid || (p.surface&4095) || p.surface!=surfLive ||
        ((trans>>20)&7)!=0 || (pipeConf&0xC0000000)!=0xC0000000 ||
@@ -285,24 +304,32 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
     return LinearStatus::Ready;
 }
 
-template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout &r, bool admitted,unsigned ddi=1) {
+template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout &r, bool admitted,unsigned ddi=1,
+                                                  GOPProtocol protocol=GOPProtocol::TMDS) {
     LinearResult out;
     if (!admitted) return out;
     LinearPlan p;
-    out.status=linearPlan(r,p,ddi);
+    out.status=linearPlan(r,p,ddi,protocol);
     if(out.status!=LinearStatus::Ready)return out;
     out.pipe=p.pipe;
     const auto d=0x1000*p.pipe;
     const uint32_t ctl=0x70180+d, surf=0x7019C+d, frame=0x70040+d;
     const auto write=[&](uint32_t reg,uint32_t v){io.write(reg,v);++out.writes;io.read(reg);};
+    bool linkChanged=false;
+    const auto linkStable=[&] {
+        if(protocol==GOPProtocol::DP && !dpSourceUnchanged(io,r,p.pipe,ddi))linkChanged=true;
+        return !linkChanged;
+    };
     // Check all captured words used by the transaction before the first write.
     uint32_t trans=0;value(r,0x60400+d,trans);
     const Register expected[] {{0x60400+d,trans},{0x42084,p.chicken},{0x70028+d,p.arb},{ctl,p.control},
         {0x70188+d,p.stride},{0x7018C+d,p.position},{0x70190+d,p.size},
         {0x701A4+d,p.offset},{surf,p.surface}};
     for(auto pair:expected)if(io.read(pair.offset)!=pair.value){out.status=LinearStatus::StateChanged;return out;}
+    if(!linkStable()){out.status=LinearStatus::StateChanged;return out;}
     const auto waitFrames=[&](uint32_t start) {
         for(unsigned i=0;i<1000;++i) {
+            if(!linkStable())return false;
             const auto now=io.read(frame);
             if(now==UINT32_MAX)return false;
             if(uint32_t(now-start)>=2 && uint32_t(now-start)<0x10000000)return true;
@@ -312,14 +339,17 @@ template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout 
     };
     out.framesBefore=io.read(frame);
     if(out.framesBefore==UINT32_MAX || !waitFrames(out.framesBefore)) {
-        out.status=LinearStatus::NoVblank;return out;
+        out.status=linkChanged ? LinearStatus::StateChanged : LinearStatus::NoVblank;return out;
     }
     const auto rollback=[&] {
+        if(!linkStable()){out.status=LinearStatus::StateChanged;return;}
         write(ctl,p.control & ~0x80000000U);write(surf,p.surface);
         const bool stopped=waitFrames(io.read(frame));
+        if(linkChanged){out.status=LinearStatus::StateChanged;return;}
         write(0x42084,p.chicken);write(0x70028+d,p.arb);
         write(ctl,p.control);write(surf,p.surface);
         const bool running=waitFrames(io.read(frame));
+        if(linkChanged){out.status=LinearStatus::StateChanged;return;}
         out.restored=stopped && running && io.read(ctl)==p.control && io.read(surf)==p.surface &&
             io.read(0x42084)==p.chicken && io.read(0x70028+d)==p.arb;
         if(!out.restored)out.status=LinearStatus::RollbackFailed;

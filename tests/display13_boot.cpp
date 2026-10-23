@@ -122,7 +122,7 @@ int main() {
             if(dpMask&(1U<<port))dp(t,p,port,lanes,enhanced);
         }
         const auto boot=AlderLakeN::readDisplay(t,true);const auto before=t.regs;
-        assert(boot.version==2 && boot.count==138);
+        assert(boot.version==2 && boot.count==139);
         const auto result=Display13Boot::normalize(t,boot,true,mixed,memory);
         const bool parkDP=dpMask&(1U<<(1-a));
         assert(result.status==Display13Boot::Status::Complete && result.after==1 && result.writes==(parkDP?11U:10U));
