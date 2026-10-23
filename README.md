@@ -161,6 +161,7 @@ installation or update location.
 - Safari video playback may occasionally drop frames.
 - Up to three displays can be used simultaneously; a fourth display will not
   receive an image.
+- TGL eDP signal selection covers RBR through HBR3 using the physical GPU subplatform and VBT panel flags. HOBL training below HBR3 remains donor-managed. High-rate selection has CPU coverage; the hardware results above do not qualify every link rate.
 - Full system sleep/wake and resolutions above those listed above are unverified.
   USB-C display output currently prevents part of the display hardware from
   entering a low-power state.

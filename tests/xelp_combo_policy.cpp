@@ -4,6 +4,13 @@
 #include <initializer_list>
 using Policy=XELP::ComboPolicy;using Platform=Policy::Platform;using Table=Policy::Table;
 int main() {
+ for(auto id:{0x9A40,0x9A49,0x9A59,0x9A78,0x9AC0,0x9AC9,0x9AD9,0x9AF8})
+  assert(XELP::ComboPolicy::tigerLake((uint32_t(id)<<16)|0x8086)==XELP::ComboPolicy::Platform::TGLUY);
+ for(auto id:{0x9A60,0x9A68,0x9A70})
+  assert(XELP::ComboPolicy::tigerLake((uint32_t(id)<<16)|0x8086)==XELP::ComboPolicy::Platform::TGL);
+ assert(XELP::ComboPolicy::tigerLake(0x46908086)==XELP::ComboPolicy::Platform::Unknown);
+ assert(XELP::ComboPolicy::tigerLake(0x9A491234)==XELP::ComboPolicy::Platform::Unknown);
+
  // FNV-1a of all five-byte rows in Linux v6.12 intel_ddi_buf_trans.c,
  // in Table enum order. This also checks the post_cursor_2 field.
  const uint32_t expected[]={0x9C7E3F56U,0x004ED0CBU,0x49762BB3U,0x16ACF609U,0xEB4FB3B0U,0xBE6E1ADFU,0x231944E5U,0x67165B6FU,0x52DE18D6U,0x2DFE14A9U,0x4A81F931U,0xE7F29A4EU,0x9C126509U};

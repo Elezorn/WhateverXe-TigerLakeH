@@ -28,6 +28,17 @@ struct ComboPolicy {
  Coefficients coefficients {};
  uint32_t level {};
  bool hobl {};
+ // Linux TGL U/Y is the physical GT2 ID set, not WEX's render backend.
+ // In particular 9A78 uses U/Y electrical values despite its G4 backend.
+ static Platform tigerLake(uint32_t physicalIdentity) {
+  if((physicalIdentity&0xFFFF)!=0x8086)return Platform::Unknown;
+  switch(physicalIdentity>>16) {
+   case 0x9A60:case 0x9A68:case 0x9A70:return Platform::TGL;
+   case 0x9A40:case 0x9A49:case 0x9A59:case 0x9A78:
+   case 0x9AC0:case 0x9AC9:case 0x9AD9:case 0x9AF8:return Platform::TGLUY;
+   default:return Platform::Unknown;
+  }
+ }
  static Table choose(Platform platform,uint32_t rate,bool panel,bool lowSwing,bool useHOBL) {
   if(platform==Platform::Unknown || platform>Platform::ADLP ||
      (rate!=6 && rate!=10 && rate!=20 && rate!=30))return Table::Invalid;

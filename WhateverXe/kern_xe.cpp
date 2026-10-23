@@ -16571,7 +16571,8 @@ bool XE::tglProgramComboSignal(void *port,uint32_t swing,uint32_t emphasis,void 
 	const auto lanes=*reinterpret_cast<uint32_t *>(p+0x124);
 	const auto rate=*reinterpret_cast<uint32_t *>(p+0x128);
 	if(!(adls ? selected.selectADLS(config[0],lanes,rate,swing,emphasis):
-        selected.select(config[0],lanes,rate,panel.lowSwing,panel.hobl,swing,emphasis)))return false;
+        selected.select(config[0],lanes,rate,panel.lowSwing,panel.hobl,swing,emphasis,
+            XELP::ComboPolicy::tigerLake(self->xeProfile.identity))))return false;
 	// The native fields identify this very bank. No guessed framebuffer index
 	// or cross-port reads; power must already belong to the training caller.
 	if(*reinterpret_cast<uint32_t *>(p+0x620)!=selected.base+0x804 ||

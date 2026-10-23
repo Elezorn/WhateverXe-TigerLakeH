@@ -27,14 +27,14 @@ struct TGLComboSignal {
     uint32_t base {},lanes {},linkRate {},level {},swing {},scalar {},cursor {},post1 {};
     bool low {};
     bool select(uint32_t ddi,uint32_t count,uint32_t rate,bool lowSwing,bool hobl,
-                uint32_t voltage,uint32_t emphasis) {
-        // Normal HBR2 has a separate U/Y-family table. Leave that unreviewed
-        // path, HOBL and HBR3 with the donor until their contracts are covered.
-        if(ddi>1 || (count!=1 && count!=2 && count!=4) || hobl ||
-           (rate!=6 && rate!=10 && !(lowSwing && rate==20)) ||
-           voltage>3 || emphasis>3 || voltage+emphasis>3)return false;
+                uint32_t voltage,uint32_t emphasis,
+                XELP::ComboPolicy::Platform platform=XELP::ComboPolicy::Platform::TGL) {
+        // HOBL needs a training-failure retry policy, so keep that native
+        // operation intact. At HBR3 Linux ignores both panel swing flags.
+        if(ddi>1 || (count!=1 && count!=2 && count!=4) || (hobl && rate!=30) ||
+           (platform!=XELP::ComboPolicy::Platform::TGL && platform!=XELP::ComboPolicy::Platform::TGLUY))return false;
         XELP::ComboPolicy policy;
-        if(!policy.select(XELP::ComboPolicy::Platform::TGL,rate,true,lowSwing,false,voltage,emphasis))return false;
+        if(!policy.select(platform,rate,true,lowSwing,false,voltage,emphasis))return false;
         base=ddi?0x6C000:0x162000;lanes=count;linkRate=rate;low=lowSwing;assign(policy);return true;
     }
     // The platform adapter chooses coordinates; electrical policy contains no

@@ -8,8 +8,8 @@ int main() {
  for(unsigned rate:{6,10,20,30})for(bool low:{false,true})for(bool hobl:{false,true})
  for(unsigned vs=0;vs<5;++vs)for(unsigned pre=0;pre<5;++pre) {
   TGLComboSignal s;
-  bool valid=ddi<2&&(lanes==1||lanes==2||lanes==4)&&!hobl&&
-      (rate==6||rate==10||(low&&rate==20))&&vs<4&&pre<4&&vs+pre<=3;
+  bool valid=ddi<2&&(lanes==1||lanes==2||lanes==4)&&(!hobl||rate==30)&&
+      (rate==6||rate==10||rate==20||rate==30)&&vs<4&&pre<4&&vs+pre<=3;
   assert(s.select(ddi,lanes,rate,low,hobl,vs,pre)==valid);
   if(!valid)continue;
   std::map<unsigned,unsigned> regs;
@@ -30,7 +30,7 @@ int main() {
   for(unsigned n=0;n<4;++n) {
    auto value=regs[s.base+0x890+0x100*n];
    assert((value&0x7FFC0000)==0x12340000);
-   assert(bool(value&0x80000000)==(n==1||n==2||(lanes==4&&n==3)));
+   assert(bool(value&0x80000000)==(rate!=30&&(n==1||n==2||(lanes==4&&n==3))));
   }
   // Missing bank declines before the first write.
   writes.clear();regs[s.base+0xA9C]=~0U;assert(!s.program(read,write)&&writes.empty());

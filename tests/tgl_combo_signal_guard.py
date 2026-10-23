@@ -21,7 +21,7 @@ code=r'''
 struct State {
  bool adlsDetected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  void *tglObservationController=nullptr;bool tglActive=true,tglComboSignalReady=true;
- struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
+ struct {uint32_t identity=0x9A498086;XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  XELP::VBT::Ports firmwarePorts;
 } state,*callbackXE=&state;
 constexpr uint32_t kIOReturnNotReady=0xe00002d8;
@@ -36,7 +36,7 @@ void wrapTGLRegisterWrite(void *,unsigned long reg,uint32_t value){++writes;
 void tglTransitionRecord(unsigned stage,bool,void *,unsigned,unsigned,unsigned,const void *,unsigned){assert(stage==73);++records;}
 FUNCTION
 int main(){
- for(unsigned bad=0;bad<22;++bad){
+ for(unsigned bad=0;bad<23;++bad){
   alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};uint32_t config[8]{};
   auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
   state={};state.tglObservationController=ctl;state.firmwarePorts.status=XELP::VBT::Status::Valid;
@@ -57,19 +57,40 @@ int main(){
   if(bad==10)state.firmwarePorts.port[0].flags=2;
   if(bad==11)store(p,0x578,ctl+0);
   if(bad==12)store(p,0x124,3U);
-  if(bad==13)store(p,0x128,20U);
+  if(bad==13)store(p,0x128,12U);
   if(bad==14)state.firmwarePorts.panel.hobl=true;
   if(bad==15)store(p,0x620,0x6C804U);
   if(bad==16)store(access,0x60,0x100000U);
   if(bad==17)registers[0x45404]=0;
   if(bad==18)registers[0x45454]=~0U;
   if(bad==19)registers[0x162A9C]=~0U;
+  if(bad==22)state.xeProfile.identity=0xFFFF8086;
   uint32_t result=99;
   bool applied=run(bad==20?nullptr:p,0,0,bad==21?p:nullptr,result);
   assert(applied==(bad==0||bad==19));assert((writes!=0)==(bad==0));
   if(bad==0)assert(result==0&&records==1);
   if(bad==19)assert(result==kIOReturnNotReady);
   if(bad!=0&&bad!=17&&bad!=18&&bad!=19)assert(reads==0);
+ }
+
+ // Known physical subplatforms must select electrical policy independently
+ // of a render backend. HBR2 U/Y differs at voltage0/emphasis1; HBR3 eDP
+ // uses the ICL table regardless of VBT low-swing/HOBL flags.
+ for(unsigned id:{0x9A498086u,0x9A788086u,0x9A608086u})for(unsigned rate:{20u,30u})
+ for(bool low:{false,true})for(bool hobl:{false,true}) {
+  alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};uint32_t config[8]{};
+  auto store=[](void *b,unsigned o,auto v){memcpy(static_cast<uint8_t *>(b)+o,&v,sizeof(v));};
+  state={};state.xeProfile.identity=id;state.tglObservationController=ctl;
+  state.firmwarePorts.status=XELP::VBT::Status::Valid;state.firmwarePorts.panel={true,low,hobl,0,0};
+  store(p,0x548,config+0);store(p,0x550,1U);store(p,0x578,access+0);store(ctl,0xC40,access+0);
+  store(p,0x124,4U);store(p,0x128,rate);store(p,0x620,0x162804U);store(p,0x5C8,0x162028U);
+  store(access,0x60,0x200000U);store(access,0x50,ctl+0);
+  registers.clear();registers[0x45404]=3;registers[0x45454]=3;reads=writes=records=0;
+  uint32_t result=99;assert(run(p,0,1,nullptr,result)==(!hobl||rate==30));
+  if(hobl&&rate!=30){assert(!writes);continue;}
+  assert(result==0);
+  const unsigned post=rate==30?8:low?7:id==0x9A608086?8:9;
+  assert(((registers[0x162890]>>12)&63)==post);
  }
  for(unsigned ddi:{0u,3u,4u})for(unsigned bad=0;bad<12;++bad) {
   alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},access[0x100]{};
