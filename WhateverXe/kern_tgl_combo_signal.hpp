@@ -24,7 +24,7 @@
 #include "kern_alderlake_s.hpp"
 #include "kern_xelp_combo_policy.hpp"
 struct TGLComboSignal {
-    uint32_t base {},lanes {},level {},swing {},scalar {},cursor {},post1 {};
+    uint32_t base {},lanes {},linkRate {},level {},swing {},scalar {},cursor {},post1 {};
     bool low {};
     bool select(uint32_t ddi,uint32_t count,uint32_t rate,bool lowSwing,bool hobl,
                 uint32_t voltage,uint32_t emphasis) {
@@ -35,7 +35,7 @@ struct TGLComboSignal {
            voltage>3 || emphasis>3 || voltage+emphasis>3)return false;
         XELP::ComboPolicy policy;
         if(!policy.select(XELP::ComboPolicy::Platform::TGL,rate,true,lowSwing,false,voltage,emphasis))return false;
-        base=ddi?0x6C000:0x162000;lanes=count;low=lowSwing;assign(policy);return true;
+        base=ddi?0x6C000:0x162000;lanes=count;linkRate=rate;low=lowSwing;assign(policy);return true;
     }
     // The platform adapter chooses coordinates; electrical policy contains no
     // physical DDI, donor field or board-specific connector condition.
@@ -45,7 +45,7 @@ struct TGLComboSignal {
         if(!AlderLakeS::Port::resolve(ddi,route) || !(AlderLakeS::ComboBackendMask&(1U<<ddi)))return false;
         XELP::ComboPolicy policy;
         if(!policy.select(XELP::ComboPolicy::Platform::ADLS,rate,false,false,false,voltage,emphasis))return false;
-        base=route.phyBase();lanes=count;low=false;assign(policy);return true;
+        base=route.phyBase();lanes=count;linkRate=rate;low=false;assign(policy);return true;
     }
     void assign(const XELP::ComboPolicy &p) {
         level=p.level;swing=p.coefficients.swing;scalar=p.coefficients.scalar;
@@ -66,7 +66,8 @@ struct TGLComboSignal {
         }
         write(base+0x604,pcs|(1U<<26));
         for(unsigned n=0;n<4;++n) {
-            const bool load=n==1 || n==2 || (lanes==4 && n==3);
+            // Linux icl_combo_phy_loadgen_select: no loadgen above 600 MHz.
+            const bool load=linkRate!=30 && (n==1 || n==2 || (lanes==4 && n==3));
             dw4[n]=(dw4[n]&~0x80000000U)|(load?0x80000000U:0);
             write(base+0x890+0x100*n,dw4[n]);
         }

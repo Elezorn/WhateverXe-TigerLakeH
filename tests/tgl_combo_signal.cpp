@@ -42,11 +42,15 @@ int main() {
   AlderLakeS::Port route;assert(AlderLakeS::Port::resolve(ddi,route));
   assert(s.base==route.phyBase()&&!s.low);
   std::map<unsigned,unsigned> regs;
+  // HBR3 must clear even inherited loadgen on every lane (Linux >600 MHz).
+  for(unsigned n=0;n<4;++n)regs[s.base+0x890+0x100*n]=0x80000000U;
   assert(s.program([&](unsigned r){return regs[r];},[&](unsigned r,unsigned value){
    assert(r>=s.base&&r<s.base+0xBA0);
    if(r==s.base+0x694)for(unsigned n=0;n<4;++n)regs[s.base+0x894+0x100*n]=value;
    regs[r]=value;
   }));
+  for(unsigned n=0;n<4;++n)assert(bool(regs[s.base+0x890+0x100*n]&0x80000000U)==
+    (rate!=30 && (n==1 || n==2 || (lanes==4 && n==3))));
  }
  TGLComboSignal s;assert(s.select(0,1,10,false,false,0,0));
  assert(s.swing==0xA&&s.scalar==0x32&&s.cursor==0x3F&&!s.post1);
