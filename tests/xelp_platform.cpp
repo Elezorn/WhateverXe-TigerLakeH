@@ -26,7 +26,7 @@ int main() {
   const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4;
   const bool adls=id==0x4680 || id==0x4682 || id==0x4688 || id==0x468A || id==0x468B || id==0x4690 || id==0x4692 || id==0x4693;
   const bool rpls=id==0xA780 || id==0xA781 || id==0xA782 || id==0xA783 || id==0xA788 || id==0xA789 || id==0xA78A || id==0xA78B;
-  assert(p.admitted()==(tgl || (adln && rev==0) || (adls && rev==12) || (rpls && (rev==4 || rev==12))));
+  assert(p.admitted()==(tgl || adln || adls || rpls));
   if(adls||rpls)assert(!identify((id<<16)|0x8086,rev,0x9A498086).admitted());
   assert(!adln || p.display==Display::XeLPD);
   assert(!identify((id<<16)|0x1234,rev).admitted());
@@ -89,7 +89,7 @@ int main() {
  c.combo=8;c.comboBackend=0x19;b.config=c;assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(dp),dp));
  assert(io.reads.empty()); // ADL-S must never probe TGL FIA for its Combo TC1.
  for(unsigned bad=0;bad<5;++bad){auto x=c;if(bad==0)x.combo=2;if(bad==1)x.comboBackend=0x79;
-  if(bad==2)x.legacy=8;if(bad==3)x.typeC=8;if(bad==4)x.profile.revision=0;assert(!x.valid());}
+  if(bad==2)x.legacy=8;if(bad==3)x.typeC=8;if(bad==4)x.profile.revision=256;assert(!x.valid());}
  assert(!identify(0x46D18086,12,0x46908086).admitted());
  assert(!identify(0x46908086,12,0x46808086).admitted());
  // Panel mode requires selected Combo A and the exact native panel record.

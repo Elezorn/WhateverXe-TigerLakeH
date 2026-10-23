@@ -15,11 +15,12 @@ struct Profile {
     Donor donor {Donor::Unknown};
     uint32_t effectiveIdentity {}; // Table selector; may come from device-id.
     bool overridden() const {return identity!=effectiveIdentity;}
+    // Select the implemented family backend for every PCI revision. Hardware
+    // validation is independent; a stepping split needs a concrete behavior delta.
     bool admitted() const {return (identity&0xFFFF)==0x8086 && revision<=255 &&
         donor==Donor::C004FC1A && gt!=GT::Unknown &&
-        (family!=Family::AlderLakeN || revision==0) &&
         ((gt!=GT::ADLSSmall && !desktopGTDevice(identity)) ||
-         (gt==GT::ADLSSmall && desktopGTD0(identity,revision) && !overridden()));}
+         (gt==GT::ADLSSmall && desktopGTDevice(identity) && !overridden()));}
 };
 inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) {
     Profile p;p.identity=physical;p.revision=revision;p.effectiveIdentity=effective;

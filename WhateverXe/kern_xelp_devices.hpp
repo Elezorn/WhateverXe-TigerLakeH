@@ -67,12 +67,6 @@ inline bool desktopGTDevice(uint32_t pci) {
     const auto e=deviceEntry(pci);
     return e && (e->family==Family::AlderLakeS || e->family==Family::RaptorLakeS);
 }
-// Linux v6.12 intel_step.c: ADL-S 0C and RPL-S 04/0C are GT D0.
-// Earlier ADL-S and unknown revisions need a separate stepping/WA policy.
-inline bool desktopGTD0(uint32_t pci,uint32_t revision) {
-    const auto e=deviceEntry(pci);
-    return e && ((e->family==Family::AlderLakeS && revision==0xC) ||
-                 (e->family==Family::RaptorLakeS && (revision==4 || revision==0xC)));
-}
+
 }
 #endif

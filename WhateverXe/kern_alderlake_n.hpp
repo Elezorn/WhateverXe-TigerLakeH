@@ -26,7 +26,7 @@ inline bool family(uint32_t identity) {
     return XELP::identify(identity,0).family==XELP::Family::AlderLakeN;
 }
 inline bool matches(uint32_t identity, uint8_t revision) {
-    // adlp_n_revids has only revision0. Unknown steppings need their own WA review.
+    // Revision identifies the hardware; untested revisions use the family backend.
     const auto p=XELP::identify(identity,revision);
     return p.family==XELP::Family::AlderLakeN && p.admitted();
 }

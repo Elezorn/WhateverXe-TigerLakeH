@@ -36,7 +36,7 @@ int main(int argc,char **argv) {
  const bool adls=!strncmp(argv[1],"adls",4) || rpls;
  const bool legacy=!strncmp(argv[1],"adln-abi1",9);
  const bool fake=strstr(argv[1],"fake")!=nullptr;
- const bool rejected=!strcmp(argv[1],"rpls-revision") || !strcmp(argv[1],"unknown") || !strcmp(argv[1],"adln-revision") || !strcmp(argv[1],"adls-revision");
+ const bool rejected=!strcmp(argv[1],"unknown");
  IOService controller;IOPCIDevice pci;OSObject access,port,foreign;IOMemoryMap map;
  std::vector<uint8_t> mmio(0x1000000);alignas(8) uint8_t platform[0x1C0] {};
  pci.identity=adln?0x46D18086:0x9A498086;

@@ -191,9 +191,10 @@ int main() {
     assert(stuck.status==AlderLakeN::GTStatus::ReleaseFailed && stuck.releaseFailedMask==1 && stuck.releasedMask==2);
     std::puts("AlderLakeN GT forcewake ownership, ACK failure, fuse profile and release fixtures passed");
     assert(AlderLakeN::matches(0x46d18086,0));
-    for(unsigned id=0x46d0;id<=0x46d4;++id) {assert(AlderLakeN::matches((id<<16)|0x8086,0));assert(!AlderLakeN::matches((id<<16)|0x8086,1));}
+    for(unsigned id=0x46d0;id<=0x46d4;++id)for(unsigned rev=0;rev<256;++rev)
+        assert(AlderLakeN::matches((id<<16)|0x8086,rev));
     assert(!AlderLakeN::family(0x46cf8086) && !AlderLakeN::family(0x46d58086) && !AlderLakeN::family(0x46d11234));
-    assert(!AlderLakeN::matches(0x46d18086,1));
+    assert(AlderLakeN::matches(0x46d18086,1));
     assert(!AlderLakeN::matches(0x9a498086,0));
     AlderLakeN::Resources res;
     assert(AlderLakeN::resources(1,3,0x88,0xf0,res));

@@ -8,7 +8,7 @@ int main() {
  unsigned implemented=0;
  for(const auto &entry:DeviceTable) {
   const uint32_t pci=uint32_t(entry.device)<<16|0x8086;
-  const auto revision=entry.backend==GT::ADLSSmall?12U:0U;
+  const auto revision=0U;
   auto p=identify(pci,revision);
   assert(p.identity==pci && p.effectiveIdentity==pci && !p.overridden());
   assert(p.family==entry.family && p.display==entry.display && p.gt==entry.backend);
@@ -28,7 +28,8 @@ int main() {
  assert(implemented==24); // Recognition of other table rows adds no native backend.
  uint32_t id=0x46D2;
  assert(select(0x12348086,0,true,&id,4).admitted());
- assert(!select(0x12348086,1,true,&id,4).admitted()); // Keep physical stepping guard.
+ assert(select(0x12348086,1,true,&id,4).admitted());
+ assert(!identify(0x46908086,256).admitted()); // Malformed PCI revision width.
  assert(!select(0x12348086,0,false,nullptr,0).admitted());
  for(size_t n:{size_t(0),size_t(1),size_t(2),size_t(3),size_t(5),size_t(8)})
   assert(!select(0x9A498086,0,true,&id,n).admitted());

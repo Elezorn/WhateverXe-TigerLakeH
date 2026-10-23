@@ -132,6 +132,9 @@ WEX automatically handles systems with or without an internal display.
 
 No family-selection or per-feature enable arguments are required for
 Alder Lake-N / Twin Lake.
+GPU backend selection is independent of hardware test coverage: untested PCI
+revisions use the same family implementation. Revision-specific behavior is
+added when a documented difference or observed failure requires it.
 
 The supported Display 13 backend selects Y-tiled scanout automatically;
 `AAPL,GfxYTile` is not required in OpenCore. Existing values are preserved.
@@ -184,10 +187,10 @@ installation or update location.
   from VBT rather than a board or connector preset, within the current Combo
   PHY A–C backend. Ambiguous routes, cross-routed AUX, Type-C/TBT capability
   and PHY D/E are excluded. Development GPU admission covers ADL-S IDs `4680/4682/4688/468A/468B/4690/4692/4693`
-  at revision `0C`, and RPL-S IDs `A780/A781/A782/A783/A788/A789/A78A/A78B`
-  at revisions `04/0C` (GT D0). Physical identity must match, with one slice,
+  and RPL-S IDs `A780/A781/A782/A783/A788/A789/A78A/A78B`.
+  All PCI revisions select the shared family backend. Physical identity must match, with one slice,
   up to two DSS, 16/24/32 EUs, four L3 banks and the supported media-engine mask.
-  Other steppings and resource layouts are rejected. Only `4690` has hardware validation;
+  Resource layouts outside that implementation remain unsupported. Only `4690` revision `0C` has hardware validation;
   the other IDs have CPU coverage and need the updated companion ID dispatch. Other port layouts have CPU-test
   coverage but are not hardware-qualified. A USB-C connector exposed by VBT
   as fixed DP on Combo PHY A has also been tested. This does not qualify

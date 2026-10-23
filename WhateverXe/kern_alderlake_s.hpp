@@ -11,8 +11,8 @@
 
 namespace AlderLakeS {
 constexpr uint32_t PortMask=XELP::ADLSComboResources::physicalMask(); // A, TC1, TC2, TC3, TC4
-// ADL-S/RPL-S share the D0 GT backend; physical identity is never spoofed.
-inline bool identity(uint32_t pci,uint32_t revision) {return XELP::desktopGTD0(pci,revision);}
+// ADL-S/RPL-S share the GT backend across revisions; physical identity is never spoofed.
+inline bool identity(uint32_t pci,uint32_t revision) {return revision<=255 && XELP::desktopGTDevice(pci);}
 struct GT : XELP::SmallGTResources {
     static bool decode(uint32_t pci,uint32_t revision,const uint32_t *fuses,GT &out) {
         out={};

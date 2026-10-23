@@ -3802,8 +3802,8 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	uint64_t connector[] {1,displayRequested,wiring!=nullptr,board.valid,board.hdmi,bootDDI};
 	pci->setProperty("N97NativeBootConnector",connector,sizeof(connector));
 	pci->setProperty("N97DisplayVersion", AlderLakeN::DisplayVersion, 32);
-	pci->setProperty("N97GTStep", "A0");
-	pci->setProperty("N97DisplayStep", "D0");
+	pci->setProperty("N97GTStep", revision==0 ? "A0" : "unknown");
+	pci->setProperty("N97DisplayStep", revision==0 ? "D0" : "unknown");
 	pci->setProperty("N97GGC", pci->configRead16(0x50), 32);
 	if (!(pci->configRead16(4) & 2)) return;
 	const bool linearTest = display13FramebufferRequested;

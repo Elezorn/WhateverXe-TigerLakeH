@@ -7,8 +7,11 @@ machine-name setting is required.
 
 By default, the physical Intel GPU device ID selects the backend. The implemented
 IDs are Tiger Lake `9A40`, `9A49`, `9A78` and Alder Lake-N / Twin Lake
-`46D0`–`46D4`. The latter require PCI revision 0. OS, driver and hardware-resource
-checks still apply after selection.
+`46D0`–`46D4`, plus the development ADL-S/RPL-S IDs listed in the README.
+All PCI revisions use the selected family backend. Hardware test coverage is
+recorded separately and does not gate selection. A stepping-specific branch
+requires a concrete documented difference or an observed failure. OS, driver
+and hardware-resource checks still apply after selection.
 
 Other entries in the table supply identification and display names only. A
 listed ID does not imply an implemented backend or a tested machine. See the
@@ -30,6 +33,8 @@ Malformed values, zero/FFFF, unknown target IDs, identification-only targets and
 non-Intel physical devices are rejected. An invalid override does not silently
 fall back to the physical ID. Remove an obsolete ICL or other unsupported spoof
 to use automatic selection. A restart is required after changing the selection.
+
+The development ADL-S/RPL-S backend requires its physical ID without an override.
 
 Do not use an override merely to change the displayed GPU name.
 

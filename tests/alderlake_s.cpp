@@ -11,8 +11,7 @@ int main() {
     const unsigned ids[]={0x4680,0x4682,0x4688,0x468A,0x468B,0x4690,0x4692,0x4693,
                           0xA780,0xA781,0xA782,0xA783,0xA788,0xA789,0xA78A,0xA78B};
     for(auto id:ids)for(unsigned rev=0;rev<256;++rev) {
-        const bool d0=rev==12 || (id>=0xA780 && rev==4);
-        assert(GT::decode((id<<16)|0x8086,rev,fuses,gt)==d0);
+        assert(GT::decode((id<<16)|0x8086,rev,fuses,gt));
         assert(!GT::decode((id<<16)|0x1234,rev,fuses,gt));++cases;
     }
     for(unsigned dss=1;dss<64;++dss)for(unsigned eu=0;eu<256;++eu)for(unsigned video:{1U,5U}) {
@@ -32,7 +31,7 @@ int main() {
     for(unsigned i:{0U,3U,4U}) {
         fuses[i]^=1;assert(!GT::decode(0xA7808086,4,fuses,gt));fuses[i]=original[i];
     }
-    assert(!GT::decode(0x46D18086,0,fuses,gt));assert(!GT::decode(0x46908086,0,fuses,gt));
+    assert(!GT::decode(0x46D18086,0,fuses,gt));assert(!GT::decode(0x46908086,256,fuses,gt));
     assert(!GT::decode(0x46908086,0xC,nullptr,gt));
     printf("PASS %u desktop GT identity/step/resource cases\n",cases);
     const uint32_t physical[]={0,3,4,5,6},dvo[]={10,1,8,9,11};

@@ -145,9 +145,9 @@ int main() {
   if(option&1)args.insert("-wex-tgl-off");
   if(option&2)args.insert("-wex-noaccel");
   XE selected;selected.init();selected.selectProfile(XELP::identify((id<<16)|0x8086,rev));
-  const bool desktop=((id==0x4690 || id==0x4680) && rev==12) || (id==0xA780 && (rev==4 || rev==12));
+  const bool desktop=id==0x4690 || id==0x4680 || id==0xA780;
   const bool mobile=id==0x9A49 || id==0x9A78;
-  const bool small13=id==0x46D2 && rev==0;
+  const bool small13=id==0x46D2;
   assert(selected.adlsDetected==desktop && selected.adlsDisplaySelected==desktop);
   assert(selected.adlnDetected==small13 && selected.display13FramebufferRequested==small13);
   const bool d12=(desktop || mobile) && !(option&1);
@@ -171,7 +171,7 @@ int main() {
   xe=boot({},pci);assert(!xe.adlnNativeRequested && !xe.display13FramebufferRequested && !adlnNativeRCSProfileRequested);
  }
  xe=XE{};xe.selectProfile(XELP::identify(0x46D28086,1));
- assert(!xe.adlnNativeRequested && !xe.display13FramebufferRequested && !adlnNativeRCSProfileRequested);
+ assert(xe.adlnNativeRequested && xe.display13FramebufferRequested && adlnNativeRCSProfileRequested);
  auto malformed=XELP::identify(0x46D28086,0);malformed.display=XELP::Display::XeD;
  xe=XE{};xe.selectProfile(malformed);assert(!xe.adlnRequested && !adlnNativeRCSProfileRequested);
  args={};version="unqualified";
