@@ -202,6 +202,32 @@ inline bool value(const DisplayReadout &r, uint32_t offset, uint32_t &out) {
     return false;
 }
 
+// Source-side certificate for an already-running, uncompressed external SST
+// GOP. This does not prove sink DPCD state, PLL rate or native AUX ownership.
+inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi) {
+    if(pipe>=3 || ddi>=2 || boot.status!=ReadoutStatus::Complete ||
+       !(boot.activePipes&boot.poweredPipes&(1U<<pipe)))return false;
+    const auto bank=pipe*0x1000;
+    uint32_t trans=0,tp=0,buf=0,clock=0,ctl2=0,dss1=0,dss2=0,dm=0,dn=0,lm=0,ln=0;
+    if(!value(boot,0x60400+bank,trans) || !value(boot,0x60540+bank,tp) ||
+       !value(boot,0x64000+ddi*0x100,buf) || !value(boot,0x46140+4*pipe,clock) ||
+       !value(boot,0x60404+bank,ctl2) || !value(boot,0x78000+pipe*0x200,dss1) ||
+       !value(boot,0x78004+pipe*0x200,dss2) || !value(boot,0x60030+bank,dm) ||
+       !value(boot,0x60034+bank,dn) || !value(boot,0x60040+bank,lm) ||
+       !value(boot,0x60044+bank,ln))return false;
+    const unsigned lanes=((trans>>1)&7)+1;
+    // Linux v6.12 i915_reg.h: SST, normal training, scrambling, no FEC/MST,
+    // port sync, HDCP, DSC or joined pipes. Enhanced framing may be on or off.
+    return (trans&0xFF700000U)==(0x82000000U|((ddi+1)<<27)) &&
+        !(trans&((1U<<15)|(1U<<9)|(1U<<8))) && !ctl2 &&
+        (lanes==1 || lanes==2 || lanes==4) && ((buf>>1)&7)==lanes-1 &&
+        (buf&0x800000C0U)==0x80000000U && (clock>>28)==ddi+1 &&
+        (tp&~(1U<<18))==0x80000300U &&
+        !(dss1&0xF0300000U) && !(dss2&0x80008000U) &&
+        !(dm&0x81000000U) && (dm&0xFFFFFF) &&
+        dn && !(dn&0xFF000000U) && lm && !(lm&0xFF000000U) && ln && !(ln&0xFF000000U) &&
+        (dm&0xFFFFFF)<=dn;
+}
 enum class LinearStatus : uint32_t {
     NotAdmitted, Ready, Success, NotSingleHDMI, NotLinearFHD, OtherPlaneActive,
     StateChanged, NoVblank, DisableTimeout, EnableTimeout, RollbackFailed
