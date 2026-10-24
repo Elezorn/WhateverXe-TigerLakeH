@@ -3795,15 +3795,14 @@ void XE::deinit() {}
 Display13OutputWiring XE::display13BoardWiring(IOService *provider) {
     auto property=provider->getProperty("xelp-hdmi-wiring");
     if(!property)property=provider->getProperty("tgl-hdmi-wiring");
-    if(adlpDisplaySelected) {
-        // VBT remains the authority for pin/transport. No Combo property is
-        // silently interpreted as a TC policy. Select every supported fixed HDMI
-        // route from firmware; connection state is checked by the provider.
-        if(property)return {};
-        return XELP::VBT::display13HDMI(firmwarePorts,Display13OutputWiring::Physical);
-    }
+    if(!xeProfile.displayAdmitted() || xeProfile.display!=XELP::Display::XeLPD)return {};
+    // Display13 physical capacity is shared by ADL-N and mobile ADL/RPL.
+    // VBT chooses board routing; a family name must not exclude TC PHYs.
+    if(!property)return XELP::VBT::display13HDMI(firmwarePorts,Display13OutputWiring::Physical);
+    // Preserve the older ADL-N Combo property contract. It cannot select TC.
+    if(adlpDisplaySelected)return {};
     auto wiring=OSDynamicCast(OSData,property);
-    return XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
+    return XELP::VBT::selectHDMI(true,wiring?wiring->getBytesNoCopy():nullptr,
         wiring?wiring->getLength():0,firmwarePorts,3);
 }
 
@@ -3825,7 +3824,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	// Bootstrap runs before framebuffer start loads its board policy. Native
 	// GOP qualification must already use that physical port, not assume B.
     const auto board=display13BoardWiring(pci);adlnOutputWiring=board;
-    if(displayRequested && !Display13FBTopology::supportedWiring(board,adlpDisplaySelected)) {
+    if(displayRequested && !Display13FBTopology::supportedWiring(board,xeProfile.display==XELP::Display::XeLPD)) {
         pci->setProperty("N97NativeRoutingUnavailable",true);return;
     }
 	auto bootDDI=displayRequested ? UINT32_MAX : 1U;
@@ -3887,9 +3886,9 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97DisplayReadoutStatus", static_cast<uint32_t>(result.status), 32);
 	SYSLOG("igfx", "AlderLakeN Display13 readout status=%u powered=%x active=%x hdmiB=%x; donor blocked",
 		static_cast<uint32_t>(result.status), result.poweredPipes, result.activePipes, result.hdmiBPipes);
-	// ADL-P adopts a validated firmware surface below. A destructive plane
-	// exercise before native controller start is not a startup prerequisite.
-	if (linearTest && !adlpDisplaySelected) {
+	// Mobile and TC configurations adopt a validated firmware surface at
+	// controller start. Preserve the established ADL-N Combo bootstrap.
+	if (linearTest && !Display13FBTopology::deferredBootPrepare(board,adlpDisplaySelected)) {
         auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0);
         if(bootDDI>=3)pci->setProperty("WEXDisplay13TCBoot",&tc,sizeof(tc));
 		auto linear=AlderLakeN::reinitializeLinear(io,result,barReady && xelpMemoryMatches(pci),bootDDI,
@@ -4099,7 +4098,7 @@ bool XE::xelpBindProbe(void *controller) {
         config.legacyBackend=tglAUXParentMask;
     } else {
         if(!display13FBTopologyHooksReady || controller!=adlnTopologyController ||
-            !Display13FBTopology::supportedWiring(adlnOutputWiring,adlpDisplaySelected) ||
+            !Display13FBTopology::supportedWiring(adlnOutputWiring,xeProfile.display==XELP::Display::XeLPD) ||
             ((adlnOutputWiring.hdmi&0x78) && (!display13TCProbeReady || !display13FBTCHooksReady)) ||
             (adlnOutputWiring.dp && (!display13DPProbeReady || !display13FBSSTHooksReady || !display13FBAUXHooksReady)))return false;
         config.combo=adlnOutputWiring.selected()&3;config.comboBackend=3;
@@ -6152,7 +6151,7 @@ bool XE::processDisplay13FramebufferTopology(KernelPatcher &patcher,size_t index
 bool XE::wrapAlderLakeNGetOSInformation(IOService *controller) {
 	auto s=callbackXE;
 	if(!s->display13FBTopologyHooksReady || !controller || controller->getMetaClass()->getClassSize()<0x1C20 ||
-		!Display13FBTopology::supportedWiring(s->adlnOutputWiring,s->adlpDisplaySelected) || !checkKernelArgument("-disablegfxfirmware"))return false;
+		!Display13FBTopology::supportedWiring(s->adlnOutputWiring,s->xeProfile.display==XELP::Display::XeLPD) || !checkKernelArgument("-disablegfxfirmware"))return false;
 	if(!FunctionCast(wrapAlderLakeNGetOSInformation,s->orgAlderLakeNGetOSInformation)(controller))return false;
 	auto platform=Display13FBMemory::field<void *>(controller,0xD40);
 	if(!Display13FBTopology::apply(s->adlnPlatform,sizeof(s->adlnPlatform),platform,s->adlnOutputWiring))return false;
@@ -7406,9 +7405,9 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	if(s->tglObservationController==that)s->tglObservationController=nullptr;
 	if(!pci)return false;
     const auto board=s->display13BoardWiring(provider);
-    if(!Display13FBTopology::supportedWiring(board,s->adlpDisplaySelected) ||
+    if(!Display13FBTopology::supportedWiring(board,s->xeProfile.display==XELP::Display::XeLPD) ||
        board.selected()!=s->adlnOutputWiring.selected())return false;
-    if(s->adlpDisplaySelected && (!s->display13FBTCHooksReady || !s->display13TCProbeReady)) {
+    if((board.hdmi&0x78) && (!s->display13FBTCHooksReady || !s->display13TCProbeReady)) {
         IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBTCUnavailable",true);return false;
     }
  const auto contract=XELP::DisplayContract::display13(s->display13Available(),s->adlnOutputWiring.dp!=0);
@@ -7443,7 +7442,7 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 		(provider->getProperty("AAPL,GfxYTile") || provider->setProperty("AAPL,GfxYTile",&enabled,sizeof(enabled)));
 	OSSafeReleaseNULL(yTiling);OSSafeReleaseNULL(mode);OSSafeReleaseNULL(features);
 	if(!featuresSelected)return false;
-    if(s->adlpDisplaySelected && !s->prepareDisplay13BootScanout(pci))return false;
+    if(Display13FBTopology::deferredBootPrepare(board,s->adlpDisplaySelected) && !s->prepareDisplay13BootScanout(pci))return false;
 	SYSLOG("igfx","Display13 native controller start enter offline=%u",display13Offline);
 	const auto started=FunctionCast(wrapDisplay13FramebufferStart,s->orgDisplay13FramebufferStart)(that,provider);
 	SYSLOG("igfx","Display13 native controller start return=%u",started);

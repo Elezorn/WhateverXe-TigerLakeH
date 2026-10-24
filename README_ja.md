@@ -90,6 +90,8 @@ GPUはPCI device IDから自動選択します。対応範囲内ではファー�
 
 対応GPUでは、WhateverGreenと同様に、検出されたIntel Management Engineのデバイス名も`IMEI`へ統一します。`HECI`や`MEI`から`IMEI`へのACPI renameを別途追加する必要はありません。
 
+Display13ではADL-NとADL-P/RPL-Pに共通のVBT選択を使い、Combo A/Bと固定TC1〜4のHDMI配線を扱います。TC配線には固定TC capabilityを持つ対応Compat providerが必要です。従来のADL-N HDMI明示propertyはCombo専用のままです。Display13のDPはAUX・link training・起動時引継ぎの統合が未完のため、実行時の受付を閉じています。
+
 ADL-P/RPL-Pは物理IDとfuseから求めた資源で共有Display13バックエンドを選択します。固定HDMI配線はVBTから取得し、`-wex-noaccel`でFramebufferのみの動作を維持します。旧9A49 donor選択も受け付けますが不要です。モバイル系IDと対応providerを含むGraphics資材が必要で、Graphics 0.2.0には含まれていません。対応するCompat providerは、起動を許可したDisplay13 framebufferのclientだけにAGDP personalityを提供します。既定policyでcallback登録を有効にし、board-IDごとの上書き設定を不要にします。
 
 ### 内蔵パネルの輝度

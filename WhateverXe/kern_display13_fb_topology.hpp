@@ -20,6 +20,11 @@ inline bool supportedWiring(const Display13OutputWiring &w,bool fixedTC=false) {
     // TC provider capability, legacy mode and clock hooks are checked separately.
     return !w.dp && w.described() && !(w.selected()&~(fixedTC ? Display13OutputWiring::Physical : 3U));
 }
+// A TC route uses the same validated handoff regardless of the GT family.
+// Keep the established Combo-only ADL-N startup ordering unchanged.
+inline bool deferredBootPrepare(const Display13OutputWiring &w,bool mobile) {
+    return mobile || (w.hdmi&0x78);
+}
 inline bool multiOutputWiring(const Display13OutputWiring &w) {
     return selectedWiring(w) && (w.selected()&(w.selected()-1));
 }

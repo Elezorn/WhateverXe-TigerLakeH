@@ -13,6 +13,8 @@ code=r'''
 #define SYSLOG(...) ((void)0)
 #include <cstdint>
 #include <cstring>
+#include "kern_display13_fb_topology.hpp"
+Display13OutputWiring board;
 #include <map>
 #include <memory>
 #include <string>
@@ -61,7 +63,7 @@ void check(bool oldFeatures,bool oldKey,uint32_t keyValue,unsigned failure,bool 
  if(oldKey)provider.items["AAPL,GfxYTile"]=&key;
  step=0;failAt=failure;handoff.calls=0;bool ok=prepare(&that,&provider);
  if(failure || !workLoop){assert(!ok && !handoff.calls);return;}
- assert(handoff.calls==1);
+ assert(handoff.calls==unsigned(handoff.adlpDisplaySelected || (board.hdmi&0x78)));
  assert(ok);auto f=dynamic_cast<OSDictionary *>(that.getProperty("FeatureControl"));assert(f);
  assert(dynamic_cast<OSNumber *>(f->items.at("YTiling"))->value==1);
  assert(dynamic_cast<OSNumber *>(f->items.at("ThreadingMode"))->value==0);
@@ -72,7 +74,9 @@ void check(bool oldFeatures,bool oldKey,uint32_t keyValue,unsigned failure,bool 
 int main(){
  {IOService that,provider;handoff.ready=false;assert(!prepare(&that,&provider));assert(handoff.calls==1);handoff.ready=true;}
 
+ for(bool mobile:{false,true})for(unsigned mask:{2U,8U})
  for(bool features:{false,true})for(bool key:{false,true})for(uint32_t value:{0U,1U}){
+  handoff.adlpDisplaySelected=mobile;board.hdmi=mask;
   check(features,key,value,0);unsigned operations=step;
   for(unsigned failure=1;failure<=operations;++failure)check(features,key,value,failure);
   check(features,key,value,0,false);
@@ -81,6 +85,6 @@ int main(){
 '''.replace('PRODUCTION',block)
 with tempfile.TemporaryDirectory() as tmp:
     p=Path(tmp);(p/'test.cpp').write_text(code)
-    subprocess.run(['clang++','-std=c++17','-fsanitize=address,undefined',str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+    subprocess.run(['clang++','-std=c++17','-fsanitize=address,undefined','-I'+str(root/'WhateverXe'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True)
 print('PASS: pre-start Y selection, existing-property preservation and setup failure propagation')

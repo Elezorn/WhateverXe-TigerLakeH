@@ -8,10 +8,11 @@ code=r'''
 #include <cassert>
 #include <cstring>
 #include <cstdio>
+#include <initializer_list>
 #include "kern_display13_firmware.hpp"
 #include "kern_display13_fb_topology.hpp"
 #include "kern_alderlake_s.hpp"
-struct OSData {void *getBytesNoCopy(){return nullptr;}unsigned getLength(){return 0;}};
+struct OSData {void *data=nullptr;unsigned bytes=0;void *getBytesNoCopy(){return data;}unsigned getLength(){return bytes;}};
 #define OSDynamicCast(T,p) static_cast<T *>(p)
 struct IOService {OSData *property=nullptr;OSData *getProperty(const char *){return property;}};
 struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}void setProperty(const char*,bool){}};
@@ -51,14 +52,17 @@ int main(){
  assert(x.display13BoardWiring(&pci).hdmi==0x10); // Exclude DP without dropping unrelated HDMI.
  x.firmwarePorts.port[4].type=4;assert(!x.display13BoardWiring(&pci).described());
  unsigned cases=0;
+ for(unsigned identity : {0x46A68086U,0x46D18086U})
  for(unsigned mask=1;mask<128;++mask)if(!(mask&~Display13OutputWiring::Physical)) {
-  XE each;each.firmwarePorts.status=XELP::VBT::Status::Valid;each.firmwarePorts.present=mask;
+  XE each;each.xeProfile=XELP::identify(identity,12);each.adlpDisplaySelected=each.xeProfile.mobileDisplay13();
+  each.firmwarePorts.status=XELP::VBT::Status::Valid;each.firmwarePorts.present=mask;
   for(unsigned d=0;d<7;++d)if(mask&(1U<<d)) {
    auto &p=each.firmwarePorts.port[d];p.type=0x12;p.ddc=d<2?d+1:d;p.capabilities=3;
   }
   auto w=each.display13BoardWiring(&pci);
   assert(w.described() && w.hdmi==mask && Display13FBTopology::supportedWiring(w,true));
   assert(Display13FBTopology::supportedWiring(w)==!(mask&~3U));
+  assert(Display13FBTopology::deferredBootPrepare(w,each.adlpDisplaySelected)==(each.adlpDisplaySelected || bool(mask&0x78)));
   each.adlnOutputWiring=w;assert(each.xelpBindProbe((void*)1));
   assert(seen.combo==(mask&3) && seen.legacy==(mask&0x78));
   for(unsigned d=0;d<7;++d)if(mask&(1U<<d)) {
@@ -68,8 +72,13 @@ int main(){
   }
   ++cases;
  }
- assert(cases==63);
- puts("PASS production fixed-HDMI selection: all 63 Combo/TC subsets, firmware pins, boot DDI and capability/hook-gated provider binding");
+ assert(cases==126);
+ XE adln;adln.xeProfile=XELP::identify(0x46D18086,0);adln.adlpDisplaySelected=false;
+ uint32_t explicitB[]={1,2,0,2,0};property.data=explicitB;property.bytes=sizeof(explicitB);pci.property=&property;
+ auto explicitW=adln.display13BoardWiring(&pci);assert(explicitW.described() && explicitW.hdmi==2);
+ property.bytes=1;assert(!adln.display13BoardWiring(&pci).described());pci.property=nullptr;
+ adln.xeProfile=XELP::identify(0x9A498086,1);assert(!adln.display13BoardWiring(&pci).described());
+ puts("PASS production fixed-HDMI selection: all 63 Combo/TC subsets on ADL-N and ADL-P, firmware pins, boot DDI and capability/hook-gated provider binding");
 }
 '''.replace('FUNCTIONS',f)
 with tempfile.TemporaryDirectory(prefix='adlp-fb-candidate-') as tmp:
