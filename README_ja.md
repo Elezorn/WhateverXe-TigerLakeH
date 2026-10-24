@@ -90,6 +90,8 @@ GPUはPCI device IDから自動選択します。対応範囲内ではファー�
 
 対応GPUでは、WhateverGreenと同様に、検出されたIntel Management Engineのデバイス名も`IMEI`へ統一します。`HECI`や`MEI`から`IMEI`へのACPI renameを別途追加する必要はありません。
 
+ADL-P/RPL-Pは物理IDとfuseから求めた資源で共有Display13バックエンドを選択します。固定HDMI配線はVBTから取得し、`-wex-noaccel`でFramebufferのみの動作を維持します。旧9A49 donor選択も受け付けますが不要です。モバイル系IDと対応providerを含むGraphics資材が必要で、Graphics 0.2.0には含まれていません。対応するCompat providerは、起動を許可したDisplay13 framebufferのclientだけにAGDP personalityを提供します。既定policyでcallback登録を有効にし、board-IDごとの上書き設定を不要にします。
+
 ### 内蔵パネルの輝度
 
 内蔵ディスプレイの輝度調整には、OpenCoreへ`SSDT-PNLF`を追加してください。
@@ -133,6 +135,10 @@ FBの立上げ時は、任意の`-wex-noaccel`引数でAcceleratorの起動を�
 Display 13ではGT資源のprobeも省略し、FB独自の起動メモリ・MMIOの確認は維持します。
 未対応のDisplayバックエンドを有効にする引数ではありません。
 
+開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
+`-wex-adlp-load-only` は選択済みADL-P/RPL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。
+`-wex-display13-offline` はDisplay 13のnative controller初期化を有効に保ち、選択した出力を未接続として扱います。FB診断でHPD/EDIDとmode設定を切り離すための設定で、表示成立を意味しません。
+
 ## 動作確認済みの機能と既知の問題
 
 | ハードウェア | 確認済みの機能 |
@@ -165,16 +171,8 @@ Safariのインストール先や更新による配置変更に依存せずData�
 
 ## ロードマップ
 
-- Alder Lake-H/P/UとRaptor Lake-H/P/Uへの対応。
-- Display 13 GPUでのUSB-C・内蔵画面対応。
+- Display 13 GPUでのDP・USB-C・内蔵画面対応の拡充。
 - 画面再接続の安定性改善とシステム全体のスリープ／復帰の調査。
-
-
-開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
-`-wex-adlp-load-only` は選択済みADL-P/RPL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。
-`-wex-display13-offline` はDisplay 13のnative controller初期化を有効に保ち、選択した出力を未接続として扱います。FB診断でHPD/EDIDとmode設定を切り離すための設定で、表示成立を意味しません。
-ADL-P/RPL-Pは物理IDとfuseから求めた資源で共有Display13バックエンドを選択します。固定HDMI配線はVBTから取得し、`-wex-noaccel`でFramebufferのみの動作を維持します。旧9A49 donor選択も受け付けますが不要です。モバイル系IDと対応providerを含むGraphics資材が必要で、Graphics 0.2.0には含まれていません。対応するCompat providerは、起動を許可したDisplay13 framebufferのclientだけにAGDP personalityを提供します。既定policyでcallback登録を有効にし、board-IDごとの上書き設定を不要にします。
-
 
 ## ビルドとテスト
 

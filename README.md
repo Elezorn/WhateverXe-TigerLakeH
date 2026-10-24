@@ -125,6 +125,8 @@ On supported GPUs, WhateverXe also normalizes the detected Intel Management
 Engine device name to `IMEI`, as WhateverGreen does. A separate ACPI rename
 from `HECI` or `MEI` to `IMEI` is unnecessary.
 
+ADL-P/RPL-P uses its physical ID and fuse-derived resources with the shared Display13 backend. Fixed HDMI routes come from VBT; `-wex-noaccel` retains framebuffer-only operation. A legacy 9A49 donor selector is accepted but unnecessary. Use matching Graphics payloads containing the mobile IDs and provider; Graphics 0.2.0 does not include them. The matching Compat provider supplies an AGDP personality only for the admitted Display13 framebuffer client. Its default policy keeps callback registration active without a board-ID-specific override.
+
 ### Internal-panel brightness
 
 Add `SSDT-PNLF` to OpenCore to enable internal-display brightness control.
@@ -179,6 +181,10 @@ startup. On Display 13 it also skips GT resource probing while preserving the
 framebuffer's independent boot-memory and MMIO checks. It does not enable an
 otherwise unsupported display backend.
 
+Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
+`-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on a selected ADL-P/RPL-P device, for load-only diagnostics without GPU initialization.
+`-wex-display13-offline` keeps Display 13 native controller initialization enabled but reports selected outputs as disconnected, isolating HPD/EDID and mode programming for framebuffer diagnostics. It does not establish display operation.
+
 ## Tested features and known issues
 
 | Hardware | Verified features |
@@ -217,16 +223,8 @@ installation or update location.
 
 ## Roadmap
 
-- Alder Lake-H/P/U and Raptor Lake-H/P/U support.
-- USB-C and internal-display support on Display 13 GPUs.
+- Complete Display 13 DP, USB-C and internal-display support.
 - Improve display reconnection reliability and investigate full system sleep/wake.
-
-
-Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
-`-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on a selected ADL-P/RPL-P device, for load-only diagnostics without GPU initialization.
-`-wex-display13-offline` keeps Display 13 native controller initialization enabled but reports selected outputs as disconnected, isolating HPD/EDID and mode programming for framebuffer diagnostics. It does not establish display operation.
-ADL-P/RPL-P uses its physical ID and fuse-derived resources with the shared Display13 backend. Fixed HDMI routes come from VBT; `-wex-noaccel` retains framebuffer-only operation. A legacy 9A49 donor selector is accepted but unnecessary. Use matching Graphics payloads containing the mobile IDs and provider; Graphics 0.2.0 does not include them. The matching Compat provider supplies an AGDP personality only for the admitted Display13 framebuffer client. Its default policy keeps callback registration active without a board-ID-specific override.
-
 
 ## Build and test
 
