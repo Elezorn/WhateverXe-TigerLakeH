@@ -109,8 +109,20 @@ int main(){
                0x64000ul,0x64100ul,0x46140ul,0x46144ul,0x60400ul,0x61400ul,0x60540ul,0x61540ul})
   assert(tglTransitionRegister(reg));
  for(auto reg:{0ul,0x45410ul,0x45451ul,0x138124ul,0x162001ul,0x163000ul,0x6D000ul,
-               0x164294ul,0xC7214ul,0x64200ul,0x64010ul})
+               0x164294ul,0xC7214ul,0x64010ul,0x64900ul,0x4614Cul,0x63400ul,0x63540ul})
   assert(!tglTransitionRegister(reg));
+ for(unsigned pipe=0;pipe<3;++pipe){
+  assert(tglTransitionRegister(0x60400+0x1000*pipe));
+  assert(tglTransitionRegister(0x60540+0x1000*pipe));
+  assert(tglTransitionRegister(0x46140+4*pipe));
+  assert(!tglTransitionRegister(0x60404+0x1000*pipe));
+ }
+ for(unsigned ddi=0;ddi<9;++ddi){
+  assert(tglTransitionRegister(0x64000+0x100*ddi));
+  assert(!tglTransitionRegister(0x64004+0x100*ddi));
+ }
+ tglDisplayTraceEnabled=false;
+ for(auto reg:{0x62400ul,0x62540ul,0x64500ul,0x46148ul})assert(!tglTransitionRegister(reg));
  munmap(inaccessible,4096);
  IOFree(tglTransitions,tglTransitionSlots*sizeof(TGLTransitionRecord));
  IOFree(tglTransitionFirst,tglTransitionFirstSlots*sizeof(TGLTransitionRecord));

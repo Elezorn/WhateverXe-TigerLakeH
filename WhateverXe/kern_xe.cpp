@@ -3308,14 +3308,19 @@ static bool tglTransitionRegister(unsigned long reg) {
  // change AUX reachability when the transmitter is enabled; retain native
  // PHY, PLL, route and panel-power ordering without additional hardware IO.
  if (reg & 3) return false;
+ // Cover each Display 12 pipe and physical DDI, independent of which
+ // connector owns the current path. These are filters, not MMIO probes.
+ const bool pipe=reg>=0x60000 && reg<0x63000 &&
+  ((reg&0xFFF)==0x400 || (reg&0xFFF)==0x540);
+ const bool buffer=reg>=0x64000 && reg<=0x64800 && !(reg&0xFF);
+ const bool clock=reg>=0x46140 && reg<=0x46148;
  return reg==0x45400 || reg==0x45404 || reg==0x45408 || reg==0x4540C || reg==0x45450 || reg==0x45454 ||
   reg==0x45440 || reg==0x45444 || reg==0x164280 || reg==0x46010 || reg==0x46014 ||
   (reg>=0x162000 && reg<0x163000) || (reg>=0x6C000 && reg<0x6D000) ||
   (reg>=0x164284 && reg<=0x164290) || (reg>=0xC7200 && reg<=0xC7210) ||
-  reg==0x64000 || reg==0x64100 || reg==0x46140 || reg==0x46144 ||
-  reg==0x60400 || reg==0x61400 || reg==0x60540 || reg==0x61540 ||
+  pipe || buffer || clock ||
   (reg>=0x163880 && reg<=0x1638A4) || reg==0x1638C0 ||
-  (reg>=0x4610C && reg<=0x46120) || reg==0x64300 || reg==0x64400;
+  (reg>=0x4610C && reg<=0x46120);
 }
 
 // Independent and nested training calls retain their own suppression scope.
