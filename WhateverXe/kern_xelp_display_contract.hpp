@@ -105,7 +105,7 @@ struct DisplayContract {
   return {PlatformADLS|(dp?Training12|Combo12|Fixed12:0)|
    (panel?Combo12|PanelDepth|PanelTiming|PanelPWM|AUXParent|PowerGet|PowerPut:0),installed};
  }
- static constexpr Mask DP13=SST13|AUX13|DPProbe13|DPBoot13;
+ static constexpr Mask DP13=SST13|AUX13|DPProbe13|DPBoot13|Training12|Framing;
  static DisplayContract display13(Mask installed,bool dp=false) {return {Backend13|(dp?DP13:0),installed};}
  static const char *name(Mask bit) {
   switch(bit) {

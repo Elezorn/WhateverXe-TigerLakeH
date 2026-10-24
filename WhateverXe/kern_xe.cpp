@@ -21,6 +21,7 @@
 #include "kern_display13_tc_native.hpp"
 #include "kern_display13_tc_clock.hpp"
 #include "kern_display13_tc_dp.hpp"
+#include "kern_display13_training_native.hpp"
 #include "kern_tgl_gmbus.hpp"
 #include "kern_alderlake_n_gpu.hpp"
 #include "kern_display13_fb_memory.hpp"
@@ -4392,6 +4393,7 @@ struct Display13FBPowerContext {
     OSObject *tcObject[4] {};
     uint32_t tcBusy[4] {};
     bool tcSignalReady[4] {};
+    Display13TC::DPRetainedLink tcDPLink[4];
     Display13FBPipeContext pipe[3];
     Display13Power::NativeBridge bridge;
     Display13Power::MainLinkAUX mainLink[2];
@@ -6312,7 +6314,7 @@ uint32_t XE::wrapDisplay13TCMode(OSObject *port,uint32_t wanted) {
     const auto owner=reinterpret_cast<uintptr_t>(c.controller),object=reinterpret_cast<uintptr_t>(port);
     const auto result=wanted?mode.connect(io,owner,object,ddi):mode.disconnect(io,owner,object,ddi);
     const bool done=result.status==Display13TC::Status::Complete;
-    if(!wanted && done){c.tcSignalReady[tc]=false;OSSafeReleaseNULL(c.tcObject[tc]);}
+    if(!wanted && done){c.tcSignalReady[tc]=false;c.tcDPLink[tc]={};OSSafeReleaseNULL(c.tcObject[tc]);}
     uint32_t record[]={1,ddi,wanted,uint32_t(result.status),uint32_t(result.phy.status),uint32_t(result.power.status),uint32_t(mode.phase),mode.disconnectPending};
     IOLockUnlock(c.lock);auto root=IORegistryEntry::getRegistryRoot();
     root->setProperty("WEXDisplay13TCMode",record,sizeof(record));
@@ -6340,7 +6342,12 @@ void XE::wrapDisplay13TCEnableClocks(void *controller,void *raw,void *other,uint
             const auto linkRate=Display13FBMemory::field<uint32_t>(port,0x128);
             const auto lanes=Display13FBMemory::field<uint32_t>(port,0x124);
             const auto plan=Display13TC::DPClock::calculate(linkRate,c.clock.refKHz);rate=plan.rate;
-            ok=Display13TC::DPSignal::startLink(io,p,plan,lanes,&stage);
+            ok=c.tcSignalReady[tc] && c.tcDPLink[tc].matches(io,p,plan,lanes);
+            if(ok)stage=Display13TC::Clock::LinkStage::Complete;
+            else {
+                ok=Display13TC::DPSignal::startLink(io,p,plan,lanes,&stage);
+                if(ok)c.tcDPLink[tc]={plan.rate,plan.reference,lanes};
+            }
         } else {
             rate=Display13TC::TMDSClock::nativeRate(params,c.clock.refIndex);
             const auto plan=Display13TC::TMDSClock::calculate(rate,c.clock.refKHz);
@@ -6357,11 +6364,17 @@ void XE::wrapDisplay13TCDisableClocks(void *controller,void *raw,void *other) {
     auto self=callbackXE;auto port=static_cast<OSObject *>(raw);auto &c=display13FBPower;
     auto config=port && port->getMetaClass()->getClassSize()>=0x580 ? Display13FBMemory::field<uint32_t *>(port,0x548):nullptr;
     if(config && config[0]<3){FunctionCast(wrapDisplay13TCDisableClocks,self->orgDisplay13TCDisableClocks)(controller,raw,other);return;}
+    // Native AGDC End ignores the port-disable return. Independently require
+    // transcoder stop before dropping DDI/PLL, including retry and abort paths.
+    if(config && config[0]<7 && (self->adlnOutputWiring.dp&(1U<<config[0])) && self->display13ClockOrderReady &&
+       !display13StopTranscoder(raw)) {
+        IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13ClockStopRejected",true);return;
+    }
     if(!c.lock)return;IOLockLock(c.lock);const auto ddi=display13TCTarget(port,true);bool ok=false;
     if(controller==c.controller && (!other || other==raw) && ddi<7 && !c.tcBusy[ddi-3]) {
         Display13FBTCIO io{port,ddi-3};Display13TC::Port p;Display13TC::Port::resolve(ddi,p);
         ok=Display13TC::Clock::stopLink(io,p);
-        if(ok)c.tcSignalReady[ddi-3]=false;
+        if(ok){c.tcSignalReady[ddi-3]=false;c.tcDPLink[ddi-3]={};}
     }
     if(!ok)adlnFault(c.clockFaulted,__LINE__);
     uint32_t record[]={1,ddi,ok};IOLockUnlock(c.lock);
@@ -6468,7 +6481,7 @@ uint32_t XE::wrapDisplay13TCLightUp(void *controller,void *rawFB,void *rawPath,c
             IOLockUnlock(c.lock);return ok;
         }
         void clocks() {
-            auto &c=display13FBPower;IOLockLock(c.lock);c.tcSignalReady[ddi-3]=false;IOLockUnlock(c.lock);
+            auto &c=display13FBPower;IOLockLock(c.lock);if(!dp)c.tcSignalReady[ddi-3]=false;IOLockUnlock(c.lock);
             reinterpret_cast<void (*)(void *,void *,void *)>(self->display13TCFullClocks)(controller,fb,path);
         }
         bool transClock(uint32_t reg,uint32_t value) {
@@ -6483,7 +6496,7 @@ uint32_t XE::wrapDisplay13TCLightUp(void *controller,void *rawFB,void *rawPath,c
         void signal(){wrapDisplay13TCSignal(object,0,0,nullptr);}
         uint32_t port(){return wrapDisplay13EnablePort(object);}
         uint32_t train(){
-            const auto r=reinterpret_cast<uint32_t (*)(void *,void *)>(self->display13DPTraining)(object,nullptr);
+            const auto r=wrapDisplay13PortTraining(object,nullptr);
             *(reinterpret_cast<uint8_t *>(fb)+0x4b84)=r!=0;return r;
         }
         void packets(){
@@ -6560,7 +6573,7 @@ bool XE::processDisplay13FramebufferTC(KernelPatcher &patcher,size_t index,mach_
             !memcmp(reinterpret_cast<void *>(address+change.offset),change.after,change.size);
         patcher.clearError();if(!applied)return false;
     }
-    display13FBDPHooksReady=true;display13FBPower.tcSupported=true;return true;
+    display13FBDPHooksReady=true;display13FBPower.tcSupported=true;return processDisplay13Training(patcher,index,address,size);
 }
 
 bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
@@ -6754,6 +6767,166 @@ uint32_t XE::wrapDisplay13RunAUX(void *port,uint32_t command,uint32_t *packet,ui
  IOLockUnlock(c.lock);return r ? r : complete ? 0 : kIOReturnNotReady;
 }
 
+bool XE::processDisplay13Training(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ if(!adlnOutputWiring.dp)return true;
+ using namespace Display13TrainingNative;
+ if(!display13FBDPHooksReady || !display13FBSSTHooksReady || !display13FBPowerReferencesReady ||
+    !orgDisplay13GMBusWrite || size<=0x91DA0)return false;
+ for(const auto &e:entries) {
+  const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,e.symbol,address,size);patcher.clearError();
+  if(fn!=address+e.offset || memcmp(reinterpret_cast<void *>(fn),e.prefix,sizeof(e.prefix)))return false;
+ }
+ for(const auto &span:spans)if(memcmp(reinterpret_cast<void *>(address+span.offset),span.bytes,span.length))return false;
+ tglPathPoolLock=IORecursiveLockAlloc();if(!tglPathPoolLock)return false;
+ for(unsigned ddi=0;ddi<TGLPortCount;++ddi)tglTrainingLeases[ddi].ddi=ddi;
+ orgTGLPathLookup=address+entries[Lookup].offset;tglPortByDDI=address+entries[Port].offset;
+ KernelPatcher::RouteRequest routes[]={
+  {entries[Begin].symbol,wrapTGLTrainingBegin,orgTGLTrainingBegin},
+  {entries[Train].symbol,wrapTGLTraining,orgTGLTraining},
+  {entries[End].symbol,wrapTGLTrainingEnd,orgTGLTrainingEnd},
+  {entries[AllocateAny].symbol,wrapTGLAllocatePathAny,orgTGLAllocatePathAny},
+  {entries[AllocateFixed].symbol,wrapTGLAllocatePathFixed,orgTGLAllocatePathFixed},
+  {entries[Free].symbol,wrapTGLFreePath,orgTGLFreePath},
+  {entries[Add].symbol,wrapTGLAddPath,orgTGLAddPath},
+  {entries[Resources].symbol,wrapTGLAllocatePathResources,orgTGLAllocatePathResources},
+  {entries[Stop].symbol,wrapTGLControllerStop,orgTGLControllerStop},
+  {entries[PortTrain].symbol,wrapDisplay13PortTraining,orgDisplay13PortTraining},
+ };
+ const bool routed=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
+ if(!routed)return false;
+ trainingLeaseDP13Mask=adlnOutputWiring.dp;
+ trainingLeaseValidate=display13LeaseValidate;trainingLeasePower=display13LeasePower;trainingLeaseStop=display13LeaseStop;
+ tglDisablePort=reinterpret_cast<mach_vm_address_t>(wrapDisplay13DisablePort);
+ tglDisableClocks=reinterpret_cast<mach_vm_address_t>(wrapDisplay13TCDisableClocks);
+ display13TrainingReady=tglTrainingLeaseReady=true;
+ display13FramingReady=display13ClockOrderReady=true;
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13TrainingReady",true);
+ return true;
+}
+
+// The native reservation/adoption algorithm is shared with Display12. This
+// adapter proves Display13 ownership and uses its IRQ-aware PG bridge.
+bool XE::display13LeaseValidate(void *controller,void *port,uint32_t pipe) {
+ auto s=callbackXE;auto &c=display13FBPower;if(!c.lock)return false;
+ IOLockLock(c.lock);auto p=display13SSTPort(port);
+ const bool bound=p && controller==c.controller && controller==s->adlnTopologyController &&
+  Display13FBMemory::field<void *>(controller,0xD40)==s->adlnPlatform &&
+  Display13FBMemory::field<void *>(controller,0xC8)==c.power &&
+  !c.bridge.state.faulted && !c.bridge.state.suspended;
+ Display13FBPowerIO io{c.map};
+ const bool ok=bound && (pipe==UINT32_MAX || c.bridge.pipeHeld(io,pipe));
+ if(ok)s->tglObservationController=controller;
+ IOLockUnlock(c.lock);return ok;
+}
+bool XE::display13LeasePower(void *power,uint32_t pg,bool acquire) {
+ return adlnPowerReference(power,acquire?1:2,pg);
+}
+bool XE::display13LeaseStop(void *controller,void *port) {
+ auto &c=display13FBPower;if(!c.lock || controller!=c.controller)return false;
+ const auto stopped=[&]() {
+  IOLockLock(c.lock);auto p=display13SSTPort(port);bool ok=false;
+  if(p) {
+   const auto ddi=Display13FBMemory::field<uint32_t>(p,0x120);Display13TC::Port phy;
+   if(Display13TC::Port::resolve(ddi,phy)) {
+    Display13FBTCIO io{static_cast<OSObject *>(port),ddi-3};
+    if(io.powerHeld()) {
+     const auto pll=io.read(phy.pll);
+     ok=pll!=UINT32_MAX && !(pll&0xcc000000U) && !c.bridge.nativeDDIRefs(ddi) && !c.tcSignalReady[ddi-3];
+    }
+   }
+  }
+  IOLockUnlock(c.lock);return ok;
+ };
+ if(stopped())return true;
+ // Native abort is void and can have left a retained clock. The TC teardown
+ // checks ownership/idle and never puts an absent DDI reference on a retry.
+ wrapDisplay13TCDisableClocks(controller,port,nullptr);return stopped();
+}
+bool XE::display13TrainingPath(void *path,uint32_t &ddi,uint32_t &pipe) {
+ auto s=callbackXE;
+ if(!s->display13TrainingReady || !s->tglPathPoolLock || !path)return false;
+ bool found=false;IORecursiveLockLock(s->tglPathPoolLock);
+ for(const auto &lease:s->tglTrainingLeases)if(lease.path==path && lease.busy &&
+   lease.trainingThread==current_thread() && lease.powerOwned && lease.prepared && !lease.adopted && !lease.endCleanupPending) {
+  auto fb=static_cast<IOService *>(lease.fb);auto object=static_cast<OSObject *>(path);
+  found=fb && fb->getMetaClass()->getClassSize()>=0x4B90 && object->getMetaClass()->getClassSize()>=0x3730 &&
+   lease.pipe<3 && lease.ddi<7 && (s->trainingLeaseDP13Mask&(1U<<lease.ddi)) &&
+   Display13FBMemory::field<void *>(path,0x32B0)==fb &&
+   Display13FBMemory::field<void *>(path,0x3648)==lease.port &&
+   Display13FBMemory::field<uint32_t>(path,0x3640)==lease.pipe &&
+   Display13FBMemory::field<uint32_t>(path,0x3644)==1 &&
+   !Display13FBMemory::field<uint32_t>(fb,0x49E8) && !Display13FBMemory::field<uint32_t>(fb,0x4A00) &&
+   Display13FBMemory::associations(s->adlnTopologyController,0x1C20,fb,fb->getMetaClass()->getClassSize(),
+    display13FBExpectedOwner(s->adlnTopologyController),true);
+  if(found){ddi=lease.ddi;pipe=lease.pipe;}break;
+ }
+ IORecursiveLockUnlock(s->tglPathPoolLock);return found;
+}
+uint32_t XE::wrapDisplay13PortTraining(void *port,void *request) {
+ auto s=callbackXE;auto &c=display13FBPower;
+ if(!s->display13FramingReady || display13HDMIPort(port))
+  return FunctionCast(wrapDisplay13PortTraining,s->orgDisplay13PortTraining)(port,request);
+ if(!c.lock)return kIOReturnNotReady;
+ IOLockLock(c.lock);auto p=display13SSTPort(port);
+ const bool valid=p && p[0x115]==1 && !p[0x117] && p[0x10]<=1 && p[0x11A]<=1;
+ if(valid)p[0x11A]&=p[0x10];
+ IOLockUnlock(c.lock);if(!valid)return kIOReturnNotReady;
+ return FunctionCast(wrapDisplay13PortTraining,s->orgDisplay13PortTraining)(port,request);
+}
+// Deferred native clock writes are per pipe and protected by the display
+// owner lock. The native port disable finishes them before PLL/DDI teardown.
+struct Display13DeferredClock {void *port {};uint32_t value {};bool pending {};};
+static Display13DeferredClock display13DeferredClocks[3];
+bool XE::display13DeferClock(void *access,uint64_t reg,uint32_t value,uintptr_t caller) {
+ auto s=callbackXE;auto &c=display13FBPower;
+ if(!s->display13ClockOrderReady || caller!=s->display13DPImage+0x4D990 || !c.lock ||
+    reg<0x46140 || reg>0x46148 || (reg&3))return false;
+ const auto pipe=unsigned((reg-0x46140)/4);void *port=nullptr;
+ // The native caller owns the path/FB mutex. Look up the real pool entry,
+ // including partial modesets not yet published to the scanout allocator.
+ for(unsigned ddi=3;ddi<7;++ddi)if(s->adlnOutputWiring.dp&(1U<<ddi)) {
+  auto candidate=reinterpret_cast<void *(*)(uint32_t)>(s->tglPortByDDI)(ddi);
+  auto path=candidate?reinterpret_cast<void *(*)(void *)>(s->orgTGLPathLookup)(candidate):nullptr;
+  if(path && Display13FBMemory::field<uint32_t>(path,0x3640)==pipe &&
+     Display13FBMemory::field<void *>(path,0x3648)==candidate) {port=candidate;break;}
+ }
+ IOLockLock(c.lock);Display13FBPowerIO power{c.map};
+ const bool selected=port && access==c.access;
+ if(selected) {
+  auto &deferred=display13DeferredClocks[pipe];
+  if(display13SSTPort(port) && c.bridge.pipeHeld(power,pipe) && !deferred.pending && !(value&0xf0000000U))deferred={port,value,true};
+  else adlnFault(c.clockFaulted,__LINE__);
+ }
+ IOLockUnlock(c.lock);return selected;
+}
+bool XE::display13StopTranscoder(void *port) {
+ auto s=callbackXE;auto &c=display13FBPower;
+ if(!s->display13ClockOrderReady || !s->orgTGLPathLookup || !c.lock)return false;
+ auto path=reinterpret_cast<void *(*)(void *)>(s->orgTGLPathLookup)(port);
+ if(!path)return true; // A failed early probe may have no pipe at all.
+ auto object=static_cast<OSObject *>(path);
+ if(object->getMetaClass()->getClassSize()<0x3730)return false;
+ const auto pipe=Display13FBMemory::field<uint32_t>(path,0x3640);
+ if(pipe>=3 || Display13FBMemory::field<void *>(path,0x3648)!=port)return false;
+ IOLockLock(c.lock);auto p=display13SSTPort(port);Display13FBPowerIO power{c.map};bool ok=false;
+ if(p && c.bridge.pipeHeld(power,pipe)) {
+  const auto ddi=Display13FBMemory::field<uint32_t>(port,0x120);Display13FBSSTIO io{c.map};
+  const auto buffer=io.read(0x64000+0x100*ddi),conf=io.read(0x70008+0x1000*pipe),
+   func=io.read(0x60400+0x1000*pipe),tp=io.read(0x60540+0x1000*pipe),clock=io.read(0x46140+4*pipe);
+  auto &deferred=display13DeferredClocks[pipe];
+  ok=buffer!=UINT32_MAX && conf!=UINT32_MAX && func!=UINT32_MAX && tp!=UINT32_MAX && clock!=UINT32_MAX &&
+   !(buffer&0x80000000U) && !(conf&0xc0000000U) && !((func|tp)&0x80000000U) &&
+   (!(clock&0xf0000000U) || (clock>>28)==ddi+3) && (!deferred.pending || deferred.port==port);
+  if(ok) {
+   if(!(buffer&0x80U))IODelay(8); // DDI disable: idle or >=8us before clock removal.
+   const auto value=deferred.pending?deferred.value:(clock&0x0fffffffU);
+   io.write(0x46140+4*pipe,value);ok=io.read(0x46140+4*pipe)==value;
+   if(ok)deferred={};
+  }
+ }
+ IOLockUnlock(c.lock);return ok;
+}
+
 bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
  // Install the bounded Combo backend independently of selecting DP at startup.
  // Startup still requires AUX/probe and DP boot-handoff operation closure.
@@ -6855,6 +7028,7 @@ uint32_t XE::wrapDisplay13DisablePort(void *port) {
   return FunctionCast(wrapDisplay13DisablePort,s->orgDisplay13DisablePort)(port);
  if(!display13MainLinkAUX(port,true))return kIOReturnNotReady;
  const auto result=FunctionCast(wrapDisplay13DisablePort,s->orgDisplay13DisablePort)(port);
+ if(!result && s->display13ClockOrderReady && !display13StopTranscoder(port))return kIOReturnNotReady;
  const bool released=display13MainLinkAUX(port,false);
  return result ? result : released ? 0 : kIOReturnNotReady;
 }
@@ -6893,13 +7067,19 @@ uint32_t XE::wrapDisplay13TrainingPattern(void *path,uint32_t pattern) {
  if(!c.lock || !object || object->getMetaClass()->getClassSize()<0x3730)return kIOReturnNotReady;
  if(display13HDMIPort(Display13FBMemory::field<void *>(path,0x3648)))
   return FunctionCast(wrapDisplay13TrainingPattern,s->orgDisplay13TrainingPattern)(path,pattern);
+ uint32_t reservedDDI=UINT32_MAX,reservedPipe=UINT32_MAX;
+ const bool reserved=display13TrainingPath(path,reservedDDI,reservedPipe);
  // Never hold the nonrecursive power lock over donor training or AUX calls.
  // Both register stages revalidate the graph, logical leases and live power.
  const auto program=[&](bool before) {
   IOLockLock(c.lock);bool ok=false;
   auto p=display13SSTPort(Display13FBMemory::field<void *>(path,0x3648));
   auto fb=Display13FBMemory::field<IOService *>(path,0x32B0);
-  const auto binding=p ? adlnInspectPathBinding(fb,object,s->adlnPlatform,s->adlnOutputWiring,false) : TGLFBBinding::Readout{};
+  auto binding=p ? adlnInspectPathBinding(fb,object,s->adlnPlatform,s->adlnOutputWiring,false) : TGLFBBinding::Readout{};
+  if(p && reserved && reservedDDI==Display13FBMemory::field<uint32_t>(p,0x120) &&
+     reservedPipe==Display13FBMemory::field<uint32_t>(path,0x3640)) {
+   binding.status=TGLFBBinding::Status::Complete;binding.ddi=reservedDDI;binding.pipe=reservedPipe;
+  }
   Display13FBPowerIO io{c.map};
   if(binding.status==TGLFBBinding::Status::Complete && c.bridge.outputHeld(io,binding.ddi,binding.pipe)) {
    Display13FBSSTIO registers{c.map};
@@ -7189,6 +7369,7 @@ void XE::wrapAlderLakeNGamma10(void *path,void *transaction,uint32_t control) {
 }
 
 void XE::wrapDisplay13GMBusWrite(void *access,uint64_t reg,uint32_t value) {
+    if(display13DeferClock(access,reg,value,reinterpret_cast<uintptr_t>(__builtin_return_address(0))))return;
     // DISPLAY13_COMBO_FRACTION: qualified nominal writer, physical reference,
     // retained controller/manager. No MMIO or other port's PLL inference.
     if(callbackXE->display13FramebufferRequested && callbackXE->xeProfile.display==XELP::Display::XeLPD &&
@@ -9571,8 +9752,8 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 	if(result.status==Display13Power::Status::Complete)wrapAlderLakeNEngineEnable(power);
 }
 
-void XE::adlnPowerReference(void *power,uint32_t operation,uint32_t domain) {
-	auto &c=display13FBPower; if(!c.lock)return;
+bool XE::adlnPowerReference(void *power,uint32_t operation,uint32_t domain) {
+	auto &c=display13FBPower; if(!c.lock)return false;
 	if(operation==1 && domain>=1 && domain<=4 && power==c.power) {
 		IOLockLock(c.lock);const bool enable=!c.engineEnabled && !c.bridge.state.suspended && !c.bridge.state.faulted;IOLockUnlock(c.lock);
 		if(enable)wrapAlderLakeNEngineEnable(power);
@@ -9723,6 +9904,7 @@ void XE::adlnPowerReference(void *power,uint32_t operation,uint32_t domain) {
 	// the gate this invocation acquired without waiting, including failure.
 	// No ACK, queue rewrite, source replacement or refcount substitution.
 	if(acquiredGate)reinterpret_cast<void (*)(IOWorkLoop *)>(callbackXE->adlnWorkLoopOpen)(acquiredGate);
+ return result.status==Display13Power::Status::Complete;
 }
 void XE::wrapAlderLakeNPowerGetPG(void *p,uint32_t d) { adlnPowerReference(p,1,d); }
 void XE::wrapAlderLakeNPowerPutPG(void *p,uint32_t d) { adlnPowerReference(p,2,d); }
@@ -12431,6 +12613,9 @@ XELP::DisplayContract::Mask XE::display13Available() const {
  // Startup still requires the existing TMDS GOP certificate. Fixed TC DP
  // is a cold link on that admitted controller; DP GOP adoption stays closed.
  if(display13FBDPHooksReady && display13TCDPProbeReady)a|=C::DPBoot13;
+ if(display13TrainingReady)a|=C::Training12;
+ if(display13FramingReady)a|=C::Framing;
+ if(!display13ClockOrderReady)a&=~C::ClockOrder;
  return a;
 }
 
@@ -16186,7 +16371,8 @@ uint32_t XE::wrapTGLAGDCPortStatus(void *controller, void *request, void *output
 // the resource pool multi-port must not silently enable an unimplemented PHY.
 XE::TGLTrainingLease *XE::tglTrainingLeaseForDDI(uint32_t ddi) {
 	auto s = callbackXE;
-	if (!s->tglTrainingLeaseReady || ddi >= TGLPortCount || !s->tglDPSSTEligible(ddi)) return nullptr;
+	if (!s->tglTrainingLeaseReady || ddi >= TGLPortCount ||
+        !(s->trainingLeaseValidate ? (s->trainingLeaseDP13Mask & (1U<<ddi)) : s->tglDPSSTEligible(ddi))) return nullptr;
 	auto &lease = s->tglTrainingLeases[ddi];
 	return &lease;
 }
@@ -16260,8 +16446,10 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 	auto port = static_cast<uint8_t *>(reinterpret_cast<void *(*)(uint32_t)>(s->tglPortByDDI)(lease.ddi));
 	if (!ctl || !port) return 1;
 	const auto route=s->tglSSTRoutes().external(lease.ddi,*reinterpret_cast<uint32_t *>(port + 0x550));
-	if (*reinterpret_cast<void **>(ctl + 0xD40) != s->tglPlatformCopy ||
-		!route.needsLease() || port[0x117]) return 1;
+	if (s->trainingLeaseValidate) {
+        if(!s->trainingLeaseValidate(controller,port,UINT32_MAX))return 1;
+    } else if (*reinterpret_cast<void **>(ctl + 0xD40) != s->tglPlatformCopy ||
+        !route.needsLease() || port[0x117]) return 1;
 	auto access = *reinterpret_cast<uint8_t **>(ctl + 0xC40);
 	auto power = *reinterpret_cast<void **>(ctl + 0xC8);
 	if (!access || !power || *reinterpret_cast<uint32_t *>(access + 0x60) < 0x16A000 ||
@@ -16274,6 +16462,9 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 	}
 	lease.busy = true;
 	if (lease.path) {
+        if(s->trainingLeaseValidate && (!lease.powerOwned || !lease.prepared || lease.adopted)) {
+            lease.busy=false;IORecursiveLockUnlock(s->tglPathPoolLock);return 8;
+        }
 		IORecursiveLockUnlock(s->tglPathPoolLock);
 		tglObserveTrainingLease(lease, 1, 0);
 		return 0;
@@ -16305,11 +16496,11 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 		lease.busy = false; IORecursiveLockUnlock(s->tglPathPoolLock); return 7;
 	}
 	lease.path = path; lease.port = port; lease.fb = fb; lease.power = power;
-	lease.busy = true; lease.adopted = false; ++lease.generation;
+	lease.busy = true; lease.adopted = false; lease.prepared=false; ++lease.generation;
 	lease.clocksActive = false; lease.endCleanupPending = false; lease.pipe = pipe;
 	// Own both consumers. Pipe A alone needs PW1, but a TC-numbered lane
 	// still needs PW1..3 even when firmware/AUX/other displays hold no refs.
-	lease.pg = route.powerGroup(pipe);
+	lease.pg = s->trainingLeaseValidate ? (pipe ? pipe+2 : 1) : route.powerGroup(pipe);
 	static_cast<OSObject *>(lease.fb)->retain();
 	static_cast<OSObject *>(lease.port)->retain();
 	static_cast<OSObject *>(lease.power)->retain();
@@ -16319,9 +16510,17 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 	// Keep the selected domain powered while checking, training and restoring
 	// its registers. No pool lock is held across native power waits.
 	SYSLOG("igfx", "TGL330 prepare power-enter ddi=%u pipe=%u pg=%u", lease.ddi, pipe, lease.pg);
-	reinterpret_cast<void (*)(void *, uint32_t)>(s->tglEnablePG)(power, lease.pg);
+	if(s->trainingLeasePower) {
+        if(!s->trainingLeasePower(power,lease.pg,true)) {
+            IORecursiveLockLock(s->tglPathPoolLock);lease.busy=false;IORecursiveLockUnlock(s->tglPathPoolLock);
+            return 8; // Keep the native reservation on an unproven power transition.
+        }
+    } else reinterpret_cast<void (*)(void *, uint32_t)>(s->tglEnablePG)(power, lease.pg);
 	SYSLOG("igfx", "TGL330 prepare power-return ddi=%u", lease.ddi);
 	lease.powerOwned = true;
+    if(s->trainingLeaseValidate && !s->trainingLeaseValidate(controller,port,pipe)) {
+        IORecursiveLockLock(s->tglPathPoolLock);lease.busy=false;IORecursiveLockUnlock(s->tglPathPoolLock);return 8;
+    }
 	const uint32_t clock = *reinterpret_cast<volatile uint32_t *>(mmio + 0x46140 + 4*pipe);
 	const uint32_t func = *reinterpret_cast<volatile uint32_t *>(mmio + 0x60400 + 0x1000*pipe);
 	const uint32_t tp = *reinterpret_cast<volatile uint32_t *>(mmio + 0x60540 + 0x1000*pipe);
@@ -16331,7 +16530,11 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 		// No training register was changed. Drop only this reservation and its
 		// power reference; never restore over unexpected live hardware.
 		tglObserveTrainingLease(lease, 0, 5);
-		reinterpret_cast<void (*)(void *, uint32_t)>(s->tglDisablePG)(power, lease.pg);
+		if(s->trainingLeasePower) {
+            if(!s->trainingLeasePower(power,lease.pg,false)) {
+                IORecursiveLockLock(s->tglPathPoolLock);lease.busy=false;IORecursiveLockUnlock(s->tglPathPoolLock);return 8;
+            }
+        } else reinterpret_cast<void (*)(void *, uint32_t)>(s->tglDisablePG)(power, lease.pg);
 		IORecursiveLockLock(s->tglPathPoolLock);
 		reinterpret_cast<void (*)(void *)>(s->orgTGLFreePath)(path);
 		lease.path = lease.port = lease.fb = lease.power = nullptr;
@@ -16342,7 +16545,7 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 		return 5;
 	}
 	SYSLOG("igfx", "TGL330 prepare registers-valid ddi=%u", lease.ddi);
-	lease.savedClock = clock; lease.savedFunc = func; lease.savedTP = tp;
+	lease.savedClock = clock; lease.savedFunc = func; lease.savedTP = tp;lease.prepared=true;
 	tglObserveTrainingLease(lease, 0, 0);
 	tglObserveTrainingLease(lease, 1, 0);
 	return 0;
@@ -16353,9 +16556,11 @@ bool XE::tglReleaseTrainingLease(TGLTrainingLease &lease, bool disableLink) {
 	auto s = callbackXE;
 	const auto pipe = lease.pipe;
 	if (!lease.path) return true;
-	if (!lease.powerOwned || pipe >= 3 || lease.ddi >= TGLPortCount) return false;
+	if (!lease.powerOwned || pipe >= 3 || lease.ddi >= TGLPortCount ||
+        (s->trainingLeaseValidate && (!lease.prepared || lease.adopted))) return false;
 	auto fb = static_cast<uint8_t *>(lease.fb);
 	auto ctl = *reinterpret_cast<void **>(fb + 0x1D0);
+    if(s->trainingLeaseValidate && !s->trainingLeaseValidate(ctl,lease.port,pipe))return false;
 	auto access = *reinterpret_cast<uint8_t **>(fb + 0x4A40);
 	auto mmio = *reinterpret_cast<volatile uint8_t **>(access + 0x50);
 	tglObserveTrainingLease(lease, 4, 0, disableLink);
@@ -16385,6 +16590,9 @@ bool XE::tglReleaseTrainingLease(TGLTrainingLease &lease, bool disableLink) {
 	if (!hardwareIdle()) {
 		tglObserveTrainingLease(lease, 4, 1); return false; // never free active or unreadable hardware
 	}
+    if(s->trainingLeaseStop && !s->trainingLeaseStop(ctl,lease.port)) {
+        tglObserveTrainingLease(lease,4,6);return false;
+    }
 	*reinterpret_cast<volatile uint32_t *>(mmio + 0x46140 + 4*pipe) = lease.savedClock;
 	(void)*reinterpret_cast<volatile uint32_t *>(mmio + 0x46140 + 4*pipe);
 	*reinterpret_cast<volatile uint32_t *>(mmio + 0x60400 + 0x1000*pipe) = lease.savedFunc;
@@ -16398,7 +16606,8 @@ bool XE::tglReleaseTrainingLease(TGLTrainingLease &lease, bool disableLink) {
 	}
 	if (lease.powerOwned) {
   tglTransitionRecord(37,false,lease.power,lease.pg,lease.ddi,0);
-  reinterpret_cast<void (*)(void *, uint32_t)>(s->tglDisablePG)(lease.power, lease.pg);
+  if(s->trainingLeasePower) {if(!s->trainingLeasePower(lease.power,lease.pg,false))return false;}
+  else reinterpret_cast<void (*)(void *, uint32_t)>(s->tglDisablePG)(lease.power, lease.pg);
   tglTransitionRecord(37,true,lease.power,lease.pg,lease.ddi,0);
  }
 	lease.powerOwned = false;
@@ -16450,7 +16659,13 @@ void XE::wrapTGLControllerStop(void *controller, IOService *provider) {
 	IORecursiveLockUnlock(s->tglPathPoolLock);
 	// Native resource allocation runs outside the pool lock too. Drain those
 	// FB claims before touching their leases or tearing down the native pool.
-	for (;;) {
+	for (unsigned waited=0;;++waited) {
+        if(s->trainingLeaseValidate && waited==500) {
+            // A void stop cannot cancel an in-flight native call. Keep the
+            // controller/pool alive when refusing teardown; admission is closed.
+            if(__sync_bool_compare_and_swap(&s->tglStopRetained,false,true))static_cast<OSObject *>(controller)->retain();
+            IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13StopBusy",true);return;
+        }
 		IORecursiveLockLock(s->tglPathPoolLock);
 		bool allocating = false;
 		for (auto fb : s->tglAllocatingFB) allocating |= fb != nullptr;
@@ -16461,7 +16676,13 @@ void XE::wrapTGLControllerStop(void *controller, IOService *provider) {
 	// Block new reservations first, then drain every existing port. Do not hold
 	// the shared pool lock across native power waits or port shutdown.
 	for (auto &lease : s->tglTrainingLeases) {
-		for (;;) {
+		for (unsigned waited=0;;++waited) {
+            if(s->trainingLeaseValidate && waited==500) {
+                // A void stop cannot cancel an in-flight native call. Keep the
+            // controller/pool alive when refusing teardown; admission is closed.
+            if(__sync_bool_compare_and_swap(&s->tglStopRetained,false,true))static_cast<OSObject *>(controller)->retain();
+            IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13StopBusy",true);return;
+            }
 			IORecursiveLockLock(s->tglPathPoolLock);
 			if (!lease.busy) { lease.busy = true; IORecursiveLockUnlock(s->tglPathPoolLock); break; }
 			IORecursiveLockUnlock(s->tglPathPoolLock);
@@ -16479,9 +16700,20 @@ void XE::wrapTGLControllerStop(void *controller, IOService *provider) {
 			IORecursiveLockUnlock(s->tglPathPoolLock);
 			fb->release(); port->release(); power->release();
 		}
+		if (s->trainingLeaseValidate) {
+			// This stop owns the claim. Admission remains closed; release it so
+			// a later stop can retry if another lease is still in flight.
+			IORecursiveLockLock(s->tglPathPoolLock);
+			lease.busy = false;
+			IORecursiveLockUnlock(s->tglPathPoolLock);
+		}
 	}
 	FunctionCast(wrapTGLControllerStop, s->orgTGLControllerStop)(controller, provider);
  tglRecordStartOrder(8,controller);
+ if(__sync_bool_compare_and_swap(&s->tglStopRetained,true,false)) {
+     IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13StopBusy",false);
+     static_cast<OSObject *>(controller)->release();
+ }
 }
 
 uint32_t XE::wrapTGLTrainingBegin(void *controller, void *request) {
@@ -16548,6 +16780,7 @@ uint32_t XE::wrapTGLTraining(void *controller, void *request, void *output) {
 		r = kIOReturnBusy;
 	} else {
 		SYSLOG("igfx", "TGL330 training native-enter id=%u", id);
+        if(selected) {IORecursiveLockLock(callbackXE->tglPathPoolLock);selected->trainingThread=current_thread();IORecursiveLockUnlock(callbackXE->tglPathPoolLock);}
 		r = FunctionCast(wrapTGLTraining, callbackXE->orgTGLTraining)(controller, request, output);
 		SYSLOG("igfx", "TGL330 training native-return id=%u result=%x", id, r);
 	}
@@ -16558,7 +16791,7 @@ uint32_t XE::wrapTGLTraining(void *controller, void *request, void *output) {
 			lease.clocksActive = true;
 		tglObserveTrainingLease(lease, 2, r, output ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(output) + 0x38) : 0xFFFFFFFFU);
 		IORecursiveLockLock(callbackXE->tglPathPoolLock);
-		lease.busy = false;
+		lease.busy = false;lease.trainingThread=nullptr;
 		IORecursiveLockUnlock(callbackXE->tglPathPoolLock);
 	}
 	tglObservePath(observedPort, nullptr, 6, true, r, output ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(output) + 0x38) : 0, __builtin_return_address(0));
@@ -16865,7 +17098,18 @@ bool XE::wrapTGLAllocatePathResources(void *fb, uint32_t portIndex, uint32_t str
 		if (selected->adopted) {
 			// Native addDisplayPath populated the map/FB arrays and the caller
 			// acquired its own PG reference. Drop only our extra reservation ref.
-			if (selected->powerOwned) reinterpret_cast<void (*)(void *, uint32_t)>(s->tglDisablePG)(selected->power, selected->pg);
+			if (selected->powerOwned) {
+                if(s->trainingLeasePower) {
+                    if(!s->trainingLeasePower(selected->power,selected->pg,false)) {
+                        // Native owns the adopted path; retain only our extra power/object
+                        // references. Never hand that path out for a second adoption.
+                        IORecursiveLockLock(s->tglPathPoolLock);
+                        selected->endCleanupPending=true;selected->adoptThread=nullptr;selected->busy=false;
+                        if(claimed)s->tglAllocatingFB[portIndex]=nullptr;
+                        IORecursiveLockUnlock(s->tglPathPoolLock);return false;
+                    }
+                } else reinterpret_cast<void (*)(void *, uint32_t)>(s->tglDisablePG)(selected->power,selected->pg);
+            }
 			selected->powerOwned = false;
 			tglObserveTrainingLease(*selected, 8, r ? 0 : 1);
 			auto oldFB = static_cast<OSObject *>(selected->fb);

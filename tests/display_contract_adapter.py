@@ -16,7 +16,7 @@ code=r'''
 using C=XELP::DisplayContract;
 struct State {
 FIELDS
- bool display13FBDPHooksReady=false,display13TCDPProbeReady=false;
+ bool display13FBDPHooksReady=false,display13TCDPProbeReady=false,display13ClockOrderReady=true;
  struct Native {bool valid=true;bool complete()const{return valid;}}tglTCNativeFunctions;
  bool tglHDMIB=false,adlsDisplaySelected=false,tglTrainingLeaseRequested=true;
  struct {struct {bool valid=false;}panel;}firmwarePorts;
@@ -29,7 +29,7 @@ METHODS
 int main() {
  State s;
  assert(s.display12Available()==((1ULL<<39)-1|C::ClockOrder|C::ComboAUXGate|C::PanelDepth|C::PanelTiming|C::PanelPWM));
- assert(s.display13Available()==(C::Backend13|C::SST13|C::AUX13|C::DPProbe13));
+ assert(s.display13Available()==(C::Backend13|C::SST13|C::AUX13|C::DPProbe13|C::Training12|C::Framing));
  assert(C::display13(s.display13Available(),true).missing()==C::DPBoot13);
  s.display13DPProbeReady=false;
  assert(C::display13(s.display13Available()).ready()); // Existing provider/HDMI stays valid.
@@ -41,6 +41,11 @@ int main() {
  s.display13FBSSTHooksReady=true;
  s.display13FBDPHooksReady=true;assert(C::display13(s.display13Available(),true).missing()==C::DPBoot13);
  s.display13TCDPProbeReady=true;assert(C::display13(s.display13Available(),true).ready());
+ s.display13TrainingReady=false;assert(C::display13(s.display13Available(),true).missing()==C::Training12);
+ s.display13TrainingReady=true;s.display13ClockOrderReady=false;
+ assert(C::display13(s.display13Available(),true).missing()==C::ClockOrder);
+ s.display13ClockOrderReady=true;s.display13FramingReady=false;
+ assert(C::display13(s.display13Available(),true).missing()==C::Framing);s.display13FramingReady=true;
  s.display13FBDPHooksReady=false;assert(C::display13(s.display13Available(),true).missing()==C::DPBoot13);
  // TGL: candidate not yet registered, native donor setup is complete.
  // Missing framing, AUX, mode lock or cleanup must fail before any hotplug.

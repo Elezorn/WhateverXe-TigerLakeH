@@ -148,6 +148,17 @@ private:
  static uint32_t wrapDisplay13EnablePort(void *port);
  static uint32_t wrapDisplay13DisablePort(void *port);
  bool processDisplay13FramebufferSST(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ bool display13TrainingReady {},display13FramingReady {},display13ClockOrderReady {};
+ mach_vm_address_t orgDisplay13PortTraining {};
+ bool processDisplay13Training(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ static bool display13LeaseValidate(void *controller,void *port,uint32_t pipe);
+ static bool display13LeasePower(void *power,uint32_t pg,bool acquire);
+ static bool display13LeaseStop(void *controller,void *port);
+ static bool display13TrainingPath(void *path,uint32_t &ddi,uint32_t &pipe);
+ static uint32_t wrapDisplay13PortTraining(void *port,void *request);
+ static bool display13StopTranscoder(void *port);
+ static bool display13DeferClock(void *access,uint64_t reg,uint32_t value,uintptr_t caller);
+
  static uint8_t *display13SSTPort(void *port);
  static bool display13HDMIPort(void *port);
  static uint32_t wrapDisplay13TrainingPattern(void *path,uint32_t pattern);
@@ -284,7 +295,7 @@ private:
 	static void wrapAlderLakeNPowerPutDDI(void *power, uint32_t ddi);
 	static void wrapAlderLakeNPowerGetAUX(void *power, uint32_t aux);
 	static void wrapAlderLakeNPowerPutAUX(void *power, uint32_t aux);
-	static void adlnPowerReference(void *power, uint32_t operation, uint32_t domain);
+	static bool adlnPowerReference(void *power, uint32_t operation, uint32_t domain);
 	static Display13Clock::Readout adlnClockReadout(IOService *controller);
 	static void wrapAlderLakeNClockInit(IOService *controller);
 	static uint64_t wrapAlderLakeNClockProbe(IOService *controller);
@@ -393,16 +404,23 @@ private:
 	// One reservation per physical port; the native pool limits simultaneous pipes.
 	struct TGLTrainingLease {
 		void *path {}, *port {}, *fb {}, *power {}, *adoptThread {};
-		bool busy {}, powerOwned {}, adopted {}, clocksActive {};
+		bool busy {}, powerOwned {}, adopted {}, clocksActive {}, prepared {};
+        void *trainingThread {};
 		// Native abort-End already ran; retry only our retained cleanup.
 		bool endCleanupPending {};
 		uint32_t generation {}, savedClock {}, savedFunc {}, savedTP {};
 		uint32_t pipe {}, pg {1}, ddi {};
 	};
-	static constexpr uint32_t TGLPortCount = 9;
+	// Optional Display13 adapter. The native pool/adoption protocol is shared;
+    // register domains, identity and power results remain backend-specific.
+    uint32_t trainingLeaseDP13Mask {};
+    bool (*trainingLeaseValidate)(void *,void *,uint32_t) {};
+    bool (*trainingLeasePower)(void *,uint32_t,bool) {};
+    bool (*trainingLeaseStop)(void *,void *) {};
+    static constexpr uint32_t TGLPortCount = 9;
 	TGLTrainingLease tglTrainingLeases[TGLPortCount] {};
 	void *tglAllocatingFB[TGLPortCount] {};
-	bool tglLeasesStopping {};
+	bool tglLeasesStopping {},tglStopRetained {};
 	static TGLTrainingLease *tglTrainingLeaseForDDI(uint32_t ddi);
 	static TGLTrainingLease *tglAdoptingLease(); // caller holds the pool lock
 	static bool tglLeaseFBReserved(void *fb, const TGLTrainingLease *except = nullptr);

@@ -31,6 +31,24 @@ struct DPClock : TMDSClock {
         return {};
     }
 };
+// Retain only a link programmed by this owner, with matching live PLL/FIA.
+// AGDC success leaves it enabled before native adoption and LightUp.
+struct DPRetainedLink {
+    uint32_t rate {},reference {},lanes {};
+    template<class IO> bool matches(IO &io,const Port &p,const TMDSClock &plan,unsigned count) const {
+        if(!plan.valid() || !rate || rate!=plan.rate || reference!=plan.reference || lanes!=count ||
+           (count!=1 && count!=2 && count!=4) || !io.owned(p.ddi) || !io.linkHeld())return false;
+        const uint32_t registers[]={p.pll,p.clock,Clock::Gate,Clock::laneRegister(p.tc)};
+        for(auto reg:registers)if(!io.readable(reg) || io.read(reg)==UINT32_MAX)return false;
+        if((io.read(p.pll)&0xcc000000U)!=0xcc000000U || (io.read(p.clock)&0xf0000000U)!=0x80000000U ||
+           (io.read(Clock::Gate)&Clock::gateBit(p.tc)) ||
+           (io.read(Clock::laneRegister(p.tc))&Clock::laneMask(p.tc))!=((1U<<count)-1)<<(4*(p.tc&1)))return false;
+        for(const auto &word:plan.words) {
+            uint32_t value=0;if(!PHY::access(io,p,word.reg,word.mask,value,false) || (value&word.mask)!=word.value)return false;
+        }
+        return true;
+    }
+};
 struct DPSignal {
     static bool coefficients(uint32_t rate,uint32_t swing,uint32_t emphasis,uint32_t &value) {
         if((rate!=6 && rate!=10 && rate!=20 && rate!=30) || swing>3 || emphasis>3 || swing+emphasis>3)return false;

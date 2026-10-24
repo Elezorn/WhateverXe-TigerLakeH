@@ -51,7 +51,7 @@ int main() {
  auto d13=C::display13(~0ULL);faults(d13);
  auto dp13=C::display13(~0ULL,true);faults(dp13);
  assert(dp13.required==(d13.required|C::DP13));
- assert(C::display13(C::Backend13|C::SST13|C::AUX13|C::DPProbe13,true).missing()==C::DPBoot13);
+ assert(C::display13(C::Backend13|C::SST13|C::AUX13|C::DPProbe13,true).missing()==(C::DPBoot13|C::Training12|C::Framing));
  assert(d13.required==(C::Power13|C::Clock13|C::MemoryGroup13|C::IRQ13|C::WMLayout13|C::Output13|C::Topology13));
  printf("PASS %u route combinations, union composition and all single-operation failures/restores\n",cases);
 }

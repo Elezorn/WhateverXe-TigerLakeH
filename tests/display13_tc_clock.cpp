@@ -23,6 +23,7 @@ struct IO {
               {Clock::Gate,0xdeadffff|Clock::gateBit(p.tc)},{p.hip,0x01010101},{Clock::laneRegister(p.tc),0xa5a50000}};
         for(auto w:TMDSClock::calculate(148500,38400).words)bank[w.reg]=0xa5a5a5a5;
     }
+    bool linkHeld(){return power&&link;}
     bool powerHeld(){return power;}
     bool owned(unsigned d){return owner && d==p.ddi;}
     bool quiescent(unsigned d){return idle && d==p.ddi;}
@@ -65,7 +66,13 @@ int main() {
                 assert((io.bank[group*0x1000+0xa0]&0xc0)==(lanes==1?(group?0x40U:0U):0x80U));
                 assert(!(io.bank[group*0x1000+0x2c8]&0x7c));
             }
-            io.idle=false; // Training signal changes are valid with a live buffer.
+            DPRetainedLink retained{plan.rate,plan.reference,lanes};
+            assert(retained.matches(io,io.p,plan,lanes));
+            auto mismatch=retained;mismatch.lanes=lanes==4?2:4;assert(!mismatch.matches(io,io.p,plan,lanes));
+            const auto pll=io.regs[io.p.pll];io.regs[io.p.pll]&=~Clock::Locked;
+            assert(!retained.matches(io,io.p,plan,lanes));io.regs[io.p.pll]=pll;
+            io.idle=false;assert(retained.matches(io,io.p,plan,lanes)); // Active training link is retained.
+            // Training signal changes are valid with a live buffer.
             for(unsigned swing=0;swing<4;++swing)for(unsigned pre=0;pre+swing<4;++pre)assert(DPSignal::program(io,io.p,rates[i],swing,pre));
             assert(!DPSignal::program(io,io.p,rates[i],3,1));
             io.idle=true;assert(Clock::stopLink(io,io.p) && io.linkPuts==1);

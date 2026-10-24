@@ -56,6 +56,9 @@ struct Display13FBSSTIO {
 bool adlnWriterMappingBound(){return bound;}
 uintptr_t display13FBExpectedOwner(void*){return 0;}
 struct XE {
+ bool display13ClockOrderReady=false;
+ static bool display13StopTranscoder(void*){assert(false);return false;}
+ static bool display13TrainingPath(void*,uint32_t&,uint32_t&){return false;}
  bool display13FramebufferRequested=true,display13FBSSTHooksReady=true,display13FBTCHooksReady=false;XELP::Profile xeProfile;
  Display13OutputWiring adlnOutputWiring;void *adlnPlatform=nullptr,*adlnTopologyController=nullptr;
  uintptr_t orgDisplay13TrainingPattern=0,orgDisplay13SignalLevels=0;
