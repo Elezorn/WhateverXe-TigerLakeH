@@ -162,8 +162,9 @@ installation or update location.
 - Some image-conversion operations can crash the application.
 - Reconnecting a monitor to a dedicated DisplayPort connector can leave the
   screen black or freeze the computer. USB-C DisplayPort Alt Mode reconnection
-  can also freeze the computer on Big Sur. The successful reconnection checks
-  above do not establish reliability across all systems and macOS versions.
+  can also freeze the computer. Whether this depends on the macOS version is
+  unknown. The successful reconnection checks above do not rule out intermittent
+  failures.
 - Safari video playback may occasionally drop frames.
 - Up to three displays can be used simultaneously; a fourth display will not
   receive an image.
