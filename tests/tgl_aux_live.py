@@ -20,9 +20,6 @@ template<class T,size_t N> constexpr size_t arrsize(const T (&)[N]){return N;}
 uint32_t tglConnectionCaller(void*){return 0x1234;}
 bool quiet=false,failAlloc=false,failData=false;
 int lock,*tglAUXLock=&lock;bool held=false;
-void tglTransitionRecord(uint32_t stage,bool,void*,uint64_t,uint64_t,uint64_t,const void *payload,size_t size){
- assert(!held && stage==98 && size==16);uint8_t copy[16];memcpy(copy,payload,size);
-}
 void IOSimpleLockLock(int*) {assert(!held);held=true;}
 void IOSimpleLockUnlock(int*) {assert(held);held=false;}
 bool tglQuietTraining(){return quiet;}

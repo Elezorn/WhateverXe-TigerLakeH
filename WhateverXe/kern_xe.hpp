@@ -494,15 +494,6 @@ private:
 	static void tglTimeEvent(uint32_t stage, uint32_t id, bool done, uint32_t arg, uint32_t result);
 
 	mach_vm_address_t orgTGLTrainingPattern {}, orgTGLPowerDDIState {};
-	mach_vm_address_t orgTGLTraceHotplug {}, orgTGLTraceClearHPD {}, orgTGLTraceEnablePG {}, orgTGLTraceDisablePG {};
-	mach_vm_address_t orgTGLTraceFBIRQ {}, orgTGLTraceFBSWIRQ {}, orgTGLTraceDPIRQ {};
-	static bool wrapTGLTraceFBIRQ(void *controller);
-	static void wrapTGLTraceFBSWIRQ(void *owner, void *source, int count);
-	static void wrapTGLTraceDPIRQ(void *controller, void *port);
-	static void wrapTGLTraceHotplug(void *controller, uint32_t ddi, uint32_t mode);
-	static void wrapTGLTraceClearHPD(void *port);
-	static void wrapTGLTraceEnablePG(void *power, uint32_t pg);
-	static void wrapTGLTraceDisablePG(void *power, uint32_t pg);
 	static uint32_t wrapTGLTrainingPattern(void *path, uint32_t pattern);
 	mach_vm_address_t orgTGLPortTraining {}, orgTGLPathLookup {}, orgTGLFreePath {};
 	mach_vm_address_t orgTGLLightUpDP {}, orgTGLDisableDisplay {}, orgTGLEnablePipe {};

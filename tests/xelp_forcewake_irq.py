@@ -30,7 +30,6 @@ static uint64_t xelpForceWakeIRQ[9] {};
 using boolean_t=bool;
 using TGLCSBForceWake=Wake;
 static uintptr_t xelpRegularForceWakeOriginal;
-struct TGLDisplayActivity {TGLDisplayActivity(unsigned,void*,uint64_t) {}};
 #include "kern_xelp_forcewake_irq.hpp"
 void xelpRegularForceWakeProtected(void*,bool,unsigned);
 static uint64_t ticks;

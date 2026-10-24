@@ -2,32 +2,12 @@
 """Actual lifecycle recorder: concurrent snapshots, IRQ state and opaque objects."""
 from pathlib import Path
 import subprocess
-import re
-import argparse
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'WhateverXe/kern_xe.cpp').read_text()
-p = argparse.ArgumentParser(); p.add_argument('--donor', type=Path); args = p.parse_args()
-if args.donor:
-    data = args.donor.read_bytes()
-    guard = source[source.index('const uint32_t irqOffsets[]'):source.index('bool irqKnown=size>0x761BA')]
-    offsets = [int(x, 16) for x in re.search(r'irqOffsets\[\] \{([^}]+)', guard).group(1).split(',')]
-    rows = re.findall(r'\{((?:0x[0-9A-F]+,?)+)\}', guard)[1:]
-    assert len(offsets) == len(rows) == 3
-    for offset, row in zip(offsets, rows):
-        entry = bytes(int(x, 16) for x in row.split(','))
-        assert data[offset:offset+len(entry)] == entry
-    print('PASS: exact donor display IRQ entry guards')
-# Tracing rewrites PG entry bytes. Qualify the native ABI before routing those
-# entries, or enabling diagnostics alone blocks framebuffer startup.
-trace_install = source.index('KernelPatcher::RouteRequest traceRoutes[]')
-assert source.index('!memcmp(reinterpret_cast<void *>(tglDisablePG),tcPGPutEntry') < trace_install
-assert source.index('tglNativeLegacyHPDCaller=hotplug+0x185') < trace_install
-assert source.rfind('if (tglDisplayTraceEnabled)', 0, trace_install) >= 0
 body = source[source.index('struct TGLTransitionRecord {'):
               source.index('// Independent and nested training calls')]
-irq_wrappers = '\n'.join(re.search(r'(?:bool|void) XE::wrapTGLTrace' + name + r'\(.*?\n\}', source, re.S).group() for name in ['FBIRQ', 'FBSWIRQ', 'DPIRQ'])
 fixture = r'''
 #include <cassert>
 #include <cstdint>
@@ -68,19 +48,6 @@ struct OSData{
  void release(){assert(!held);delete this;}
 };
 // BODY
-struct XE {
- uintptr_t orgTGLTraceFBIRQ{},orgTGLTraceFBSWIRQ{},orgTGLTraceDPIRQ{};
- static bool wrapTGLTraceFBIRQ(void*);
- static void wrapTGLTraceFBSWIRQ(void*,void*,int);
- static void wrapTGLTraceDPIRQ(void*,void*);
-};
-XE driver,*callbackXE=&driver;
-#define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
-// IRQ_WRAPPERS
-void *expectedOpaque;bool nativeResult,expectedIRQ;unsigned nativeCalls;
-bool nativeIRQ(void*p){assert(p==expectedOpaque && irqEnabled==expectedIRQ && !held);++nativeCalls;return nativeResult;}
-void nativeSW(void*p,void*q,int count){assert(p==expectedOpaque && q==p && count==-2);assert(irqEnabled==expectedIRQ && !held);++nativeCalls;}
-void nativeDP(void*p,void*q){assert(p==expectedOpaque && q==p);assert(irqEnabled==expectedIRQ && !held);++nativeCalls;}
 void validate(OSSerialize&s){
  assert(s.data.size()==16+1024*128);uint32_t h[4];memcpy(h,s.data.data(),16);
  assert(h[0]==1&&h[2]==1024&&h[3]==128);
@@ -136,91 +103,15 @@ int main(){
                0x64000ul,0x64100ul,0x46140ul,0x46144ul,0x60400ul,0x61400ul,0x60540ul,0x61540ul})
   assert(tglTransitionRegister(reg));
  for(auto reg:{0ul,0x45410ul,0x45451ul,0x138124ul,0x162001ul,0x163000ul,0x6D000ul,
-               0x164294ul,0xC7214ul,0x64010ul,0x64900ul,0x4614Cul,0x63400ul,0x63540ul})
+               0x164294ul,0xC7214ul,0x64200ul,0x64010ul})
   assert(!tglTransitionRegister(reg));
- for(unsigned pipe=0;pipe<3;++pipe){
-  assert(tglTransitionRegister(0x60400+0x1000*pipe));
-  assert(tglTransitionRegister(0x60540+0x1000*pipe));
-  assert(tglTransitionRegister(0x46140+4*pipe));
-  assert(!tglTransitionRegister(0x60404+0x1000*pipe));
- }
- for(unsigned ddi=0;ddi<9;++ddi){
-  assert(tglTransitionRegister(0x64000+0x100*ddi));
-  assert(!tglTransitionRegister(0x64004+0x100*ddi));
- }
- tglDisplayTraceEnabled=false;
- for(auto reg:{0x62400ul,0x62540ul,0x64500ul,0x46148ul})assert(!tglTransitionRegister(reg));
- // Concurrent progress is independent of transition ring wrap. An inactive
- // scope costs no record and opaque objects must never be dereferenced.
- assert(!tglDisplayActivityBegin(0,inaccessible,1));
- assert(!tglDisplayActivityCount && !tglDisplayTraceScopes);
- {
-  TGLDisplayTraceScope scope;assert(tglDisplayTraceScopes==1);
-  {TGLDisplayTraceScope nested;assert(tglDisplayTraceScopes==2);}
-  assert(tglDisplayTraceScopes==1);
-  uint64_t pending[64];
-  for(unsigned i=0;i<64;++i)pending[i]=tglDisplayActivityBegin(i,inaccessible,i+1);
-  assert(tglDisplayActivityCount==64);
-  assert(!tglDisplayActivityBegin(64,inaccessible,0));assert(tglDisplayActivityDropped==1);
-  assert(tglDisplayLiveSerialize(nullptr,nullptr,&snapshot));
-  uint64_t h[8];memcpy(h,snapshot.data.data(),sizeof(h));
-  assert(h[0]==1 && h[2]==10051 && h[3]==256 && h[4]==64 && h[5]==64 && h[6]==1 && h[7]==1);
-  assert(snapshot.data.size()==64+(256+64)*128);
-  for(unsigned i=0;i<256;++i){
-   TGLTransitionRecord q;memcpy(&q,snapshot.data.data()+64+i*128,128);
-   assert(q.q[2]==10051-255+i);
-  }
-  tglDisplayActivityEnd(pending[63],7);
-  auto reused=tglDisplayActivityBegin(99,inaccessible,4);assert(reused && reused!=pending[63]);
-  tglDisplayActivityEnd(pending[63],123); // stale completion cannot close a reused slot
-  assert(!tglDisplayActivity[63].q[8]);
-  tglDisplayActivityEnd(reused,9);assert(tglDisplayActivity[63].q[7]==9);
-  for(unsigned i=0;i<63;++i)assert(!tglDisplayActivity[i].q[8]);
-  for(unsigned i=0;i<63;++i)tglDisplayActivityEnd(pending[i],0);
-  for(bool prior:{false,true}){
-   irqEnabled=prior;
-   {TGLDisplayActivity call(3,inaccessible,1);}
-   assert(irqEnabled==prior&&!held);
-   assert(tglDisplayLiveSerialize(nullptr,nullptr,&snapshot));assert(irqEnabled==prior);
-  }
-  irqEnabled=true;
-  auto activityWrite=[&]{for(unsigned i=0;i<2000;++i){TGLDisplayActivity call(3,inaccessible,i);call.finish(i);}};
-  std::thread c(activityWrite),d(activityWrite);
-  for(unsigned i=0;i<100;++i){
-   assert(tglDisplayLiveSerialize(nullptr,nullptr,&snapshot));
-   for(unsigned j=0;j<64;++j){
-    TGLTransitionRecord q;memcpy(&q,snapshot.data.data()+64+(256+j)*128,128);
-    if(q.q[8])assert(q.q[1]>=q.q[0]);else assert(!q.q[1]);
-   }
-  }
-  c.join();d.join();assert(tglDisplayActivityDropped==1);
- }
- assert(!tglDisplayTraceScopes);
- auto tail=tglDisplayActivityBegin(14,inaccessible,0);assert(tail);
- ticks=__atomic_load_n(&tglDisplayTraceUntil,__ATOMIC_RELAXED)+1;
- assert(!tglDisplayActivityBegin(14,inaccessible,0));
- // A call that entered during the tail remains pending and may finish later.
- tglDisplayActivityEnd(tail,7);
- assert(tglDisplayActivity[(tail&255)-1].q[7]==7);
- expectedOpaque=inaccessible;
- driver.orgTGLTraceFBIRQ=(uintptr_t)nativeIRQ;driver.orgTGLTraceFBSWIRQ=(uintptr_t)nativeSW;driver.orgTGLTraceDPIRQ=(uintptr_t)nativeDP;
- {
-  TGLDisplayTraceScope scope;
-  for(bool prior:{false,true})for(bool value:{false,true}){
-   irqEnabled=expectedIRQ=prior;nativeResult=value;nativeCalls=0;
-   assert(XE::wrapTGLTraceFBIRQ(inaccessible)==value && nativeCalls==1);
-   XE::wrapTGLTraceFBSWIRQ(inaccessible,inaccessible,-2);
-   XE::wrapTGLTraceDPIRQ(inaccessible,inaccessible);
-   assert(nativeCalls==3 && irqEnabled==prior && !held);
-  }
- }
  munmap(inaccessible,4096);
  IOFree(tglTransitions,tglTransitionSlots*sizeof(TGLTransitionRecord));
  IOFree(tglTransitionFirst,tglTransitionFirstSlots*sizeof(TGLTransitionRecord));
  IOSimpleLockFree(tglTransitionLock);
- puts("PASS: 10051 events; compact chronological snapshots; concurrent/pending activity, overflow and stale tokens; IRQ restore; no object/MMIO access");
+ puts("PASS: 10051 events, concurrent coherent snapshots, ring wrap, allocation failure, IRQ restore, no object/MMIO access");
 }
-'''.replace('// BODY', body).replace('// IRQ_WRAPPERS', irq_wrappers)
+'''.replace('// BODY', body)
 with tempfile.TemporaryDirectory(prefix='tgl-transition-') as tmp:
     tmp = Path(tmp)
     cpp, binary = tmp / 'check.cpp', tmp / 'check'
