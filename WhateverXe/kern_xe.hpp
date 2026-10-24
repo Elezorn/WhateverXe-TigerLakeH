@@ -155,6 +155,7 @@ private:
 	mach_vm_address_t xelpProviderProbe {},xelpProviderConfigureProbe {};
  bool display13DPProbeReady {},display13TCProbeReady {};
  bool adlpFramebufferOnly {};
+ bool adlpRenderRequested {};
  Display13OutputWiring display13BoardWiring(IOService *);
  bool prepareDisplay13BootScanout(IOPCIDevice *);
     bool xelpBindProbe(void *controller);

@@ -26,7 +26,7 @@ struct Kext {size_t loadIndex;};Kext kextIntelTGL{2};
 bool loadOnly=false;
 bool checkKernelArgument(const char *arg) {assert(!strcmp(arg,"-wex-adln-load-only"));return loadOnly;}
 struct XE {
- bool adlpFramebufferOnly=false;
+ bool adlpFramebufferOnly=false,adlpRenderRequested=false;
  bool display13FramebufferRequested=false,adlnRequested=false,adlnDetected=false;
  bool adlnNativeRequested=false,adlnNativeReady=false,display13BootReady=false,tglActive=false;
  Kext *currentFramebuffer=nullptr,*currentGraphics=nullptr;
@@ -72,7 +72,7 @@ void certificates() {
  struct Aperture {uint64_t length;uint64_t getLength(){return length;}}bar;
  struct {AlderLakeN::GTStatus status;}gt;
  bool adlnRequested=true,adlnKernelReady=true;
- const auto xelpAlderLakeNDevice=[](PCI*){return true;};
+ const auto xelpDisplay13RenderDevice=[](PCI*){return true;};
  for(unsigned mask=0;mask<8192;++mask) {
   gt.status=(mask&1)?AlderLakeN::GTStatus::Complete:AlderLakeN::GTStatus::Failed;
   unsigned edram=(mask&2)?0:1;
@@ -98,6 +98,16 @@ int main() {
   XE x;KernelPatcher p;Kext fb{1};x.adlpFramebufferOnly=true;x.display13FramebufferRequested=true;x.currentFramebuffer=&fb;
   const bool result=x.dispatch(p,module,0,0);
   assert(x.call==(module==1?XE::Display13:module==2?XE::Rejected:XE::None));assert(result==(module!=3));
+ }
+
+ for(bool ready:{false,true})for(unsigned module=1;module<=3;++module) {
+  XE x;KernelPatcher p;Kext fb{1},graphics{2};
+  x.adlpFramebufferOnly=x.adlpRenderRequested=x.display13FramebufferRequested=true;
+  x.adlnRequested=x.adlnDetected=x.adlnNativeRequested=true;x.adlnNativeReady=x.tglActive=ready;
+  x.currentFramebuffer=&fb;x.currentGraphics=&graphics;
+  const bool result=x.dispatch(p,module,0,0);
+  assert(x.call==(module==1?XE::Display13:module==2?(ready?XE::Render:XE::Rejected):XE::None));
+  assert(result==(module!=3));
  }
 
  certificates();

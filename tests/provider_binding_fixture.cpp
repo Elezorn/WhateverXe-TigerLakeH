@@ -75,7 +75,7 @@ int main(int argc,char **argv) {
  XELP::ProbeConfig config;config.profile=XELP::deviceProfile(&pci);
  xelpSelectedGPU=&pci;xelpSelectedProfile=config.profile;
  assert(xelpSelectedDevice(&pci)==config.profile.displayAdmitted());
- assert(xelpAlderLakeNDevice(&pci)==(adln && !rejected));
+ assert(xelpDisplay13RenderDevice(&pci)==((adln || adlp) && !rejected));
  assert(xelpDisplay13Device(&pci)==((adln || adlp) && !rejected));
  IOPCIDevice foreignPCI;foreignPCI.identity=pci.identity;foreignPCI.revision=pci.revision;foreignPCI.property=pci.property;
  assert(!xelpSelectedDevice(&foreignPCI));

@@ -65,7 +65,7 @@ static struct { void onKextLoadForce(int *) {} } lilu;
 struct XE {
  XELP::Profile xeProfile;
  bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false, adlsDisplaySelected=false, display12SmallGTDetected=false;
- bool display13FramebufferRequested=false, display13TraceEnabled=false, adlpFramebufferOnly=false;
+ bool display13FramebufferRequested=false, display13TraceEnabled=false, adlpFramebufferOnly=false, adlpRenderRequested=false;
  bool display12SmallGTReady=false, adlsDisplayHooksReady=false;
  bool tglRequested=false, tglAcceleratorRequested=false;
  bool tglInactivePorts=false, tglPG1Poll=false, tglClockOrderRequested=false;
@@ -106,7 +106,7 @@ int main() {
   assert(adlnNativeRCSProfileRequested && xe.tglAcceleratorRequested);
   assert(xe.currentGraphics==&kextIntelTGL && xe.currentFramebuffer==&kextIntelTGLFb);
  }
- xe=boot({"-wex-display13-offline"},0x46A68086U,0x9A498086U);
+ xe=boot({"-wex-display13-offline","-wex-noaccel"},0x46A68086U,0x9A498086U);
  assert(display13Offline && xe.adlpFramebufferOnly && !xe.tglAcceleratorRequested);
  xe=boot({"-wex-display13-offline"},0x9A498086U);
  assert(!display13Offline);
@@ -175,7 +175,7 @@ int main() {
  assert(xe.adlnRequested && xe.adlnNativeRequested && xe.xeProfile.identity==0x12348086);
  xe=boot({},0x12348086,0x9A498086);assert(xe.tglRequested);
  xe=XE{};xe.selectProfile(XELP::identify(0x46A68086,12,0x9A498086));
- assert(xe.adlpFramebufferOnly && xe.display13FramebufferRequested && !xe.tglAcceleratorRequested && !xe.adlnRequested && !xe.tglRequested);
+ assert(xe.adlpFramebufferOnly && xe.adlpRenderRequested && xe.display13FramebufferRequested && xe.tglAcceleratorRequested && xe.adlnRequested && xe.tglRequested);
  assert(xe.xeProfile.family==XELP::Family::AlderLakeP && xe.xeProfile.gt==XELP::GT::Unknown);
  xe=boot({},0x46A68086);assert(!xe.tglRequested && !xe.adlnRequested);
  for(uint32_t pci:{0x46A68086U,0x46808086U,0xA7A08086U}) {

@@ -213,8 +213,9 @@ static bool xelpSelectedDevice(IOPCIDevice *pci) {
     return pci && pci==xelpSelectedGPU && xelpSelectedProfile.displayAdmitted() &&
         XELP::same(xelpSelectedProfile,XELP::deviceProfile(pci));
 }
-static bool xelpAlderLakeNDevice(IOPCIDevice *pci) {
-    return xelpSelectedProfile.family==XELP::Family::AlderLakeN && xelpSelectedDevice(pci);
+static bool xelpDisplay13RenderDevice(IOPCIDevice *pci) {
+    return (xelpSelectedProfile.family==XELP::Family::AlderLakeN ||
+        xelpSelectedProfile.framebufferOnlyADLP()) && xelpSelectedDevice(pci);
 }
 static bool xelpDisplay13Device(IOPCIDevice *pci) {
     return (XELP::displayAdapter(xelpSelectedProfile.family)==XELP::DisplayAdapter::ADLN || xelpSelectedProfile.framebufferOnlyADLP()) &&
@@ -3749,16 +3750,20 @@ void XE::selectProfile(const XELP::Profile &profile) {
     adlnNativeRCSProfileRequested=false;
     adlnRequested=profile.admitted() && profile.family==XELP::Family::AlderLakeN &&
         profile.display==XELP::Display::XeLPD && profile.gt==XELP::GT::ADLNSmall;
-    adlnDetected=adlnRequested;
     modDVMTCalcFix.available=profile.displayAdmitted();
     const bool nativeOS=XELP::kernelOS(version)!=XELP::OS::Unknown && XELP::kernelOS(version)!=XELP::OS::Donor;
     adlpFramebufferOnly=profile.framebufferOnlyADLP() && nativeOS;
+    // Preserve the accepted Display13/TC handoff when enabling Render.
+    // noaccel still selects the exact FB-only rejection path.
+    adlpRenderRequested=adlpFramebufferOnly && !checkKernelArgument("-wex-noaccel");
+    adlnRequested=adlnRequested || adlpRenderRequested;
+    adlnDetected=adlnRequested;
     display13FramebufferRequested=profile.displayAdmitted() && profile.display==XELP::Display::XeLPD &&
         (XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLN || adlpFramebufferOnly) && nativeOS;
     display13TraceEnabled=display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
     display13Offline=display13FramebufferRequested && checkKernelArgument("-wex-display13-offline");
     if(display13FramebufferRequested)currentFramebuffer=&kextIntelTGLFb;
-    if(adlpFramebufferOnly) {
+    if(adlpFramebufferOnly && !adlpRenderRequested) {
         tglRequested=tglAcceleratorRequested=false;currentGraphics=&kextIntelTGL;return;
     }
     if(adlnRequested) {
@@ -3805,7 +3810,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97BringupVersion", 1ULL, 32);
 	pci->setProperty("N97NativeStartAllowed", false);
 	const auto revision = pci->configRead8(8);
-	const bool renderRequested = adlnRequested && adlnKernelReady && xelpAlderLakeNDevice(pci) &&
+	const bool renderRequested = adlnRequested && adlnKernelReady && xelpDisplay13RenderDevice(pci) &&
         !checkKernelArgument("-wex-noaccel");
     const bool displayRequested = display13FramebufferRequested && xelpDisplay13Device(pci);
     const bool admitted = renderRequested || displayRequested;
@@ -3990,7 +3995,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	if (gtTest) {
 		uint32_t edram=UINT32_MAX;
 		auto gt=AlderLakeN::readGT(io,barReady && xelpMemoryMatches(pci),
-			adlnNativeRequested ? &edram : nullptr);
+			adlnNativeRequested ? &edram : nullptr,adlpRenderRequested ? XELP::decodeADLPGT : nullptr);
 		if (adlnNativeRequested) {
             adlnNativeSubslices=gt.resources.nativeSubslices; adlnL3Banks=gt.resources.l3Banks; adlnNativeEUs=gt.resources.eus;
             renderReady=gt.status==AlderLakeN::GTStatus::Complete && !(edram&1);
@@ -4321,7 +4326,7 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
 	// Keep both adapters outside the large Display12 framebuffer patch frame.
 	if(display13FramebufferRequested && currentFramebuffer && currentFramebuffer->loadIndex==index)
 		return processDisplay13Framebuffer(patcher,index,address,size);
-    if(adlpFramebufferOnly) {
+    if(adlpFramebufferOnly && !adlpRenderRequested) {
         if(index==kextIntelTGL.loadIndex)return processADLPLoadOnly(patcher,index,address,size);
         return false;
     }
@@ -10019,7 +10024,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			uint8_t urbReplaceAlderLakeN[] {0x83,0xFE,0x01,0x75,0x59,0x83,0xFA,0x04,0x75,0x54,0x41,0xC7,0x87,0x64,0x11,0x00,0x00,0x04,0x00,0x00,0x00};
 			if (adlnDetected) { urbReplaceAlderLakeN[7]=adlnNativeSubslices;urbReplaceAlderLakeN[17]=adlnL3Banks; }
             if(display12SmallGTDetected) {urbReplaceAlderLakeN[7]=display12SmallGT.nativeSubslices;urbReplaceAlderLakeN[17]=display12SmallGT.l3Banks;}
-			const auto urbReplacement = (xeProfile.gt==XELP::GT::ADLNSmall || XELP::display12SmallGT(xeProfile.gt)) ? urbReplaceAlderLakeN :
+			const auto urbReplacement = (adlnDetected || XELP::display12SmallGT(xeProfile.gt)) ? urbReplaceAlderLakeN :
 				(xeProfile.gt==XELP::GT::TGLG4 ? urbReplaceG4 : urbReplace);
 			auto gpuInfo=patcher.solveSymbol<mach_vm_address_t>(index,
 				"__ZN16IntelAccelerator10getGPUInfoEv",address,size);
@@ -12424,7 +12429,7 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
   // No parent/native start, private-object reads, engine work or fake success.
   auto pci=OSDynamicCast(IOPCIDevice,provider);
   const bool admitted=callbackXE->tglAcceleratorReady && pci &&
-   xelpAlderLakeNDevice(pci);
+   xelpDisplay13RenderDevice(pci);
   IORegistryEntry::getRegistryRoot()->setProperty("N97LoadOnlyStartBlocked",true);
   IORegistryEntry::getRegistryRoot()->setProperty("N97LoadOnlyProviderReady",admitted);
   if (admitted && callbackXE->adlnParentBoundaryReady && checkKernelArgument("-wex-adln-parent-entry"))
@@ -12435,7 +12440,7 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
 	if (!callbackXE->tglAcceleratorReady) return false;
 	if (callbackXE->adlnDetected) {
 		auto pci=OSDynamicCast(IOPCIDevice,provider);
-		if (!callbackXE->adlnNativeReady || !pci || !xelpAlderLakeNDevice(pci)) return false;
+		if (!callbackXE->adlnNativeReady || !pci || !xelpDisplay13RenderDevice(pci)) return false;
 		// Standalone startup never calls framebuffer start, which normally
 		// exposes these retained IRQ/submission records. Publish the same
 		// passive serializer here; it makes no driver calls or GPU reads.
@@ -12547,7 +12552,7 @@ bool XE::startAlderLakeNParentBoundary(IOService *that, IOService *provider) {
 bool XE::wrapAlderLakeNConfigureDevice(IOService *that, IOPCIDevice *provider) {
 	auto root=IORegistryEntry::getRegistryRoot();
 	const bool admitted=callbackXE->adlnParentBoundaryReady && provider &&
-	 xelpAlderLakeNDevice(provider);
+	 xelpDisplay13RenderDevice(provider);
 	root->setProperty("N97ConfigureDeviceEntered",admitted);
 	if (admitted) {
 	 const auto bytes=reinterpret_cast<const uint8_t *>(that);
@@ -12820,7 +12825,7 @@ IOService *XE::wrapTGLAcceleratorProbe(IOService *that, IOService *provider, SIn
 	if (callbackXE->adlnDetected && checkKernelArgument("-wex-adln-load-only")) {
 		auto root=IORegistryEntry::getRegistryRoot();
 		const bool admitted=callbackXE->tglAcceleratorReady && pci &&
-			xelpAlderLakeNDevice(pci);
+			xelpDisplay13RenderDevice(pci);
 		root->setProperty("N97LoadOnlyProbeEntered",admitted);
 		if (!admitted) return nullptr;
 		// Qualify load/routing before executing the donor probe itself.
@@ -12930,7 +12935,7 @@ bool XE::wrapAlderLakeNNativeConfigure(IOService *that, IOPCIDevice *provider) {
 	// retain, factory replacement, or deliberate failure on the normal path.
 	auto root=IORegistryEntry::getRegistryRoot();
 	root->setProperty("N97NativeConfigureEntered",true);
-	if (!provider || !xelpAlderLakeNDevice(provider)) return false;
+	if (!provider || !xelpDisplay13RenderDevice(provider)) return false;
 	auto bar=provider->getDeviceMemoryWithRegister(0x10);
 	auto map=bar && bar->getLength()==0x1000000 ? bar->map() : nullptr;
 	if (!map) return false;

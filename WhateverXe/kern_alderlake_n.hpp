@@ -56,7 +56,8 @@ static_assert(sizeof(GTReadout)==60*4,"AlderLakeN GT readout layout");
 
 // Linux v6.12 gen12 forcewake domains: fuses and BCS are GT, RCS is render.
 // Only acquire an unowned kernel bit0. Never reset domains or alter engines.
-template<class IO> GTReadout readGT(IO &io, bool admitted, uint32_t *edram=nullptr) {
+template<class IO> GTReadout readGT(IO &io, bool admitted, uint32_t *edram=nullptr,
+    bool (*decode)(const uint32_t *,Resources &)=nullptr) {
     GTReadout out;
     if(!admitted)return out;
     constexpr uint32_t request[] {0xA188,0xA278},ack[] {0x130044,0xD84};
@@ -96,8 +97,9 @@ template<class IO> GTReadout readGT(IO &io, bool admitted, uint32_t *edram=nullp
             if(out.fuses[i]==UINT32_MAX)out.status=GTStatus::Unavailable;
         }
         if(out.status==GTStatus::Complete &&
-           (!resources(out.fuses[0],out.fuses[1],out.fuses[2],out.fuses[3],out.resources) ||
-            out.fuses[4]!=0x000E00FE))out.status=GTStatus::ProfileMismatch;
+           !(decode ? decode(out.fuses,out.resources) :
+             (resources(out.fuses[0],out.fuses[1],out.fuses[2],out.fuses[3],out.resources) &&
+              out.fuses[4]==0x000E00FE)))out.status=GTStatus::ProfileMismatch;
         if(edram) {
             *edram=io.readable(0x120010) ? io.read(0x120010) : UINT32_MAX;
             if(*edram==UINT32_MAX)out.status=GTStatus::Unavailable;
