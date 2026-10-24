@@ -62,6 +62,11 @@ public:
 	bool processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
 
 private:
+    bool adlpLoadOnly {};
+    bool processADLPLoadOnly(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+    static IOService *rejectADLPFramebufferProbe(IOService *,IOService *,SInt32 *);
+    static IOService *rejectADLPAcceleratorProbe(IOService *,IOService *,SInt32 *);
+    static bool rejectADLPStart(IOService *,IOService *);
  XELP::DisplayContract::Mask display12Available() const;
  XELP::DisplayContract::Mask display13Available() const;
 	// Do not inline either helper into the small kext-load dispatcher.

@@ -4095,6 +4095,17 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	// This must precede tglLoadHDMIWiring, tglPrepareMMIOUC and TGL FIA reads.
 	auto physicalGPU = OSDynamicCast(IOPCIDevice, info->videoBuiltin);
 	selectProfile(XELP::deviceProfile(physicalGPU));
+    // ADLP_LOAD_ONLY_KERNEL: do not enter TGL MMIO/FIA, bootstrap or VM setup.
+    const auto physicalEntry=XELP::deviceEntry(xeProfile.identity);
+    adlpLoadOnly=physicalEntry && physicalEntry->family==XELP::Family::AlderLakeP &&
+        xeProfile.admitted() && xeProfile.overridden() &&
+        XELP::hostOS(XELP::kernelOS(version)) && checkKernelArgument("-wex-adlp-load-only");
+    if(adlpLoadOnly) {
+        IORegistryEntry::getRegistryRoot()->setProperty("ADLPLoadOnlyKernel",true);
+        SYSLOG("igfx","ADL-P load-only: native FB/accelerator probes will be rejected; no GPU initialization");
+        return;
+    }
+    // ADLP_LOAD_ONLY_KERNEL_END
     // Temporary opt-in bring-up evidence. ADL-P remains unadmitted; only
     // the existing bounded Gen12 forcewake transaction writes registers.
     if(!xeProfile.admitted() && xeProfile.family==XELP::Family::AlderLakeP &&
@@ -4241,6 +4252,12 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 }
 
 bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
+    // No full donor patch set or native display/GT dispatcher in this stage.
+    if(adlpLoadOnly) {
+        if(index==kextIntelTGL.loadIndex || index==kextIntelTGLFb.loadIndex)
+            return processADLPLoadOnly(patcher,index,address,size);
+        return false;
+    }
     if((tglRequested || display13FramebufferRequested) && kextAppleIntelTGLCompat.loadIndex==index) {
         const auto probe=patcher.solveSymbol<mach_vm_address_t>(index,"__ZN17AppleIntelPortHAL13probePortModeEv",address,size);
         patcher.clearError();
@@ -9115,6 +9132,53 @@ bool XE::processAlderLakeNRejectedAccelerator(KernelPatcher &patcher,size_t inde
 	IORegistryEntry::getRegistryRoot()->setProperty("N97RejectedAcceleratorGuardReady",ready);
 	patcher.clearError();return ready;
 }
+
+// ADLP_LOAD_ONLY_HOOKS: these replacements never call the original methods.
+IOService *XE::rejectADLPFramebufferProbe(IOService *,IOService *,SInt32 *) {
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLPFramebufferProbeRejected",true);
+    SYSLOG("igfx","ADL-P load-only: framebuffer probe rejected before native entry");
+    return nullptr;
+}
+IOService *XE::rejectADLPAcceleratorProbe(IOService *,IOService *,SInt32 *) {
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLPAcceleratorProbeRejected",true);
+    SYSLOG("igfx","ADL-P load-only: accelerator probe rejected before native entry");
+    return nullptr;
+}
+bool XE::rejectADLPStart(IOService *,IOService *) {
+    IORegistryEntry::getRegistryRoot()->setProperty("ADLPLoadOnlyUnexpectedStart",true);
+    return false;
+}
+bool XE::processADLPLoadOnly(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+    const bool fb=index==kextIntelTGLFb.loadIndex;
+    const char *probe=fb ? "__ZN31AppleIntelFramebufferController5probeEP9IOServicePi" :
+        "__ZN16IntelAccelerator5probeEP9IOServicePi";
+    const char *start=fb ? "__ZN31AppleIntelFramebufferController5startEP9IOService" :
+        "__ZN16IntelAccelerator5startEP9IOService";
+    const uint32_t probeOffset=fb?0x446BC:0x238E2,startOffset=fb?0x3F1FC:0x23ECC;
+    const uint8_t fbHead[]={0x55,0x48,0x89,0xe5,0x41,0x56,0x53,0x48,0x83,0xec,0x10,0x48,0x89,0xf3,0x49,0x89,0xfe};
+    const uint8_t gtHead[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x28};
+    const uint8_t startHead[]={0x55,0x48,0x89,0xe5};
+    auto p=patcher.solveSymbol<mach_vm_address_t>(index,probe,address,size);
+    auto q=patcher.solveSymbol<mach_vm_address_t>(index,start,address,size);patcher.clearError();
+    bool ready=adlpLoadOnly && (fb || index==kextIntelTGL.loadIndex) && size>probeOffset+32 && size>startOffset+32 &&
+        p==address+probeOffset && q==address+startOffset &&
+        !memcmp(reinterpret_cast<void *>(p),fb?fbHead:gtHead,sizeof(gtHead)) &&
+        !memcmp(reinterpret_cast<void *>(q),startHead,sizeof(startHead));
+    if(ready) {
+        // Also block start as an independent boundary. A rejected probe must
+        // not attach; an unexpected direct start still cannot initialize GPU.
+        KernelPatcher::RouteRequest routes[]={
+            {start,rejectADLPStart},
+            {probe,fb?rejectADLPFramebufferProbe:rejectADLPAcceleratorProbe}
+        };
+        ready=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);
+    }
+    patcher.clearError();
+    IORegistryEntry::getRegistryRoot()->setProperty(fb?"ADLPFramebufferLoadOnlyReady":"ADLPAcceleratorLoadOnlyReady",ready);
+    SYSLOG("igfx","ADL-P load-only: %s probe/start barriers ready=%u",fb?"framebuffer":"accelerator",ready);
+    return ready;
+}
+// ADLP_LOAD_ONLY_HOOKS_END
 
 bool XE::processAlderLakeNLoadOnly(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
 	KernelPatcher::RouteRequest load[] {
