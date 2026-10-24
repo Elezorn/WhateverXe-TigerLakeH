@@ -51,14 +51,16 @@ int main(int argc,char **argv){
  // Type-C capability never becomes an automatic fixed-DP mode decision.
  assert(r.port[4].capabilities==3&&r.port[4].dp());
  // All six port coordinates and capability combinations, independent of
- // CPU model. Current runtime auto backend is TC1/2 only (native FIA1).
+ // CPU model. Runtime automatic fixed-DP backend covers native TC1..4.
+ const unsigned directAUX[]={0x30,0x50,0x60,0x70,0x80,0x90};
  for(unsigned d=3;d<9;++d)for(unsigned caps=0;caps<4;++caps){
   const unsigned dvo[]={9,11,13,15,17,19};
-  auto b=table({{0x60d6,dvo[d-3],d+1,(d+1)*0x10,0xc0,caps}});
+  auto b=table({{0x60d6,dvo[d-3],d+1,directAUX[d-3],0xc0,caps}});
   auto q=parse(b.data(),b.size(),Family::TigerLake);
   assert(q.tglDPCandidates(0x1f8)==(1U<<d));
   assert(q.tglDPCandidates(0x18)==(d<5?1U<<d:0));
-  for(unsigned aux:{0u,0x30u,0xa0u}){q.port[d].aux=aux;assert(!q.tglDPCandidates(0x1f8));}
+  assert(q.tglDPCandidates(0x78)==(d<7?1U<<d:0));
+  for(unsigned aux:{0u,0x40u,0xa0u}){q.port[d].aux=aux;assert(!q.tglDPCandidates(0x1f8));}
  }
  for(auto p:{Port{0x60d2,11,5,0x50},Port{0x78c6,11,5,0x50},Port{0x60d6,11,5,0x50,2},
               Port{0x60d6,11,5,0x50,4},Port{0x60d6,11,5,0x50,1},Port{0x60d6,11,5,0x50,0x10}}){

@@ -96,7 +96,7 @@ struct DisplayContract {
   if(r.panel||r.combo)required|=Combo12;
   if(r.panel)required|=PanelDepth|PanelTiming|PowerGet|PowerPut;
   if(r.combo)required|=AUXParent;
-  if(r.legacy)required|=Fixed12;
+  if(r.legacy)required|=Fixed12|AltFIA|NativeFIA; // Fixed TC also needs topology-aware FIA lanes/ownership.
   if(r.legacy||r.alt)required|=Framing|ModeLock;
   if(r.alt)required|=Alt12;
   return {required,installed};

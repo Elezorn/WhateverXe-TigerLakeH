@@ -504,7 +504,8 @@ private:
   (tglTCWiring.legacy|tglTCAutoCandidates)&tglAUXParentMask : 0;}
  bool tglTCModeAllowed(uint32_t ddi,uint32_t mode) const {
   if(ddi>=9 || !(tglTCAutoCandidates&(1U<<ddi)))return true;
-  return mode==0 || (mode==4 && (__atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE)&(1U<<ddi)));
+  return mode==0 || (mode==3 && (tglDPAltCandidates&(1U<<ddi))) ||
+   (mode==4 && (__atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE)&(1U<<ddi)));
  }
  static bool tglLoadTCWiring(IOService *provider);
  bool tglLegacyTCEligible(uint32_t ddi) const {
@@ -732,6 +733,7 @@ private:
  bool tglDPAltFiaReady {},tglDPModeReplaceReady {};
  mach_vm_address_t orgTGLConfiguredLanes {},orgTGLFIALaneCount {};
  static bool tglDPAltFia(void *port,TGLFiaPort &fia);
+ static bool tglLegacyFia(void *port,TGLFiaPort &fia);
  static uint32_t wrapTGLConfiguredLanes(void *port);
  static void wrapTGLFIALaneCount(void *port,uint32_t lanes);
  static bool tglNativeFiaAccess(void *port,uint32_t reg,uintptr_t caller,bool write,TGLNativeFia &mapping);

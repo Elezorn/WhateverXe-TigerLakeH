@@ -60,10 +60,10 @@ int main() {
  ProbeConfig c;c.profile=identify(0x9A498086,1);c.combo=2;c.comboBackend=7;c.legacyBackend=0x1F8;c.legacy=0x1F8;
  ProbeBinding b {1,2,reinterpret_cast<uintptr_t>(platform),c};assert(b.valid());
  unsigned cases=0;
- // Independent old WEG equations, plus exact MMIO read order for every TC.
+ // Independent Linux FIA layouts and exact MMIO read order for every TC.
  for(unsigned d=3;d<=8;++d)for(unsigned h=0;h<2;++h)for(unsigned mod=0;mod<2;++mod)
  for(unsigned ready=0;ready<2;++ready)for(unsigned alt=0;alt<4;++alt) {
-  const unsigned tc=d-3,instance=tc/2,index=tc%2;const uint32_t bases[]={0x163000,0x16E000,0x16F000};
+  const unsigned tc=d-3,instance=mod?tc/2:0,index=mod?tc%2:tc<4?tc:0;const uint32_t bases[]={0x163000,0x16E000,0x16F000};
   const auto liveReg=bases[instance]+0x8A0,readyReg=bases[instance]+0x890;
   IO io;io.regs={{0xC4000,h<<(24+tc)},{0x1638A0,mod<<4},{liveReg,(mod<<4)|(alt<<(5+8*index))},{readyReg,ready<<index}};
   // For FIA1 the per-port fields share its topology word.
@@ -71,9 +71,9 @@ int main() {
   io.regs[0x1638A0]|=mod<<4;
   auto record=reinterpret_cast<uint32_t *>(platform+0x20+24*d);record[0]=d;
   const auto mode=probeMode(io,b,2,reinterpret_cast<uintptr_t>(record),record);
-  assert(mode==(h && mod && ready && !alt?4U:0U));
+  assert(mode==(h && (mod || tc<4) && ready && !alt?4U:0U));
   std::vector<uint32_t> expected {0xC4000};
-  if(h){expected.push_back(0x1638A0);if(mod){if(instance)expected.push_back(liveReg);expected.push_back(readyReg);}}
+  if(h){expected.push_back(0x1638A0);if(mod || tc<4){if(instance)expected.push_back(liveReg);expected.push_back(readyReg);}}
   assert(io.reads==expected);++cases;
  }
  // Selection never grants an unknown, Type-C or excluded port access.

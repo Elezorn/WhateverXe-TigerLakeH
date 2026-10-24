@@ -125,6 +125,8 @@ On supported GPUs, WhateverXe also normalizes the detected Intel Management
 Engine device name to `IMEI`, as WhateverGreen does. A separate ACPI rename
 from `HECI` or `MEI` to `IMEI` is unnecessary.
 
+Tiger Lake automatically selects VBT-described fixed DisplayPort routes on TC1–TC4 when AUX wiring matches the native controller. Fixed DP and DP Alt Mode use the detected FIA layout. TC3/TC4 fixed DP and non-modular FIA support are implemented but have not been verified on hardware. Use the matching Compat build for non-modular FIA probing. TC5/TC6 and cross-routed AUX require further backend support.
+
 Display13 uses the same VBT-driven Combo A/B and fixed TC1–4 HDMI routing on ADL-N and ADL-P/RPL-P. A matching Compat provider with fixed-TC capability is required for TC routes. The older explicit ADL-N HDMI property remains Combo-only. Display13 DP runtime admission remains disabled pending completion of AUX, link training and boot handoff integration.
 
 ADL-P/RPL-P uses its physical ID and fuse-derived resources with the shared Display13 backend. Fixed HDMI routes come from VBT; `-wex-noaccel` retains framebuffer-only operation. A legacy 9A49 donor selector is accepted but unnecessary. Use matching Graphics payloads containing the mobile IDs and provider; Graphics 0.2.0 does not include them. The matching Compat provider supplies an AGDP personality only for the admitted Display13 framebuffer client. Its default policy keeps callback registration active without a board-ID-specific override.

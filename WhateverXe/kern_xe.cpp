@@ -12216,7 +12216,7 @@ bool XE::tglLoadTCWiring(IOService *provider) {
  auto data=OSDynamicCast(OSData,property);
  self->tglTCWiring=property ? (data?TGLTCWiring::fromProperty(data->getBytesNoCopy(),data->getLength()):TGLTCWiring{}) : TGLTCWiring::fromMasks(0,0,0);
  if(!property && XELP::displayAdapter(self->xeProfile.family)==XELP::DisplayAdapter::TGL)
-  self->tglTCAutoCandidates=self->firmwarePorts.tglDPCandidates(self->tglAUXParentMask&0x18);
+  self->tglTCAutoCandidates=self->firmwarePorts.tglDPCandidates(self->tglAUXParentMask&0x78);
  IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeTCDPCandidates",self->tglTCAutoCandidates,32);
  // The qualified donor ready switch covers TC1..4. Resolve modular FIA
  // coordinates under TC-cold before admitting their mode3 transaction.
@@ -14928,19 +14928,18 @@ uint32_t XE::wrapTGLSetPortMode(void *port, uint32_t mode) {
   return kIOReturnNotReady;
  }
  const bool fiaEligible=dpAltTransaction || ((mode==0 || mode==4) && traceDDI<9 &&
-  (previousMode==0 || previousMode==4) && self->tglLegacyTCEligible(traceDDI) &&
-  (__atomic_load_n(&self->tglModularProbed,__ATOMIC_ACQUIRE)&(1U<<traceDDI)));
+  (previousMode==0 || previousMode==4) && self->tglLegacyTCEligible(traceDDI));
  TGLNativeFiaScope fiaScope(self->tglNativeFiaContext,reinterpret_cast<uintptr_t>(current_thread()),fiaEligible?port:nullptr,
   traceDDI,transitionLock && self->tglNativeFiaReady);
 	auto result = FunctionCast(wrapTGLSetPortMode, callbackXE->orgTGLSetPortMode)(port, mode);
- fiaScope.finish();
+ const bool fiaFailed=fiaScope.failed();fiaScope.finish();
+ if(fiaFailed && !result)result=kIOReturnNotReady;
  if(fiaEligible && self->tglNativeFiaReady && transitionLock){
-  TGLNativeFia mapping;
-  if(mapping.resolve(traceDDI)){
-   uint32_t record[]={1,traceDDI,mapping.fia.instance,mapping.fia.readyMask,
+   // No topology MMIO after native release; do not report assumed modular
+   // coordinates for a transaction that may have used non-modular FIA.
+   uint32_t record[]={2,traceDDI,static_cast<uint32_t>(fiaFailed),
     __atomic_load_n(&self->tglNativeFiaReads,__ATOMIC_RELAXED),__atomic_load_n(&self->tglNativeFiaWrites,__ATOMIC_RELAXED)};
    IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeNativeFiaAccess",record,sizeof(record));
-  }
  }
  // A rejected mode must not look like success to training/lifetime callers.
  // Read software state only; do not add FIA MMIO outside a power reference.
@@ -17828,36 +17827,65 @@ bool XE::tglDPAltFia(void *port,TGLFiaPort &fia) {
   FunctionCast(wrapTGLPortReadReg,self->orgTGLPortReadReg)(port,fia.owned)!=~0U;
 }
 
+// Fixed DP uses the same FIA topology as DP-alt. Called only under the
+// mode mutex at native powered mode/lanes accesses: mode4's AUX acquisition
+// precedes the ready/owner accesses and its release follows owner clear.
+// Do not substitute a DP-alt bootstrap hold or a boot probe for this lifetime.
+bool XE::tglLegacyFia(void *port,TGLFiaPort &fia) {
+ auto self=callbackXE;auto p=static_cast<uint8_t *>(port);fia={};
+ if(!p || !self->tglActive || !self->tglNativeFiaReady || !self->tglDPAltFiaReady)return false;
+ auto c=*reinterpret_cast<uint32_t **>(p+0x548);
+ auto access=*reinterpret_cast<uint8_t **>(p+0x578);
+ if(!c || c[0]<3 || c[0]>6 || c[2]!=1 || c[3]!=1 ||
+    !self->tglLegacyTCEligible(c[0]) || *reinterpret_cast<uint32_t *>(p+0x550)!=4 ||
+    !access || !*reinterpret_cast<volatile uint8_t **>(access+0x50) ||
+    *reinterpret_cast<uint32_t *>(access+0x60)<0x1638C4)return false;
+ TGLTypeCPort tc;TGLFiaPort actual;
+ const auto first=FunctionCast(wrapTGLPortReadReg,self->orgTGLPortReadReg)(port,0x1638A0);
+ if(!TGLTypeCPort::resolve(c[0],tc) || !tc.resolveFia(first,actual) ||
+    *reinterpret_cast<uint32_t *>(access+0x60)<actual.laneSelect+4)return false;
+ fia=actual;return true;
+}
+
 uint32_t XE::wrapTGLConfiguredLanes(void *port) {
- auto p=static_cast<uint8_t *>(port);auto c=*reinterpret_cast<uint32_t **>(p+0x548);
- if(c && c[0]<9 && (callbackXE->tglDPAltCandidates&(1U<<c[0])) &&
-    *reinterpret_cast<uint32_t *>(p+0x550)==3) {
-  TGLFiaPort fia;if(!tglDPAltFia(port,fia))return 0;
-  const auto value=wrapTGLPortReadReg(port,fia.laneSelect);
-  return value==~0U?0:(value>>fia.laneSelectShift)&15;
+ auto self=callbackXE;auto p=static_cast<uint8_t *>(port);auto c=*reinterpret_cast<uint32_t **>(p+0x548);
+ const auto mode=*reinterpret_cast<uint32_t *>(p+0x550);
+ const bool alt=c && c[0]<9 && (self->tglDPAltCandidates&(1U<<c[0])) && mode==3;
+ const bool legacy=c && c[0]>=3 && c[0]<=6 && self->tglLegacyTCEligible(c[0]) && mode==4;
+ if(alt || legacy) {
+  auto lock=self->tglModeTransitionLock;if(!lock)return 0;IORecursiveLockLock(lock);
+  TGLFiaPort fia;uint32_t value=0;
+  if(alt?tglDPAltFia(port,fia):tglLegacyFia(port,fia)) {
+   const auto raw=wrapTGLPortReadReg(port,fia.laneSelect);
+   if(raw!=UINT32_MAX)value=(raw>>fia.laneSelectShift)&15;
+  }
+  IORecursiveLockUnlock(lock);return value;
  }
- return FunctionCast(wrapTGLConfiguredLanes,callbackXE->orgTGLConfiguredLanes)(port);
+ return FunctionCast(wrapTGLConfiguredLanes,self->orgTGLConfiguredLanes)(port);
 }
 
 void XE::wrapTGLFIALaneCount(void *port,uint32_t lanes) {
- auto p=static_cast<uint8_t *>(port);auto c=*reinterpret_cast<uint32_t **>(p+0x548);
- if(c && c[0]<9 && (callbackXE->tglDPAltCandidates&(1U<<c[0])) &&
-    *reinterpret_cast<uint32_t *>(p+0x550)==3) {
-  TGLFiaPort fia;if(!tglDPAltFia(port,fia) || (lanes!=1 && lanes!=2 && lanes!=4))return;
-  // Logical main-link lanes, independent of physical USB-C orientation.
-  // Use the same shared mutex as ownership transactions for sibling RMWs.
-  auto lock=callbackXE->tglModeTransitionLock;if(!lock)return;
-  IORecursiveLockLock(lock);
-  const auto owned=wrapTGLPortReadReg(port,fia.owned);
-  auto value=wrapTGLPortReadReg(port,fia.laneSelect);
-  if(owned!=~0U && (owned&fia.readyMask) && value!=~0U) {
-   value=(value&~fia.laneSelectMask)|(((1U<<lanes)-1)<<fia.laneSelectShift);
-   wrapTGLPortWriteReg(port,fia.laneSelect,value);
+ auto self=callbackXE;auto p=static_cast<uint8_t *>(port);auto c=*reinterpret_cast<uint32_t **>(p+0x548);
+ const auto mode=*reinterpret_cast<uint32_t *>(p+0x550);
+ const bool alt=c && c[0]<9 && (self->tglDPAltCandidates&(1U<<c[0])) && mode==3;
+ const bool legacy=c && c[0]>=3 && c[0]<=6 && self->tglLegacyTCEligible(c[0]) && mode==4;
+ if(alt || legacy) {
+  if(lanes!=1 && lanes!=2 && lanes!=4)return;
+  // Admitted fixed routes have no VBT lane reversal; both transports use
+  // logical ML0/ML1_0/ML3_0, not the physical DP-alt lane assignment.
+  auto lock=self->tglModeTransitionLock;if(!lock)return;IORecursiveLockLock(lock);
+  TGLFiaPort fia;
+  if(alt?tglDPAltFia(port,fia):tglLegacyFia(port,fia)) {
+   const auto owned=wrapTGLPortReadReg(port,fia.owned);
+   auto value=wrapTGLPortReadReg(port,fia.laneSelect);
+   if(owned!=UINT32_MAX && (owned&fia.readyMask) && value!=UINT32_MAX) {
+    value=(value&~fia.laneSelectMask)|(((1U<<lanes)-1)<<fia.laneSelectShift);
+    wrapTGLPortWriteReg(port,fia.laneSelect,value);
+   }
   }
-  IORecursiveLockUnlock(lock);
-  return;
+  IORecursiveLockUnlock(lock);return;
  }
- FunctionCast(wrapTGLFIALaneCount,callbackXE->orgTGLFIALaneCount)(port,lanes);
+ FunctionCast(wrapTGLFIALaneCount,self->orgTGLFIALaneCount)(port,lanes);
 }
 
 // r323: the donor DKL table has four HBR2 coefficient mismatches against
@@ -18049,16 +18077,24 @@ bool XE::tglNativeFiaAccess(void *port,uint32_t reg,uintptr_t caller,bool write,
  const auto pc=caller-self->tglNativeFiaBase;
  const auto ddi=self->tglNativeFiaContext.ddi;
  if(!(write?TGLNativeFia::writeSite(pc,reg):TGLNativeFia::readSite(pc,reg)) || !mapping.resolve(ddi))return false;
- if(ddi<9 && (self->tglDPAltCandidates&(1U<<ddi)))return tglDPAltFia(port,mapping.fia);
+ const auto mode=*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(port)+0x550);
+ TGLFiaPort actual;
+ const bool ok=mode==3 ? tglDPAltFia(port,actual) : tglLegacyFia(port,actual);
+ // Keep an intercepted failure intercepted: never fall back to FIA1 when
+ // the selected port's topology is unavailable. Read zero / skip writes.
+ mapping.fia=ok?actual:TGLFiaPort{};
+ if(!ok)self->tglNativeFiaContext.failed=true;
  return true;
 }
 
 uint32_t XE::wrapTGLPortReadReg(void *port,uint32_t reg) {
  TGLNativeFia mapping;
  const bool mapped=tglNativeFiaAccess(port,reg,reinterpret_cast<uintptr_t>(__builtin_return_address(0)),false,mapping);
+ if(mapped && !mapping.fia.readyMask)return 0;
  const auto physical=mapped?(reg==0x163890?mapping.fia.ready:mapping.fia.owned):reg;
  auto value=FunctionCast(wrapTGLPortReadReg,callbackXE->orgTGLPortReadReg)(port,physical);
  if(mapped){
+  if(value==UINT32_MAX){callbackXE->tglNativeFiaContext.failed=true;return 0;}
   value=mapping.logical(value);
   __atomic_add_fetch(&callbackXE->tglNativeFiaReads,1,__ATOMIC_RELAXED);
  }
@@ -18068,12 +18104,12 @@ uint32_t XE::wrapTGLPortReadReg(void *port,uint32_t reg) {
 void XE::wrapTGLPortWriteReg(void *port, uint32_t reg, uint32_t value) {
  TGLNativeFia mapping;
  if(tglNativeFiaAccess(port,reg,reinterpret_cast<uintptr_t>(__builtin_return_address(0)),true,mapping)) {
-  if(!mapping.identity()){
-   // The complete native transaction holds the shared mode lock. Preserve
-   // every other physical owner bit, including the sibling modular port.
-   const auto old=FunctionCast(wrapTGLPortReadReg,callbackXE->orgTGLPortReadReg)(port,mapping.fia.owned);
-   value=mapping.physical(old,value);
-  }
+  if(!mapping.fia.readyMask)return;
+  // Serialize the whole transaction, and preserve peer owner bits even
+  // for FIA1 identity mapping. An unavailable owner read cannot be written.
+  const auto old=FunctionCast(wrapTGLPortReadReg,callbackXE->orgTGLPortReadReg)(port,mapping.fia.owned);
+  if(old==UINT32_MAX){callbackXE->tglNativeFiaContext.failed=true;return;}
+  value=mapping.physical(old,value);
   reg=mapping.fia.owned;
   __atomic_add_fetch(&callbackXE->tglNativeFiaWrites,1,__ATOMIC_RELAXED);
  }

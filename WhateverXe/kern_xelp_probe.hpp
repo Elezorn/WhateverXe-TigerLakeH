@@ -24,7 +24,7 @@ template<class IO> uint32_t legacyTGLMode(IO &io,uint32_t ddi,uint32_t selected)
     if(!TGLTypeCPort::resolve(ddi,port) || !io.readable(0xC4000) || !port.legacyHPD(io.read(0xC4000)) ||
        !io.readable(0x1638A0))return 0;
     const auto first=io.read(0x1638A0);
-    if(!(first&0x10) || !port.resolveFia(first,fia) || !io.readable(fia.live) || !io.readable(fia.ready))return 0;
+    if(!port.resolveFia(first,fia) || !io.readable(fia.live) || !io.readable(fia.ready))return 0;
     const auto live=fia.live==0x1638A0 ? first : io.read(fia.live);
     return fia.readyForLegacy(live,io.read(fia.ready)) ? 4 : 0;
 }

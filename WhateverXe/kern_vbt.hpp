@@ -39,6 +39,8 @@ struct Ports {
     } panel;
     Port port[PortCount];
     bool valid() const {return status==Status::Valid;}
+    // Linux direct_aux_ch_map: A=0x40, B/C/D=0x10/0x20/0x30, E..I=0x50..0x90.
+    static uint32_t tglTCAux(unsigned ddi) {return ddi>=3 && ddi<PortCount ? (ddi==3?0x30U:(ddi+1)*0x10U) : 0;}
     // USB-C DP-alt uses the native mode3 owner, not the fixed-DP mode4
     // backend. VBT AUX D is 0x30 (A is 0x40), then E..I are 0x50..0x90.
     uint32_t tglDPAltCandidates(uint32_t backend) const {
@@ -51,7 +53,7 @@ struct Ports {
                 if(other!=d && (present&(1U<<other)) && port[other].dp() && port[other].aux==p.aux)shared=true;
             if((present&backend&(1U<<d)) && p.dp() && !p.internal() &&
                !(p.type&(0x400|0x20|1)) && !(p.flags&0x17) && (p.capabilities&1) &&
-               !shared && p.aux==(d==3 ? 0x30U : (d+1)*0x10U))result|=1U<<d;
+               !shared && p.aux==tglTCAux(d))result|=1U<<d;
         }
         return result;
     }
@@ -67,7 +69,7 @@ struct Ports {
                 if(other!=d && (present&(1U<<other)) && port[other].dp() && port[other].aux==p.aux)shared=true;
             if((present&backend&(1U<<d)) && (p.type&0x14)==0x14 &&
                !(p.type&(0x1000|0x400|0x20|1)) && !(p.flags&0x17) &&
-               !shared && p.aux==(d+1)*0x10)result|=1U<<d;
+               !shared && p.aux==tglTCAux(d))result|=1U<<d;
         }
         return result;
     }

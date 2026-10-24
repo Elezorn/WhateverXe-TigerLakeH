@@ -22,7 +22,7 @@ int main() {
   auto c=C::display12(~0ULL,r);faults(c);++cases;
   assert(bool(c.required&C::GMBus)==r.hdmi);
   assert(bool(c.required&C::ComboSignal)==(r.panel||r.combo));
-  assert(bool(c.required&C::AltFIA)==r.alt);
+  assert(bool(c.required&C::AltFIA)==(r.alt||r.legacy));
   assert(bool(c.required&C::AUXParent)==(r.combo||r.legacy));
   assert(bool(c.required&C::Lease)==(r.combo||r.legacy||r.alt||r.leaseRequested));
   assert(!(c.required&C::Backend13));

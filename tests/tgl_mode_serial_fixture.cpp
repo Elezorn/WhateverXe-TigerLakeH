@@ -42,6 +42,7 @@ struct XE {
   auto config=*reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port)+0x548);
   TGLTypeCPort tc;return coldReady && TGLTypeCPort::resolve(config[0],tc) && tc.resolveFia(0x10,fia);
  }
+ static bool tglLegacyFia(void *port,TGLFiaPort &fia) {return tglDPAltFia(port,fia);}
  static bool tglNativeFiaAccess(void*,uint32_t,uintptr_t,bool,TGLNativeFia&);
  static uint32_t wrapTGLPortReadReg(void*,uint32_t);
  static void wrapTGLPortWriteReg(void*,uint32_t,uint32_t);
