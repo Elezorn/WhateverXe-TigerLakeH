@@ -12,10 +12,15 @@
 #include "kern_tgl_tc_native.hpp"
 #include "kern_tgl_native_fia.hpp"
 #include "kern_tgl_hdmi_wiring.hpp"
+#include "kern_tgl_combo_dp.hpp"
 #include "kern_display13_hdmi_wiring.hpp"
 #include "kern_xelp_platform.hpp"
+#include "kern_xelp_sst_program.hpp"
 #include "kern_vbt.hpp"
+#include "kern_alderlake_s.hpp"
+#include "kern_xelp_panel_pwm.hpp"
 #include "kern_xelp_donor.hpp"
+#include "kern_xelp_display_contract.hpp"
 
 #include "kern_dvmt.hpp"
 #include <Headers/kern_patcher.hpp>
@@ -57,6 +62,8 @@ public:
 	bool processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
 
 private:
+ XELP::DisplayContract::Mask display12Available() const;
+ XELP::DisplayContract::Mask display13Available() const;
 	// Do not inline either helper into the small kext-load dispatcher.
 	__attribute__((noinline)) bool processAlderLakeNLoadOnly(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
 	__attribute__((noinline)) bool processAlderLakeNRejectedAccelerator(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
@@ -75,6 +82,28 @@ private:
 	bool tglActive {false};
 	bool adlnRequested {false};
 	bool adlnDetected {false};
+    // Render and Display selections are independent; shared PHY/port code
+    // must not depend on which GT implementation the product uses.
+    bool display12SmallGTDetected {},display12SmallGTReady {};
+    bool adlsDisplaySelected {},adlsDisplayHooksReady {};
+    bool adlsPortInitReady {},tglHPDHookReady {};
+    bool adlsPLLTableReady {},adlsClockReady {},adlsPowerReady {},adlsPanelPWMReady {};
+ XELP::PanelPWM adlsPanelPWM;
+ mach_vm_address_t orgADLSLightUpEDP {},orgADLSPanelBacklight {};
+ static bool adlsPanelPWMTarget(void *controller,void *&access,void *&power);
+ static bool adlsCapturePanelPWM(void *controller);
+ static uint32_t wrapADLSLightUpEDP(void *controller,void *fb,void *path,const void *timing);
+ static uint32_t wrapADLSPanelBacklight(void *controller,uint32_t brightness);
+ static void wrapADLSPanelPWMEnable(void *access);
+    mach_vm_address_t orgADLSPowerPG {};
+    static uint8_t *adlsPowerTarget(void *power);
+    static void wrapADLSPowerPG(void *power,bool enable,uint32_t requested);
+    mach_vm_address_t orgADLSEnableClocks {};
+    static bool adlsClockTarget(void *controller,void *port,void *otherPort);
+    static void wrapADLSEnableClocks(void *controller,void *port,void *otherPort,uint32_t *params);
+    mach_vm_address_t orgADLSPortInit {};
+    static bool wrapADLSPortInit(void *port,uint32_t *config);
+    XELP::SmallGTResources display12SmallGT;
     XELP::Profile xeProfile;
     XELP::VBT::Ports firmwarePorts;
     void xelpReadFirmware(IOPCIDevice *pci);
@@ -83,7 +112,9 @@ private:
     uint32_t adlnNativeSubslices {}, adlnL3Banks {}, adlnNativeEUs {};
 	bool adlnKernelReady {false};
 	bool adlnNativeRequested {false};
-	bool adlnNativeReady {false};
+	// Shared platform preflight: GT fuses, reserved GGTT/GOP, mapper,
+    // aperture and native boot policy. Both Render and Display consume it.
+    bool adlnNativeReady {false};
 	bool display13FramebufferRequested {false};
 	bool display13FBPowerReferencesReady {false};
 	bool display13FBClockReadoutHooksReady {false};
@@ -94,10 +125,32 @@ private:
 	bool display13FBWatermarkLayoutReady {false};
 	bool display13FBWatermarkHooksReady {false};
 	bool display13FBOutputHooksReady {false};
+ bool display13FBSSTHooksReady {};
+ bool display13FBAUXHooksReady {};
+ mach_vm_address_t display13AUXControllerSlot {};
+ mach_vm_address_t orgDisplay13ReadAUX {},orgDisplay13WriteAUX {},orgDisplay13I2CAUX {},orgDisplay13RunAUX {};
+ bool processDisplay13FramebufferAUX(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ static bool display13AUXReady(void *port,bool command);
+ static uint32_t wrapDisplay13ReadAUX(void *port,uint32_t address,void *data,uint32_t length);
+ static uint32_t wrapDisplay13WriteAUX(void *port,uint32_t address,void *data,uint32_t length);
+ static uint32_t wrapDisplay13I2CAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,uint8_t flag);
+ static uint32_t wrapDisplay13RunAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,bool flag);
+ mach_vm_address_t orgDisplay13TrainingPattern {},orgDisplay13SignalLevels {};
+ mach_vm_address_t orgDisplay13EnablePort {},orgDisplay13DisablePort {};
+ static bool display13MainLinkAUX(void *port,bool acquire);
+ static uint32_t wrapDisplay13EnablePort(void *port);
+ static uint32_t wrapDisplay13DisablePort(void *port);
+ bool processDisplay13FramebufferSST(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ static uint8_t *display13SSTPort(void *port);
+ static bool display13HDMIPort(void *port);
+ static uint32_t wrapDisplay13TrainingPattern(void *path,uint32_t pattern);
+ static uint32_t wrapDisplay13SignalLevels(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig);
 	mach_vm_address_t xelpProviderProbe {},xelpProviderConfigureProbe {};
+ bool display13DPProbeReady {};
     bool xelpBindProbe(void *controller);
 	bool display13FBTopologyHooksReady {false};
-	Display13HDMIWiring adlnHDMIWiring;
+	Display13OutputWiring adlnOutputWiring;
+ mach_vm_address_t adlnComboPLLFractionCaller {};
 	uint64_t adlnPlatform[0x1C0/8] {};
 	IOService *adlnTopologyController {};
 	mach_vm_address_t orgAlderLakeNGetOSInformation {},orgAlderLakeNPortState {};
@@ -238,6 +291,13 @@ private:
 	mach_vm_address_t orgTGLPlaneSetup {}, orgTGLColorMode {}, orgTGLPixelInfo {};
 	mach_vm_address_t orgTGLModeTiming {};
 	bool tglPanelDepthReady {false};
+ bool tglPanelTimingReady {};
+ mach_vm_address_t orgTGLPanelTiming {},orgTGLPanelConfig {};
+ uint32_t tglPanelTimingBIOS[3] {};
+ bool tglPanelTimingBIOSValid {};
+ static void tglApplyPanelTiming(void *controller,bool apply);
+ static void wrapTGLPanelConfig(void *controller,uint32_t config);
+ static uint32_t wrapTGLPanelTiming(void *controller);
 	static uint32_t tglPanelDepthPort(void *port);
 	static void wrapTGLModeTiming(void *controller,void *fb,void *timing);
 	mach_vm_address_t orgTGLGamma10 {}, orgTGLRegisterWrite {}, orgTGLFastRegisterWrite {};
@@ -251,6 +311,7 @@ private:
 	static volatile uint8_t *tglClockOrderTarget(void *controller, void *port, void *path, void *fb);
 	static void wrapTGLDisableClocks(void *controller, void *port, void *otherPort);
 	mach_vm_address_t tglPG1FuseReadCaller {};
+	mach_vm_address_t tglPGFuseWaitFunction {};
 	mach_vm_address_t tglComboPLLFractionCaller {};
 	bool tglSinkFramingReady {};
 	bool tglComboAUXGateReady {};
@@ -279,11 +340,12 @@ private:
 	static bool wrapTGLPanelPowerProperty(IORegistryEntry *framebuffer, const char *, OSObject *value);
 	bool tglHDMIB {false};
  TGLHDMIWiring tglHDMIWiring;
+ AlderLakeS::Wiring adlsWiring;
  bool tglHDMIWiringLoaded {},tglHDMIWiringExplicit {},tglHDMIWiringApplied {};
  uint32_t tglHDMIBackendMask {3}; // TGL-U combo PHY A/B; C is absent
  static bool tglLoadHDMIWiring(IOService *provider);
- bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && tglHDMIWiring.matches(config);}
- bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && tglHDMIWiring.usesDDC(pin);}
+ bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && (adlsDisplaySelected?adlsWiring.matches(config,false):tglHDMIWiring.matches(config));}
+ bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && (adlsDisplaySelected?adlsWiring.usesDDC(pin):tglHDMIWiring.usesDDC(pin));}
 
 	bool tglGMBusReady {false};
 	mach_vm_address_t orgTGLGMBus {};
@@ -329,7 +391,7 @@ private:
 	mach_vm_address_t orgTGLEnablePort {};
 	mach_vm_address_t orgTGLDisablePort {};
 	bool tglComboAUXLifetimeReady {};
-	void *tglComboAUXOwners[2] {};
+	void *tglComboAUXOwners[9] {};
 	static void tglComboAUXReference(void *port,bool acquire);
 	static uint32_t wrapTGLDisablePort(void *port);
 	mach_vm_address_t orgTGLSignalLevels {};
@@ -388,13 +450,18 @@ private:
  // Native mode setter owns FIA1 bits 0/1 correctly on modular TGL. Later
  // instances need the new mode backend, regardless of available PHY math.
  uint32_t tglTCAutoCandidates {},tglTCAutoRegistered {};
- uint32_t tglDPAltCandidates {};
- bool tglDPSSTEligible(uint32_t ddi) const {
-  return tglLegacyTCEligible(ddi) || (ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
+ uint32_t tglDPAltCandidates {},tglComboDPMask {};
+ XELP::Display12SSTRoutes tglSSTRoutes() const {
+  auto routes=tglTCWiring.sstRoutes(tglAUXParentMask,
+   tglTCAutoCandidates&__atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE),tglDPAltCandidates);
+  routes.combo=adlsDisplaySelected ? (adlsWiring.valid?adlsWiring.dp:0) : tglComboDPMask;
+  routes.panel=adlsDisplaySelected && adlsWiring.valid ? adlsWiring.panel : 0;
+  return routes;
  }
+ bool tglDPSSTEligible(uint32_t ddi) const {return tglSSTRoutes().eligible(ddi);}
  bool tglDPSSTMode(uint32_t ddi,uint32_t mode) const {
-  return (mode==4 && tglLegacyTCEligible(ddi)) ||
-   (mode==3 && ddi>=3 && ddi<9 && (tglDPAltCandidates&(1U<<ddi)));
+  const auto route=tglSSTRoutes().external(ddi,mode);
+  return route.valid() && route.mode==mode;
  }
  uintptr_t tglNativeLegacyHPDCaller {};
  bool tglRegisterLegacyHPD(uint32_t ddi,uint32_t mode,uintptr_t caller) {
@@ -414,13 +481,13 @@ private:
  }
  static bool tglLoadTCWiring(IOService *provider);
  bool tglLegacyTCEligible(uint32_t ddi) const {
-  return tglTCWiring.legacyEligible(ddi,tglAUXParentMask) || (ddi>=3 && ddi<9 &&
-   (tglTCAutoCandidates & tglAUXParentMask & __atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE) & (1U<<ddi)));
+  return tglSSTRoutes().external(ddi,4).valid();
  }
 	uint32_t tglAUXParentRefs[9] {};
 	bool tglAUXParentEligible(uint32_t ddi) const {
-		return tglAUXParentReady && tglLegacyTCEligible(ddi);
+		return tglAUXParentReady && tglSSTRoutes().fixed(ddi).auxParentPG!=0;
 	}
+	uint32_t tglAUXParentPG(uint32_t ddi) const {return tglSSTRoutes().fixed(ddi).auxParentPG;}
 	static void wrapTGLEnableAUXPower(void *power, uint32_t ddi);
 	static void wrapTGLDisableAUXPower(void *power, uint32_t ddi);
 	static uint32_t wrapTGLRunAUX(void *port, uint32_t command, uint32_t *packet, uint32_t length, bool flag);

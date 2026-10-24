@@ -9,6 +9,8 @@
 #include <unistd.h>
 #include "kern_tgl_hdmi_wiring.hpp"
 #include "kern_vbt.hpp"
+#include "kern_alderlake_s.hpp"
+#include "kern_tgl_combo_dp.hpp"
 #include "kern_xelp_donor.hpp"
 struct OSObject {virtual ~OSObject()=default;};
 struct OSData:OSObject {std::vector<uint8_t> data;void *getBytesNoCopy(){return data.data();}uint32_t getLength(){return data.size();}};
@@ -26,6 +28,7 @@ void clock_get_uptime(uint64_t *p){*p=0;}void absolutetime_to_nanoseconds(uint64
 void *current_thread(){return reinterpret_cast<void *>(1);}
 struct XE {
  bool tglHDMIB=true,tglStolenMemoryReady=false;
+ uint32_t tglComboDPMask=0;bool adlsDisplaySelected=false;
  struct {uint32_t fStolenMemorySize=0;} framebufferPatch;
  XELP::VBT::Ports firmwarePorts;
  // FIELDS
@@ -60,6 +63,41 @@ void expectUnchangedExcept(const uint8_t *after,std::initializer_list<unsigned> 
  assert(!memcmp(after,expected.data(),sizeof(original)));
 }
 int main(){
+ // ADL-S uses the same real entry points, while preserving the physical
+ // TC1 record and converting its PHY classification from Dekel to Combo.
+ setup();object.adlsDisplaySelected=true;
+ object.firmwarePorts.status=XELP::VBT::Status::Valid;object.firmwarePorts.present=8;
+ object.firmwarePorts.port[3]={0x60d2,1,2};
+ reinterpret_cast<uint32_t *>(original+0x68)[1]=9;IOService adlsProvider;
+ assert(XE::tglLoadHDMIWiring(&adlsProvider));assert(XE::wrapTGLGetOSInformation(controller));
+ auto adlsConfig=reinterpret_cast<uint32_t *>(platform()+0x68);
+ assert(object.tglHDMIEligible(adlsConfig) && object.tglHDMIDDCEligible(9) && !object.tglHDMIDDCEligible(2));
+ assert(adlsConfig[0]==3 && adlsConfig[1]==9 && adlsConfig[3]==0);
+ expectUnchangedExcept(platform(),{0x70,0x74,0x78,0x7C});
+ for(unsigned bus=0;bus<=14;++bus) {
+  uint32_t request[16] {};request[1]=1;request[3]=0xA0;request[14]=128;
+  nativeGMBusCalls=0;
+  auto result=XE::wrapTGLGMBus(controller,bus,0,request);
+  assert(nativeGMBusCalls==unsigned(bus==9));
+  assert(result==(bus==9?0x91u:0xE00002C2u));
+  if(bus!=9)assert(request[7]==result);
+ }
+ setup();object.adlsDisplaySelected=true;auto foreignWiring=property(2,0,2,0);IOService wrongADLS{&foreignWiring};
+ assert(!XE::tglLoadHDMIWiring(&wrongADLS) && !XE::tglLoadHDMIWiring(&wrongADLS));
+ // Panel + external HDMI/DP use the real firmware loader and topology copy.
+ for(unsigned kind:{1U,2U})for(unsigned tcon:{0U,2U,3U}) {
+  setup();object.adlsDisplaySelected=true;auto &v=object.firmwarePorts;
+  v.status=XELP::VBT::Status::Valid;v.present=9;v.port[0]={0x78c6,10,0,0x40,0,0};
+  v.panel.valid=true;v.panel.ddi=0;v.panel.backlightValid=true;v.panel.pwmPresent=true;v.panel.backlightType=2;
+  v.port[3]={kind==1?0x60d2U:0x60d6U,kind==1?1U:7U,2,kind==1?0U:0x10U,0,0};
+  reinterpret_cast<uint32_t *>(original+0x68)[1]=9;*reinterpret_cast<uint32_t *>(original+0x190)=tcon;
+  IOService provider;assert(XE::tglLoadHDMIWiring(&provider)&&object.adlsWiring.panel==1);
+  assert(XE::wrapTGLGetOSInformation(controller));
+  assert(object.adlsWiring.boundPanel(platform(),reinterpret_cast<uint32_t *>(platform()+0x20)));
+  assert(object.adlsWiring.matches(reinterpret_cast<uint32_t *>(platform()+0x68)));
+  assert(!*reinterpret_cast<uint32_t *>(platform()+0x190));
+  expectUnchangedExcept(platform(),{0x70,0x74,0x78,0x7c,0x190});
+ }
  // The native setup caller supplies an interior output pointer as arg0.
  // Any object/config dereference on an unqualified caller must fault here.
  setup();
@@ -93,6 +131,20 @@ int main(){
  assert(XE::tglLoadHDMIWiring(&firmware)&&!object.tglHDMIWiringExplicit&&object.tglHDMIWiring.hdmi==2);
  assert(XE::wrapTGLGetOSInformation(controller));
  assert(reinterpret_cast<uint32_t *>(platform()+0x38)[1]==2);
+ // Fixed Combo DP composes with HDMI and a panel-free A/B native topology.
+ for(unsigned mask:{1u,2u,3u}) {
+  setup();object.firmwarePorts.status=XELP::VBT::Status::Valid;object.firmwarePorts.present=3;
+  for(unsigned d=0;d<2;++d)object.firmwarePorts.port[d]=mask&(1U<<d) ?
+   XELP::VBT::Port{0x60d6,d?7u:10u,0,d?0x10u:0x40u,0xc0,0} :
+   XELP::VBT::Port{0x60d2,d?1u:0u,d+1,0,0xc0,0};
+  IOService provider;assert(XE::tglLoadHDMIWiring(&provider)&&object.tglComboDPMask==mask);
+  assert(XE::wrapTGLGetOSInformation(controller));
+  for(unsigned d=0;d<2;++d) {
+   auto config=reinterpret_cast<uint32_t *>(platform()+0x20+24*d);
+   assert(config[2]==(mask&(1U<<d)?1u:2u));
+   if(mask&(1U<<d))assert(TGLComboDP::bound(mask,platform(),config));
+  }
+ }
  // An explicitly malformed override still rejects a usable firmware default.
  setup();object.firmwarePorts.status=XELP::VBT::Status::Valid;
  object.firmwarePorts.present=2;object.firmwarePorts.port[1]={0x60d2,1,2};

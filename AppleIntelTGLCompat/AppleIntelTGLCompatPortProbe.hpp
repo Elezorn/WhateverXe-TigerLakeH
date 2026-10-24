@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
-// Shared c004fc1a donor port-mode provider. ADL-N currently admits Combo
-// HDMI only; TC HDMI is deferred and fixed DP needs a separate policy.
+// Shared c004fc1a donor port-mode provider. Fixed Combo HDMI/DP classification
+// does not grant PHY, AUX, boot-handoff or Type-C ownership.
 #ifndef TGL_COMPAT_PORT_PROBE_HPP
 #define TGL_COMPAT_PORT_PROBE_HPP
 #include <stdint.h>

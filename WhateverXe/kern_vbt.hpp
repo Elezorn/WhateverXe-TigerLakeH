@@ -29,6 +29,11 @@ struct Ports {
     struct Panel {
         bool valid {},lowSwing {},hobl {};
         uint32_t type {},ddi {PortCount};
+        // BDB 27: five little-endian 100us delays per panel, including T12.
+        uint16_t delays[5] {};
+        // BDB 43 is optional and independent of the signal-policy facts.
+        bool backlightValid {},pwmPresent {},activeLowPWM {};
+        uint32_t backlightType {},controller {},pwmHz {};
     } panel;
     Port port[PortCount];
     bool valid() const {return status==Status::Valid;}
@@ -80,9 +85,9 @@ struct Ports {
 // Optional panel facts must never weaken General Definitions admission or
 // make an unrelated malformed firmware tail reject usable connector facts.
 inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) {
-    const uint8_t *options=nullptr,*edp=nullptr,*power=nullptr;
-    size_t optionsSize=0,edpSize=0,powerSize=0;
-    bool duplicate=false;
+    const uint8_t *options=nullptr,*edp=nullptr,*power=nullptr,*backlight=nullptr;
+    size_t optionsSize=0,edpSize=0,powerSize=0,backlightSize=0;
+    bool duplicate=false,backlightDuplicate=false;
     for(size_t at=header;at<size;) {
         if(size-at<3)break;
         size_t n=u16(b+at+1);
@@ -94,6 +99,7 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
         auto block=b+at+3;
         if(b[at]==40){duplicate|=options!=nullptr;options=block;optionsSize=n;}
         if(b[at]==27){duplicate|=edp!=nullptr;edp=block;edpSize=n;}
+        if(b[at]==43){backlightDuplicate|=backlight!=nullptr;backlight=block;backlightSize=n;}
         if(b[at]==44){duplicate|=power!=nullptr;power=block;powerSize=n;}
         at+=3+n;
     }
@@ -111,22 +117,33 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
     p.lowSwing=((u64(edp+204)>>(4*p.type))&15)==0;
     p.hobl=ports.version>=232 && (u16(power+54)&(1U<<p.type));
     p.valid=true;
+    for(unsigned i=0;i<5;++i)p.delays[i]=u16(edp+10*p.type+2*i);
+    if(!backlightDuplicate && backlight && backlightSize>=129 && backlight[0]==6) {
+        const auto entry=backlight+1+6*p.type;
+        p.pwmPresent=(entry[0]&3)==2;p.activeLowPWM=entry[0]&4;
+        p.pwmHz=u16(entry+1);
+        p.backlightType=backlight[113+p.type]&15;
+        p.controller=backlight[113+p.type]>>4;
+        p.backlightValid=true;
+    }
 }
 // Return the donor's physical-DDI slot, never an FB index. Display13 VBT
 // retains C/D/E labels even on ADL-N, whose physical Combo set is only A/B.
 inline uint32_t ddi(Family family,uint32_t dvo) {
+    const auto adapter=displayAdapter(family);
     const uint8_t dp[]={10,7,8,9,11,13,15,17,19};
     const uint8_t hd[]={0,1,2,3,12,14,16,18,20};
     for(unsigned p=0;p<9;++p)if(dvo==dp[p] || dvo==hd[p]) {
-        if(family==Family::TigerLake)return p==2 ? PortCount : p;
-        if(family==Family::AlderLakeN)return p<2 ? p : p>=5 ? p-2 : PortCount;
+        if(adapter==DisplayAdapter::TGL)return p==2 ? PortCount : p;
+        if(adapter==DisplayAdapter::ADLN)return p<2 ? p : p>=5 ? p-2 : PortCount;
+        if(adapter==DisplayAdapter::ADLS)return p==0 ? 0 : p<5 ? p+2 : PortCount;
     }
     return PortCount;
 }
 inline Ports parse(const void *data,size_t length,Family family) {
     Ports r;
     if(!data || !length)return r;
-    if(family!=Family::TigerLake && family!=Family::AlderLakeN){r.status=Status::Platform;return r;}
+    if(displayAdapter(family)==DisplayAdapter::Unknown){r.status=Status::Platform;return r;}
     const auto p=static_cast<const uint8_t *>(data);r.status=Status::Header;
     if(length<48 || memcmp(p,"$VBT",4))return r;
     const size_t header=u16(p+22),size=u16(p+24),bdb=u32(p+28);
@@ -161,7 +178,9 @@ inline Ports parse(const void *data,size_t length,Family family) {
     if(stride<38 || stride>64 || (childBytes-5)%stride)return r;
     for(size_t at=5;at<childBytes;at+=stride) {
         const auto c=children+at;const auto type=u16(c+2);
-        if(!type)continue; // disabled firmware entry is not a wired connector
+        // Non-digital placeholders have no DVO association. ADL-S firmware
+        // includes TV/CRT entries with DVO0 alongside the real digital A.
+        if(!(type&2))continue;
         const auto d=ddi(family,c[16]);
         if(d==PortCount){++r.unmapped;continue;}
         if(r.present&(1U<<d)){r.status=Status::Conflict;return r;}

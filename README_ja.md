@@ -6,6 +6,8 @@ WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィック
 
 本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。
 
+WEX **0.5.0**で追加したGPUにはWhateverXe Graphics **0.2.0**が必要で、同pkgには最新の描画修正も含まれます。従来対応のTiger Lake／Alder Lake-N構成ではGraphics 0.1.0も利用できますが、新pkgの修正や更新部品を必要とする機能は利用できません。今回の追加機能と修正をすべて利用するには、WEX 0.5.0とGraphics 0.2.0を組み合わせてください。
+
 ## 対応範囲
 
 単一のWEXバイナリと1つのグラフィックスpkgで、以下のmacOSに対応します。
@@ -23,12 +25,39 @@ Big Sur〜Sonomaは検証済みカーネルの識別を必要とします。Sequ
 
 WEXはOSのABIとGPUバックエンドを独立して選択します。OS別のグラフィックス資材と共通のAppleIntelTGLCompatはWhateverXe Graphicsが導入し、GPU世代・コネクタ配線への対応はWEXが担います。
 
-| GPUファミリー | バックエンド実装があるdevice ID |
-| --- | --- |
-| Tiger Lake | `9A40`、`9A49`、`9A78` |
-| Alder Lake-N / Twin Lake | `46D0`–`46D4` |
+### 実機で動作確認済み
 
-対応状況は機種やコネクタ構成によって異なります。この表はバックエンドの実装範囲を示すもので、すべての機種での動作を保証するものではありません。詳細な選択条件と上書き設定は[デバイス選択](docs/device-selection.md)を参照してください。
+| GPUファミリー | 確認した構成 |
+| --- | --- |
+| Tiger Lake-U | 48 EU・80 EU。外部画面を使う構成とノートPCの画面構成 |
+| Alder Lake-N | 16 EU・24 EU。HDMI 2画面 |
+| Alder Lake-S | UHD Graphics 770（`4690`）。HDMI、DisplayPort、固定DisplayPortとして配線されたUSB-C端子 |
+
+各ファミリーの一部構成で確認した結果であり、全モデル・全端子の動作保証ではありません。
+OS別の検証範囲と残る問題は[動作確認済みの機能と既知の問題](#動作確認済みの機能と既知の問題)を参照してください。
+
+### 動作を期待できるが実機未検証
+
+- 96 EUを含む、対応IDの他のTiger Lake-U/H35構成。
+- Tiger Lake-H45（GT1）：`9A60`、`9A68`、`9A70`。
+- 対応IDの他のAlder Lake-N構成とTwin Lake。
+- 対応IDの他のAlder Lake-S構成、Alder Lake-HX、Raptor Lake-S、Raptor Lake-HX。
+
+確認済みのファミリーと処理を共有する実装があり、IDは自動で受け付けます。
+CPUモデル名や機種固有の設定は不要ですが、実機での動作確認は残っています。
+受付IDの一覧と対応する資源構成は[デバイス選択](docs/device-selection.md)を参照してください。
+
+### 対応に追加改修が必要
+
+- Alder Lake-H/P/U、Raptor Lake-H/P/U：描画・表示処理の追加対応が必要です。
+  上記のHX製品とは別の系統です。
+- Rocket Lake-S：Tiger Lakeとは表示の電源・クロック制御が異なります。
+  このリリースでは未対応で、実機検証の予定もありません。
+
+### 対応予定なし
+
+- Meteor Lakeの内蔵GPUなど、Xe-LPG。
+- Xe2以降のグラフィックス世代。
 
 ## 必須構成
 
@@ -45,7 +74,7 @@ SIPは`csr-active-config=03080000`（値`0x803`）に設定してください。
 
 Tahoeでは`CoreMedia / AllowOnePassMetalScaling`の無効化が必要です。WhateverXe Graphicsのインストーラーが設定します。
 
-グラフィックスpkgはWEX **0.3.0以上**を読み込んだ対象OSから実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
+グラフィックスpkgはWEX **0.3.0以上**（今回追加したGPUでは0.5.0）を読み込んだ対象OSから実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
 
 リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。upstreamのAMFIPassはMod版の署名チェーンに対応していません。
 
@@ -92,6 +121,8 @@ OpenCoreの`boot-args`に以下を追加してください。
 `-wex-nopanel`ブート引数は廃止され、不要になりました。内蔵ディスプレイの有無は自動で判定します。
 
 Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追加する必要はありません。
+GPU backendの選択と実機検証範囲は独立しています。未検証のPCI revisionも同じfamily実装を使い、
+文書化された差分や実際の不具合で必要になった場合にrevision別の処理を追加します。
 
 対応済みのDisplay 13バックエンドではYタイル出力を自動選択するため、OpenCoreの`AAPL,GfxYTile`設定は不要です。既存の値は保持します。
 このバックエンドはXタイル出力に未対応なので、Appleドライバの`-yTileDisable`引数は使用しないでください。Display 12のタイル選択は変更しません。
@@ -101,30 +132,36 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 | ハードウェア | 確認済みの機能 |
 | --- | --- |
 | Tiger Lake / Alder Lake-N | Big Sur〜Tahoe：外部2画面の1920×1080・60Hz出力、Metal/MPS、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、HEVCデコード、画面の消灯／復帰、Safariの動画デコード、Widevine再生 |
-| Tiger Lakeラップトップ | Big Sur〜Tahoe：内蔵1366×768 eDP、輝度調整、HDMI、USB-C DisplayPort Alt Mode、最大3画面同時出力。TahoeではHDMIとUSB-Cの2端子で抜き差しも確認 |
+| Tiger Lakeラップトップ | Big Sur〜Tahoe：内蔵1366×768 eDP、輝度調整、HDMI、USB-C DisplayPort Alt Mode、最大3画面同時出力。USB-Cの再接続には未解決の問題あり |
 | Alder Lake-N | Big Sur/Tahoe：EFIの`AAPL,GfxYTile`設定なしでのYタイル自動選択 |
+| Alder Lake-S | Big Sur〜Tahoe：Metal、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、HEVCデコード、3画面（1080p60×2＋720p60×1）、Safari動画再生。WidevineはBig SurとTahoeで確認 |
+| Tiger Lake / Alder Lake-S | Tahoe：ChromeのCanvas、WebGL、WebGPUによるハードウェア描画 |
 
 検証した機器での結果であり、すべてのGPU・ディスプレイ・アダプター・ドックでの動作を保証するものではありません。
+記載した解像度は検証範囲であり、WEXが設けた固定の解像度制限ではありません。
+
+Big Sur〜Tahoeでは、有効なApple platform署名とサービス識別子でWebKit GPUを判定し、
+Safariのインストール先や更新による配置変更に依存せずData側GPUドライバへのアクセスを扱います。
 
 ### 既知の問題と制限
 
-- 一部の画像変換処理で、アプリケーションがクラッシュすることがあります。
-- DisplayPort専用端子でモニターを接続し直すと、黒画面になったりコンピューターが応答しなくなったりすることがあります。USB-CのDisplayPort Alt Modeでは、上記の抜き差し試験を通過しています。
-- Safariの動画再生で、ときどきコマ落ちが発生します。
-- 同時出力は最大3画面です。4画面目には映像が出ません。
-- システム全体のスリープ／復帰と、上記を超える解像度は未検証です。USB-C映像出力では現在、表示回路の一部を省電力状態へ移行させずに動作させています。
+- 一部の画像変換処理でアプリがクラッシュすることがあります。
+- 専用DisplayPort端子の抜き差しで黒画面やシステム停止が起きることがあります。
+  USB-C DisplayPort Alt Modeでも再接続時のシステム停止がBig SurとTahoeの両方で再現しています。
+- Safariの動画再生で時折コマ落ちすることがあります。
+- 同時表示は最大3画面です。4画面目には映像が出ません。
+- Alder Lake-SではDisplayPortの表示開始や再接続後の復帰に時間がかかる場合があります。
+- 一部の端子配線、Thunderbolt管理の出力、内蔵画面の輝度制御方式は未対応です。
+  詳細は[表示の制限](docs/device-selection.md#display-limits)を参照してください。
+- FairPlayで保護されたコンテンツの再生には未対応です。
+- システム全体のスリープ／復帰と、上記を超える解像度は未検証です。
+  USB-C映像出力中は表示ハードウェアの一部が低消費電力状態へ移行しません。
 
 ## ロードマップ
 
-### Planned
-
-- Alder Lake／Raptor LakeのS/H/P/U対応
-- Display 13のUSB-C / eDP対応
-
-### Not Planned
-
-- Xe-LPG対応
-- Xe2以降のアーキテクチャへの対応
+- Alder Lake-H/P/UとRaptor Lake-H/P/Uへの対応。
+- Display 13 GPUでのUSB-C・内蔵画面対応。
+- 画面再接続の安定性改善とシステム全体のスリープ／復帰の調査。
 
 ## ビルドとテスト
 

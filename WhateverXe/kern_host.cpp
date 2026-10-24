@@ -32,7 +32,8 @@ void XeHost::processKernel(KernelPatcher &patcher) {
  const bool published=gpu && WIOKit::awaitPublishing(gpu);
  const auto profile=published ? XELP::deviceProfile(gpu) : XELP::Profile {};
  active=profile.admitted();
- backlightEnabled=active && profile.family==XELP::Family::TigerLake &&
+ const auto display=XELP::displayAdapter(profile.family);
+ backlightEnabled=active && (display==XELP::DisplayAdapter::TGL || display==XELP::DisplayAdapter::ADLS) &&
   info->firmwareVendor!=DeviceInfo::FirmwareVendor::Apple;
  backlightGPU=backlightEnabled ? gpu : nullptr;
  if(published) {
@@ -42,6 +43,8 @@ void XeHost::processKernel(KernelPatcher &patcher) {
   gpu->setProperty("WhateverXeDeviceSelection",selection,sizeof(selection));
   if(!gpu->getProperty("model"))if(const auto name=XELP::model(profile))gpu->setProperty("model",const_cast<char *>(name),strlen(name)+1);
  }
+ // Capture the unmodified firmware/GT state before admitting a new backend.
+ if(!active && profile.family==XELP::Family::AlderLakeS)xe.processKernel(patcher,info);
  if(active) {
   XeDataAccess::processKernel(patcher);
   // Xe admission reads physical PCI identity. Do not install WEG's ID spoof hooks.

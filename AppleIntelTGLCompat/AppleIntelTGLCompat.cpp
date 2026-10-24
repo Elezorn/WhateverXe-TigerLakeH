@@ -19,19 +19,21 @@ template <typename F> static F method(void *object, size_t offset) {
     return reinterpret_cast<F>((*static_cast<uintptr_t **>(object))[offset / 8]);
 }
 static void *manager(void *controller) { return field<void *>(controller, 0xc40); }
-static void *hardwareAccess;
+static void *legacyTGLAccess;
 static XELP::ProbeBinding probeBinding;
 static uint32_t probeBindingState; // 0 unbound, 1 publishing, 2 immutable/pinned.
 
-// Generic register/DSB operations still belong only to the qualified TGL
-// backend. The separately bound Display13 port probe never opens this gate.
+// Generic register/DSB operations belong to the qualified Display12 families.
+// The separately bound Display13 port probe never opens this gate.
 static bool hardwareAllowed(void *controller) {
     if (!controller) return false;
     auto service = static_cast<IOService *>(controller);
     auto pci = OSDynamicCast(IOPCIDevice, service->getProvider());
     const auto profile=XELP::deviceProfile(pci);
-    if(!profile.admitted() || profile.family!=XELP::Family::TigerLake)return false;
-    __atomic_store_n(&hardwareAccess, manager(controller), __ATOMIC_RELEASE);
+    const auto adapter=XELP::displayAdapter(profile.family);
+    if(!profile.admitted() || (adapter!=XELP::DisplayAdapter::TGL && adapter!=XELP::DisplayAdapter::ADLS))return false;
+    if(adapter==XELP::DisplayAdapter::TGL)
+        __atomic_store_n(&legacyTGLAccess,manager(controller),__ATOMIC_RELEASE);
     return true;
 }
 
@@ -49,6 +51,9 @@ static uint32_t read32(void *access, unsigned long offset) {
 // and board-policy checks. The provider independently verifies physical identity;
 // it does not read plugin boot arguments or depend on framebuffer globals.
 // The provider pins the immutable binding until reboot, like the donor owner.
+extern "C" uint32_t xelpProbeCapabilities(uint32_t schema,uint32_t configABI) {
+    return schema==XELP::ProbeCapabilityABI && configABI==XELP::ProbeABI ? XELP::ProbeDisplay13ComboDP : 0;
+}
 extern "C" bool xelpConfigureDisplay(void *controller,const XELP::ProbeConfig *config) {
     if(!controller || !config || !config->valid())return false;
     auto service=static_cast<IOService *>(controller);
@@ -213,9 +218,9 @@ extern "C" uint32_t tglProbePort(void *port) {
     }
     // ABI0 TGL callers have no binding entry. Only a manager established by
     // hardwareAllowed with a validated TGL profile may use the legacy path.
-    // Other backend owners never establish hardwareAccess.
+    // ADL-S establishes generic access but never this unbound TGL fallback.
     auto access = field<void *>(port, 0x578);
-    if (!access || access != __atomic_load_n(&hardwareAccess, __ATOMIC_ACQUIRE)) return 0;
+    if (!access || access != __atomic_load_n(&legacyTGLAccess, __ATOMIC_ACQUIRE)) return 0;
     auto config = field<void *>(port, 0x548);
     if(!config)return 0;
     ProbeIO io {access};

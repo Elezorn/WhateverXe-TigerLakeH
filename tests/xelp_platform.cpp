@@ -12,10 +12,22 @@ struct IO {
  uint32_t read(uint32_t r){reads.push_back(r);return regs.at(r);}
 };
 int main() {
- for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,255U}) {
+ static_assert(sizeof(Profile)==28 && sizeof(ProbeConfig)==60,"Keep existing provider ABI3 layout");
+ for(auto id:{0xA7808086U,0xA7828086U,0xA7888086U,0xA78B8086U}) {
+  auto p=identify(id,12);
+  assert(displayAdapter(p.family)==DisplayAdapter::ADLS && p.gt==GT::ADLSSmall && p.admitted());
+  ProbeConfig c;c.profile=p;c.combo=0x19;c.comboBackend=0x19;
+  assert(c.valid()); // Registered desktop GT uses the common Display adapter.
+  assert(!identify(id,12,0x46908086).admitted());
+ }
+
+ for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,4U,8U,12U,255U}) {
   const auto p=identify((id<<16)|0x8086,rev);
-  const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4;
-  assert(p.admitted()==(tgl || (adln && rev==0)));
+  const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78 || id==0x9A60 || id==0x9A68 || id==0x9A70,adln=id>=0x46D0 && id<=0x46D4;
+  const bool adls=id==0x4680 || id==0x4682 || id==0x4688 || id==0x468A || id==0x468B || id==0x4690 || id==0x4692 || id==0x4693;
+  const bool rpls=id==0xA780 || id==0xA781 || id==0xA782 || id==0xA783 || id==0xA788 || id==0xA789 || id==0xA78A || id==0xA78B;
+  assert(p.admitted()==(tgl || adln || adls || rpls));
+  if(adls||rpls)assert(!identify((id<<16)|0x8086,rev,0x9A498086).admitted());
   assert(!adln || p.display==Display::XeLPD);
   assert(!identify((id<<16)|0x1234,rev).admitted());
  }
@@ -51,6 +63,41 @@ int main() {
   const uint32_t v[]={d,d+1,2,0,0x800,0x202};__builtin_memcpy(r,v,sizeof(v));
   assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(r),r)==(d<2?1U:0U));}
  assert(io.reads.empty());auto other=b;other.access=3;assert(!b.sameBinding(other));assert(b.sameBinding(b));
+ // Display13 Combo protocol/port arrangements compose without FIA reads.
+ unsigned dpCases=0;
+ for(unsigned selected=1;selected<4;++selected)for(unsigned dpMask=0;dpMask<4;++dpMask){
+  if(dpMask&~selected)continue;
+  c.combo=selected;c.comboBackend=3;b.config=c;
+  for(unsigned d=0;d<2;++d){
+   auto rec=reinterpret_cast<uint32_t *>(platform+0x20+24*d);const bool dp=dpMask&(1U<<d);
+   const uint32_t record[]={d,d+1,dp?1U:2U,0,dp?0x400U:0x800U,dp?0x201U:0x202U};memcpy(rec,record,sizeof(record));
+   assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(rec),rec)==((selected&(1U<<d))?1U:0U));
+   if(dp)for(unsigned field=0;field<6;++field){rec[field]^=1;
+    assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(rec),rec));rec[field]^=1;}
+   ++dpCases;
+  }
+ }
+ assert(dpCases==16&&io.reads.empty());
+ c={};c.profile=identify(0x46908086,12);c.combo=8;c.comboBackend=0x19;b.config=c;assert(c.valid());
+ for(unsigned d=0;d<9;++d){auto r=reinterpret_cast<uint32_t *>(platform+0x20+24*d);
+  const uint32_t v[]={d,9,2,0,0x800,0x202};memcpy(r,v,sizeof(v));
+  assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(r),r)==(d==3?1U:0U));}
+ c.combo=24;c.comboBackend=0x19;b.config=c;assert(c.valid());
+ auto dp=reinterpret_cast<uint32_t *>(platform+0x80);const uint32_t dpc[]={4,10,1,0,0x400,0x201};memcpy(dp,dpc,sizeof(dpc));
+ assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(dp),dp)==1);
+ for(unsigned i=0;i<6;++i){dp[i]^=1;assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(dp),dp));dp[i]^=1;}
+ c.combo=8;c.comboBackend=0x19;b.config=c;assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(dp),dp));
+ assert(io.reads.empty()); // ADL-S must never probe TGL FIA for its Combo TC1.
+ for(unsigned bad=0;bad<5;++bad){auto x=c;if(bad==0)x.combo=2;if(bad==1)x.comboBackend=0x79;
+  if(bad==2)x.legacy=8;if(bad==3)x.typeC=8;if(bad==4)x.profile.revision=256;assert(!x.valid());}
+ assert(!identify(0x46D18086,12,0x46908086).admitted());
+ assert(!identify(0x46908086,12,0x46808086).admitted());
+ // Panel mode requires selected Combo A and the exact native panel record.
+ c.combo=1;b.config=c;auto panel=reinterpret_cast<uint32_t*>(platform+0x20);
+ const uint32_t panelRecord[]={0,0,0,0,2,0x18};memcpy(panel,panelRecord,sizeof(panelRecord));
+ assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(panel),panel)==1 && io.reads.empty());
+ for(unsigned field=0;field<6;++field){panel[field]^=1;assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(panel),panel));panel[field]^=1;}
+ c.combo=8;b.config=c;assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(panel),panel));
  // CPU association and power-consumer accounting are independent of transport.
  NativePorts ports {platform,(1U<<0)|(1U<<4)|(1U<<6)};
  assert(ports.bound(platform+0x20+24*4,4));assert(!ports.bound(platform+0x20+24*3,4));

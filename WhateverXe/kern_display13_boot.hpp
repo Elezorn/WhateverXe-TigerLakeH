@@ -7,6 +7,18 @@
 #include "kern_display13_fb_topology.hpp"
 #include "kern_xelp_memory_layout.hpp"
 namespace Display13Boot {
+// Certificate for the existing linear TMDS boot path. Render qualification is
+// separate; callers must also qualify the physical owner, BAR and memory layout.
+// DP/other-pipe adoption requires a separate boot contract, not a wider default.
+template<class IO> bool reservedPrefix(IO &io,const AlderLakeN::DisplayReadout &display,
+                                      bool bootstrapReady,unsigned ddi,const XELPMemory::Layout &memory) {
+    AlderLakeN::LinearPlan plan;
+    if(!bootstrapReady || AlderLakeN::linearPlan(display,plan,ddi)!=AlderLakeN::LinearStatus::Ready ||
+       plan.pipe!=0 || !memory.range(plan.surface,AlderLakeN::ScanoutBytes,true))return false;
+    for(unsigned i=0;i<memory.bytes/4096;++i)
+        if(io.readPTE(0x800000+8*i)!=memory.pte(uint64_t(i)*4096))return false;
+    return true;
+}
 enum class Status : uint32_t {Unavailable,Complete,Topology,Readback,Timeout,PeerChanged};
 struct Result {
     uint32_t version {1};Status status {Status::Unavailable};
@@ -20,8 +32,8 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
     const auto active=boot.activePipes;
     if(!memory.valid || !Display13FBTopology::multiOutputWiring(w) || boot.status!=AlderLakeN::ReadoutStatus::Complete ||
        !(active&1) || active==1 || (active&~7U) || (active&~boot.poweredPipes))return r;
-    uint32_t ports[3] {},clocks[3] {},used=0;
-    // Every active firmware pipe must be a distinct selected linear TMDS GOP.
+    uint32_t ports[3] {},clocks[3] {},transport[3] {},used=0,dpPipes=0;
+    // Every active firmware pipe must be a distinct selected linear GOP.
     // Pipe identity and physical DDI are independent. No foreign cursor/plane/DSB.
     for(unsigned p=0;p<3;++p)if(boot.poweredPipes&(1U<<p)) {
         const auto bank=p*0x1000;uint32_t v=0;
@@ -38,8 +50,12 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
         }
         uint32_t ctl=0,trans=0,surface=0,live=0;
         if(!AlderLakeN::value(boot,0x70180+bank,ctl) || !AlderLakeN::value(boot,0x60400+bank,trans))return r;
-        const auto port=Display13FBTopology::bootDDI(w,trans);
+        const auto port=Display13FBTopology::bootDDI(w,trans,true);
         if(port>=3 || (used&(1U<<port)))return r;
+        if(((trans>>24)&7)==2) {
+            if(!AlderLakeN::dpSource(boot,p,port))return r;
+            dpPipes|=1U<<p;AlderLakeN::value(boot,0x60540+bank,transport[p]);
+        }
         ports[p]=port;used|=1U<<port;
         uint32_t stride=0,size=0,position=0,offset=0,ht=0,vt=0,conf=0;
         if(((trans>>20)&7) || !AlderLakeN::value(boot,0x70188+bank,stride) ||
@@ -74,7 +90,8 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
             for(unsigned p=1;p<3;++p)if((active&(1U<<p)) && (p==current || (parked&(1U<<p)))) {
                 const auto bank=0x1000*p;
                 if((reg>=0x60000+bank && reg<0x61000+bank) ||
-                   (reg>=0x70000+bank && reg<0x71000+bank) || reg==0x64000+0x100*ports[p])mutableReg=true;
+                   (reg>=0x70000+bank && reg<0x71000+bank) || reg==0x64000+0x100*ports[p] ||
+                   reg==0x46140+4*p)mutableReg=true;
             }
             if(reg==0x70040 || reg==0x71040 || reg==0x72040)continue;
             if(!mutableReg && io.read(reg)!=pair.value) {
@@ -115,6 +132,12 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
         r.stage=3;write(0x60404+bank,0);write(0x60400+bank,trans&~(0x80000000U|(15U<<27)|(7U<<24)));
         if(!wait(0x60400+bank,0x80000000,0))return r;
         r.stage=4;write(bufReg,buf&~0x80000000U);
+        // Display12/13 disable_ddi_buf: buffer off, transport off, then idle.
+        // Stop only this transcoder; preserve the adopted GOP's M/N and link.
+        if(dpPipes&(1U<<p)) {
+            write(0x60540+bank,transport[p]&~0x80000000U);
+            if(!wait(0x60540+bank,0x80000000U,0))return r;
+        }
         if(!wait(bufReg,0x80000080,0x80))return r;
         r.stage=5;write(0x46140+4*p,clocks[p]&0x0FFFFFFF);
         if(!wait(0x46140+4*p,UINT32_MAX,clocks[p]&0x0FFFFFFF))return r;

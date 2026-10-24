@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstring>
 #include "kern_display13_power_bridge.hpp"
+#include "kern_display13_output_wiring.hpp"
 using namespace Display13Power;
 struct IO {
     std::map<uint32_t,uint32_t> regs {{0x45404,0xFC0F},{0x45454,0xC},{0x45444,0},{0x42000,0x8E380000}};
@@ -29,6 +30,28 @@ static void slots(const NativeBridge &b, uint32_t a,uint32_t two,uint32_t three,
         b.nativeRefs(3)==three && b.nativeRefs(4)==four);
 }
 int main() {
+    // Resource leases depend on selected physical ports, not HDMI labels.
+    // Start cold, drop the peer before the boot route, and require all counts
+    // to return to zero for each fixed HDMI/DP assignment and boot choice.
+    for(unsigned assignment=1;assignment<9;++assignment) {
+        Display13OutputWiring w;w.valid=true;unsigned code=assignment;
+        for(unsigned d=0;d<2;++d){const unsigned kind=code%3;code/=3;
+            if(kind==1){w.hdmi|=1U<<d;w.ddc[d]=d+1;}if(kind==2)w.dp|=1U<<d;}
+        assert(w.described());
+        for(unsigned boot=0;boot<2;++boot)if(w.selected()&(1U<<boot)) {
+            IO io;io.regs[Driver]=io.regs[DDI]=io.regs[AUX]=0;NativeBridge b;
+            assert(ok(b.begin(io,boot,w.selected()))&&ok(b.adoptBootPath(1,0,boot)));
+            const unsigned peer=1-boot;
+            if(w.selected()&(1U<<peer)) {
+                assert(ok(b.getPG(io,3))&&ok(b.getDDI(io,peer))&&ok(b.getAUX(io,peer)));
+                assert(ok(b.putAUX(io,peer))&&ok(b.putDDI(io,peer))&&ok(b.putPG(io,3)));
+                assert(b.nativeDDIRefs(boot)==1&&b.nativeRefs(1)==1);
+            } else assert(b.getAUX(io,peer).status==Status::InvalidDomains);
+            assert(ok(b.getAUX(io,boot))&&ok(b.putAUX(io,boot)));
+            assert(ok(b.putDDI(io,boot))&&ok(b.putPG(io,1)));
+            for(auto refs:b.state.refs)assert(!refs);
+        }
+    }
     // Native PG scopes are reproduced without their old physical bit masks.
     assert(nativeScope(1)==4 && nativeScope(2)==6 && nativeScope(3)==14 && nativeScope(4)==30);
     assert(!nativeScope(0) && !nativeScope(5) && !nativeScope(UINT32_MAX));

@@ -1,3 +1,4 @@
+#include "kern_alderlake_s.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -20,6 +21,7 @@ struct IORegistryEntry {
 #define OSDynamicCast(type,p) dynamic_cast<type*>(p)
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 struct XE {
+ bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;
  bool tglActive=true;
  XELP::Profile xeProfile=XELP::identify(0x9a498086,1);XELP::VBT::Ports firmwarePorts;
  // FIELDS

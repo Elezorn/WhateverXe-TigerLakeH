@@ -20,7 +20,8 @@ std::vector<uint8_t> table(const std::vector<Port>&ports){
 }
 int main(int argc,char **argv){
  if(argc==3){std::ifstream f(argv[2],std::ios::binary);assert(f);std::vector<uint8_t>b{std::istreambuf_iterator<char>(f),{}};
-  auto r=parse(b.data(),b.size(),!strcmp(argv[1],"12")?Family::TigerLake:Family::AlderLakeN);auto w=r.hdmi(3);
+  const auto family=!strcmp(argv[1],"adls")?Family::AlderLakeS:!strcmp(argv[1],"12")?Family::TigerLake:Family::AlderLakeN;
+  auto r=parse(b.data(),b.size(),family);auto w=r.hdmi(3);
   printf("status=%u bdb=%u present=%x unmapped=%u ambiguous=%x hdmi=%x pins=%u,%u,%u valid=%u\n",unsigned(r.status),r.version,r.present,r.unmapped,r.ambiguous,w.hdmi,w.ddc[0],w.ddc[1],w.ddc[2],w.valid);
   for(unsigned d=0;d<9;++d)if(r.present&(1U<<d)){auto q=r.port[d];printf("ddi=%u type=%x dvo=%u ddc=%u aux=%x flags=%x caps=%x\n",d,q.type,q.dvo,q.ddc,q.aux,q.flags,q.capabilities);}
   printf("panel valid=%u type=%u ddi=%u low=%u hobl=%u\n",r.panel.valid,r.panel.type,r.panel.ddi,r.panel.lowSwing,r.panel.hobl);
@@ -67,6 +68,26 @@ int main(int argc,char **argv){
  auto shared=r;shared.present|=8;shared.port[3]={0x68c6,9,0,0x50};
  assert(!shared.tglDPCandidates(0x18));
  auto adl=table({{0x60d2,10,1},{0x60d2,7,2},{0x60d2,14,3}});
+ auto desktop=table({{0x60d6,10,1,0x40},{0x60d2,1,2},{0x60d6,8,3,0x20},
+                     {0x68c6,9,0,0x30},{1,0,0},{0x100,0,0}});
+ auto ds=parse(desktop.data(),desktop.size(),Family::AlderLakeS);
+ assert(ds.valid() && ds.present==0x39 && ds.port[3].fixedTMDS() && ds.port[3].ddc==2);
+ // Same Display adapter across product families, without admitting a new GT.
+ auto rs=parse(desktop.data(),desktop.size(),Family::RaptorLakeS);
+ assert(rs.valid() && rs.present==ds.present && rs.unmapped==ds.unmapped && rs.ambiguous==ds.ambiguous);
+ for(unsigned d=0;d<PortCount;++d)assert(!memcmp(&rs.port[d],&ds.port[d],sizeof(Port)));
+ const unsigned desktopDP[]={10,7,8,9,11},desktopHD[]={0,1,2,3,12},physicalDDI[]={0,3,4,5,6};
+ for(unsigned p=0;p<5;++p)for(auto dvo:{desktopDP[p],desktopHD[p]}) {
+  assert(ddi(Family::RaptorLakeS,dvo)==physicalDDI[p]);
+  auto v=table({{0x60d6,dvo,0,p?0x10*p:0x40}});
+  auto parsed=parse(v.data(),v.size(),Family::RaptorLakeS);
+  assert(parsed.valid() && parsed.present==(1U<<physicalDDI[p]));
+ }
+ for(unsigned dvo=0;dvo<256;++dvo)
+  assert(ddi(Family::RaptorLakeS,dvo)==ddi(Family::AlderLakeS,dvo));
+ for(auto family:{Family::Unknown,Family::RocketLake,Family::AlderLakeP,Family::RaptorLakeP})
+  assert(parse(desktop.data(),desktop.size(),family).status==Status::Platform);
+
  auto a=parse(adl.data(),adl.size(),Family::AlderLakeN);assert(a.valid()&&a.present==0xB&&a.hdmi(3).hdmi==3);
  assert(ddi(Family::TigerLake,9)==3&&ddi(Family::AlderLakeN,13)==3&&ddi(Family::AlderLakeN,19)==6);
  assert(ddi(Family::AlderLakeN,9)==PortCount&&ddi(Family::TigerLake,8)==PortCount);
@@ -135,6 +156,33 @@ int main(int argc,char **argv){
   auto b=panelTable;b.resize(n);w16(b,24,b.size());w16(b,68,b.size()-48);
   auto q=parse(b.data(),b.size(),Family::TigerLake);
   assert(q.valid()&&!q.panel.valid);
+ }
+ // PPS sequences select all five fields for all 16 panel types. Backlight
+ // corruption is independent of signal/PPS facts and unrelated connectors.
+ auto bl=append(panelTable,43,129);panelTable[bl]=6;
+ for(unsigned n=0;n<16;++n) {
+  for(unsigned i=0;i<5;++i)w16(panelTable,edp+10*n+2*i,100*n+i+1);
+  panelTable[bl+1+6*n]=6;w16(panelTable,bl+2+6*n,200+n);
+  panelTable[bl+113+n]=uint8_t(n<<4|2);
+ }
+ for(unsigned n=0;n<16;++n) {
+  auto b=panelTable;b[options]=n;auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.panel.valid && q.panel.backlightValid && q.panel.pwmPresent && q.panel.activeLowPWM);
+  assert(q.panel.controller==n && q.panel.backlightType==2 && q.panel.pwmHz==200+n);
+  for(unsigned i=0;i<5;++i)assert(q.panel.delays[i]==100*n+i+1);
+ }
+ for(unsigned bad=0;bad<3;++bad) {
+  auto b=panelTable;
+  if(bad==0)b[bl]=7;
+  if(bad==1)w16(b,bl-2,128);
+  if(bad==2)append(b,43,129);
+  auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.panel.valid && !q.panel.backlightValid && q.hdmi(3).hdmi==2);
+ }
+ for(size_t n=bl;n<panelTable.size();++n) {
+  auto b=panelTable;b.resize(n);w16(b,24,b.size());w16(b,68,b.size()-48);
+  auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.panel.valid && !q.panel.backlightValid);
  }
  puts("PASS firmware bounds, checksum diagnostics, connector maps, optional panel facts and OpRegion addresses");
 }

@@ -8,7 +8,7 @@
 namespace XELP {
 enum class Family : uint32_t { Unknown, TigerLake, AlderLakeN, RocketLake, AlderLakeS, AlderLakeP, RaptorLakeS, RaptorLakeP };
 enum class Display : uint32_t { Unknown, XeD = 12, XeLPD = 13 };
-enum class GT : uint32_t { Unknown, TGLGT2, TGLG4, ADLNSmall };
+enum class GT : uint32_t { Unknown, TGLGT2, TGLG4, ADLNSmall, ADLSSmall, TGLGT1 };
 enum class Donor : uint32_t { Unknown, C004FC1A = 1 };
 struct DeviceEntry {
     uint16_t device; Family family; Display display; GT backend;
@@ -16,13 +16,14 @@ struct DeviceEntry {
 };
 // GT::Unknown means catalogued, without an implemented automatic backend.
 constexpr DeviceEntry DeviceTable[] {
-    {0x4680, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 770"},
-    {0x4682, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 730"},
-    {0x4688, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
-    {0x468B, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
-    {0x4690, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 770"},
-    {0x4692, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 730"},
-    {0x4693, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 710"},
+    {0x4680, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 770"},
+    {0x4682, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 730"},
+    {0x4688, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0x468A, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0x468B, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0x4690, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 770"},
+    {0x4692, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 730"},
+    {0x4693, Family::AlderLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 710"},
     {0x46A3, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel UHD Graphics"},
     {0x46A6, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
     {0x46A8, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
@@ -38,12 +39,18 @@ constexpr DeviceEntry DeviceTable[] {
     {0x4C8B, Family::RocketLake, Display::XeD, GT::Unknown, "Intel UHD Graphics 730"},
     {0x9A40, Family::TigerLake, Display::XeD, GT::TGLGT2, "Intel Iris Xe Graphics"},
     {0x9A49, Family::TigerLake, Display::XeD, GT::TGLGT2, "Intel Iris Xe Graphics"},
-    {0x9A60, Family::TigerLake, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
+    {0x9A60, Family::TigerLake, Display::XeD, GT::TGLGT1, "Intel UHD Graphics"},
+    {0x9A68, Family::TigerLake, Display::XeD, GT::TGLGT1, "Intel UHD Graphics"},
+    {0x9A70, Family::TigerLake, Display::XeD, GT::TGLGT1, "Intel UHD Graphics"},
     {0x9A78, Family::TigerLake, Display::XeD, GT::TGLG4, "Intel UHD Graphics"},
-    {0xA780, Family::RaptorLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 770"},
-    {0xA782, Family::RaptorLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 730"},
-    {0xA788, Family::RaptorLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
-    {0xA78B, Family::RaptorLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
+    {0xA780, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 770"},
+    {0xA781, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA782, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 730"},
+    {0xA783, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA788, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA789, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA78A, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
+    {0xA78B, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
     {0xA7A0, Family::RaptorLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
     {0xA7A1, Family::RaptorLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
     {0xA7A8, Family::RaptorLakeP, Display::XeLPD, GT::Unknown, "Intel UHD Graphics"},
@@ -58,5 +65,16 @@ inline const DeviceEntry *deviceEntry(uint32_t pci) {
     for(const auto &entry:DeviceTable)if(entry.device==(pci>>16))return &entry;
     return nullptr;
 }
+inline bool desktopGTDevice(uint32_t pci) {
+    const auto e=deviceEntry(pci);
+    return e && (e->family==Family::AlderLakeS || e->family==Family::RaptorLakeS);
+}
+
+inline bool display12SmallGT(GT gt) {return gt==GT::ADLSSmall || gt==GT::TGLGT1;}
+inline bool display12SmallGTDevice(uint32_t pci) {
+    const auto e=deviceEntry(pci);
+    return e && display12SmallGT(e->backend);
+}
+
 }
 #endif

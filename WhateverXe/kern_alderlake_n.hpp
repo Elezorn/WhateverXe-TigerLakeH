@@ -7,6 +7,7 @@
 #define kern_alderlake_n_hpp
 #include <stdint.h>
 #include "kern_xelp_platform.hpp"
+#include "kern_xelp_gt_resources.hpp"
 #include "kern_xelp_memory_layout.hpp"
 #include "kern_xelp_geometry.hpp"
 #include <stddef.h>
@@ -25,29 +26,15 @@ inline bool family(uint32_t identity) {
     return XELP::identify(identity,0).family==XELP::Family::AlderLakeN;
 }
 inline bool matches(uint32_t identity, uint8_t revision) {
-    // adlp_n_revids has only revision0. Unknown steppings need their own WA review.
+    // Revision identifies the hardware; untested revisions use the family backend.
     const auto p=XELP::identify(identity,revision);
     return p.family==XELP::Family::AlderLakeN && p.admitted();
 }
 
-struct Resources {
-    uint32_t slices {}, dss {}, nativeSubslices {}, eus {}, l3Banks {}, urbKiB {};
-};
-
-// Gen12 SSEU: one slice, up to two DSS in these small GT SKUs, one disable
-// bit per EU pair. Native subslices are twice the DSS population. Preserve
-// the physical LP backend; capacity is independent of the PCI product label.
-// Four L3 banks/256KiB is the supported small-GT capacity, not eus*constant.
-inline bool resources(uint32_t slice, uint32_t dss, uint32_t euDisable,
-                      uint32_t l3Disable, Resources &out) {
-    out = {};
-    if (slice != 1 || !dss || (dss&~0x3FU) || (euDisable&~0xFFU) || l3Disable != 0xF0)
-        return false;
-    const auto count=static_cast<uint32_t>(__builtin_popcount(dss));
-    const auto eus=2*count*(8-static_cast<uint32_t>(__builtin_popcount(euDisable)));
-    if (count>2 || (eus!=16 && eus!=24 && eus!=32)) return false;
-    out = {1, count, 2*count, eus, 4, 256};
-    return true;
+using Resources=XELP::SmallGTResources;
+using XELP::smallGTResources;
+inline bool resources(uint32_t slice,uint32_t dss,uint32_t euDisable,uint32_t l3Disable,Resources &out) {
+    return smallGTResources(slice,dss,euDisable,l3Disable,out);
 }
 
 struct Register { uint32_t offset {}, value {}; };
@@ -133,10 +120,10 @@ template<class IO> GTReadout readGT(IO &io, bool admitted, uint32_t *edram=nullp
 }
 enum class ReadoutStatus : uint32_t { NotAdmitted, Complete, Unavailable, PowerChanged };
 struct DisplayReadout {
-    uint32_t version {1};
+    uint32_t version {2};
     ReadoutStatus status {ReadoutStatus::NotAdmitted};
     uint32_t count {}, poweredPipes {}, activePipes {}, hdmiBPipes {};
-    Register registers[128] {};
+    Register registers[160] {};
 };
 
 // Read only. Check Display 13 PW_A/B/C before pipe-local registers; do not
@@ -159,7 +146,7 @@ template<class IO> DisplayReadout readDisplay(IO &io, bool admitted) {
     if (r.status != ReadoutStatus::Complete) return r;
     // Always-on / PW1 display state, including BIOS and DDI I/O ownership.
     const uint32_t common[] {0x45400, 0x45408, 0x4540C, 0x45450, 0x45454, 0x4545C,
-        0x45420, 0x45424, 0x42000, 0x42084,
+        0x45420, 0x45424, 0x45444, 0x42000, 0x42084,
         0x44300, 0x4438C, 0x45008, 0x4500C, 0x45010, 0x45014,
         0x46000, 0x46004, 0x164280, 0x164284, 0x164288, 0x16428C,
         0x64000, 0x64100, 0x64200};
@@ -180,6 +167,14 @@ template<class IO> DisplayReadout readDisplay(IO &io, bool admitted) {
             0x70180, 0x70188, 0x7018C, 0x70190, 0x7019C, 0x701A4, 0x701AC,
             0x7027C, 0x7037C, 0x70280, 0x70380, 0x70480, 0x70580, 0x70680, 0x70780};
         for (auto offset : local) add(offset + 0x1000 * pipe);
+        // TGL+ DP transport is transcoder-indexed, not DDI-indexed. M2/N2
+        // are absent on Display13 (Linux intel_cpu_transcoder_has_m2_n2).
+        const uint32_t transport[] {0x60404,0x60540,0x60030,0x60034,0x60040,0x60044};
+        for (auto offset : transport)
+            add(offset + 0x1000 * pipe);
+        add(0x46140 + 4 * pipe);
+        // Display13 DSC/joiner belongs to the corresponding pipe well.
+        add(0x78000 + 0x200 * pipe);add(0x78004 + 0x200 * pipe);
     }
     const auto after = add(0x45404);
     if (r.status == ReadoutStatus::Complete && after != power)
@@ -194,9 +189,87 @@ inline bool value(const DisplayReadout &r, uint32_t offset, uint32_t &out) {
     return false;
 }
 
+// Source-side certificate for an already-running, uncompressed external SST
+// GOP. This does not prove sink DPCD state, PLL rate or native AUX ownership.
+inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi) {
+    if(pipe>=3 || ddi>=2 || boot.status!=ReadoutStatus::Complete ||
+       !(boot.activePipes&boot.poweredPipes&(1U<<pipe)))return false;
+    const auto bank=pipe*0x1000;
+    uint32_t trans=0,tp=0,buf=0,clock=0,ctl2=0,dss1=0,dss2=0,dm=0,dn=0,lm=0,ln=0;
+    if(!value(boot,0x60400+bank,trans) || !value(boot,0x60540+bank,tp) ||
+       !value(boot,0x64000+ddi*0x100,buf) || !value(boot,0x46140+4*pipe,clock) ||
+       !value(boot,0x60404+bank,ctl2) || !value(boot,0x78000+pipe*0x200,dss1) ||
+       !value(boot,0x78004+pipe*0x200,dss2) || !value(boot,0x60030+bank,dm) ||
+       !value(boot,0x60034+bank,dn) || !value(boot,0x60040+bank,lm) ||
+       !value(boot,0x60044+bank,ln))return false;
+    const unsigned lanes=((trans>>1)&7)+1;
+    // Linux v6.12 i915_reg.h: SST, normal training, scrambling, no FEC/MST,
+    // port sync, HDCP, DSC or joined pipes. Enhanced framing may be on or off.
+    return (trans&0xFF700000U)==(0x82000000U|((ddi+1)<<27)) &&
+        !(trans&((1U<<15)|(1U<<9)|(1U<<8))) && !ctl2 &&
+        (lanes==1 || lanes==2 || lanes==4) && ((buf>>1)&7)==lanes-1 &&
+        (buf&0x800000C0U)==0x80000000U && (clock>>28)==ddi+1 &&
+        (tp&~(1U<<18))==0x80000300U &&
+        !(dss1&0xF0300000U) && !(dss2&0x80008000U) &&
+        !(dm&0x81000000U) && (dm&0xFFFFFF) &&
+        dn && !(dn&0xFF000000U) && lm && !(lm&0xFF000000U) && ln && !(ln&0xFF000000U) &&
+        (dm&0xFFFFFF)<=dn;
+}
+enum class GOPProtocol : uint32_t {TMDS,DP};
+// Source and power must remain unchanged while only the plane is reinitialized.
+// This is an early, serialized bootstrap transaction, not a modeset or link
+// adoption certificate. A changed link stops further writes, including rollback.
+template<class IO> bool dpSourceUnchanged(IO &io,const DisplayReadout &r,unsigned pipe,unsigned ddi,
+                                         uint32_t addedAUXRequest=0) {
+    if(pipe>=3 || ddi>=2 || (addedAUXRequest && addedAUXRequest!=(2U<<(2*ddi))))return false;
+    const uint32_t bank=pipe*0x1000;
+    const uint32_t regs[] {0x60400+bank,0x60404+bank,0x60540+bank,0x60030+bank,0x60034+bank,
+        0x60040+bank,0x60044+bank,0x70008+bank,0x46140+4*pipe,0x64000+0x100*ddi,
+        0x78000+0x200*pipe,0x78004+0x200*pipe,0x45404,0x45454,0x45444,0x42000};
+    for(auto reg:regs) {
+        uint32_t expected=0;
+        if(!value(r,reg,expected) || !io.readable(reg))return false;
+        if(reg==Display13Power::AUX)expected|=addedAUXRequest;
+        if(io.read(reg)!=expected)return false;
+    }
+    return true;
+}
+// The GOP is already driving DP. Keep its physical AUX domain on without
+// inventing a native transaction reference or claiming the firmware request.
+// Caller holds the display owner lock throughout both proof and acquisition.
+template<class IO> Display13Power::Result holdDPBootAUX(IO &io,const DisplayReadout &boot,
+    Display13Power::NativeBridge &bridge,Display13Power::MainLinkAUX &link,unsigned ddi) {
+    using namespace Display13Power;Result r;
+    if(ddi>=2 || boot.activePipes!=1 || !dpSource(boot,0,ddi) || !dpSourceUnchanged(io,boot,0,ddi) ||
+       bridge.bootPort!=ddi || bridge.bootAdopted || !bridge.bootPGProtected || !bridge.bootDDIProtected ||
+       !bridge.outputHeld(io,ddi,0) || link.owner || link.bootPending || link.lease.owner)return r;
+    uint32_t aux=0;
+    if(!value(boot,AUX,aux) || !(aux&(1U<<(2*ddi))))return r; // No active-link cold power-up.
+    r=acquire(io,bridge.state,link.lease,auxDomain(ddi));
+    if(r.status!=Status::Complete)return r;
+    link.port=ddi;link.bootPending=true;
+    if(!dpSourceUnchanged(io,boot,0,ddi,2U<<(2*ddi)) || !held(io,bridge.state,link.lease.domains)) {
+        // Do not release a newly acquired request under a still-active GOP.
+        bridge.state.faulted=true;r.status=Status::RequestLost;
+    }
+    return r;
+}
+// Bind the protected lease to the actual, independently validated native port.
+// The caller retains that object on success and then adopts the boot path.
+// No hardware request or native AUX transaction counter changes at handoff.
+template<class IO> Display13Power::Result adoptDPBootAUX(IO &io,const DisplayReadout &boot,
+    Display13Power::NativeBridge &bridge,Display13Power::MainLinkAUX &link,uintptr_t target,unsigned ddi) {
+    using namespace Display13Power;Result r;
+    if(!target || ddi>=2 || boot.activePipes!=1 || !dpSource(boot,0,ddi) || !dpSourceUnchanged(io,boot,0,ddi) ||
+       bridge.bootPort!=ddi || bridge.bootAdopted || !bridge.bootPGProtected || !bridge.bootDDIProtected ||
+       !bridge.outputHeld(io,ddi,0) || !link.bootPending || link.owner || link.port!=ddi ||
+       link.lease.owner!=&bridge.state || link.lease.domains!=dependencies(auxDomain(ddi)) ||
+       !held(io,bridge.state,link.lease.domains))return r;
+    link.owner=target;link.bootPending=false;r.status=Status::Complete;return r;
+}
 enum class LinearStatus : uint32_t {
     NotAdmitted, Ready, Success, NotSingleHDMI, NotLinearFHD, OtherPlaneActive,
-    StateChanged, NoVblank, DisableTimeout, EnableTimeout, RollbackFailed
+    StateChanged, NoVblank, DisableTimeout, EnableTimeout, RollbackFailed, InvalidDPSource
 };
 struct LinearPlan {
     uint32_t pipe {}, chicken {}, arb {}, control {}, stride {}, position {}, size {}, offset {}, surface {};
@@ -212,11 +285,12 @@ struct LinearResult {
 // plane on the explicitly selected Combo A/B/C. The default remains B for
 // the original standalone diagnostics. No new PLL/PHY/power-well cold
 // initialization, a new GGTT mapping, full modeset or accelerated scanout.
-inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned ddi=1) {
+inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned ddi=1,GOPProtocol protocol=GOPProtocol::TMDS) {
     p={};
     if (ddi>=3 || r.status!=ReadoutStatus::Complete || !r.activePipes || (r.activePipes&~7U) ||
         (r.activePipes & (r.activePipes-1)) || (r.activePipes&~r.poweredPipes) ||
-        (ddi==1 && r.activePipes!=r.hdmiBPipes))
+        (protocol!=GOPProtocol::TMDS && protocol!=GOPProtocol::DP) ||
+        (protocol==GOPProtocol::TMDS && ddi==1 && r.activePipes!=r.hdmiBPipes))
         return LinearStatus::NotSingleHDMI;
     while (!(r.activePipes & (1U<<p.pipe))) ++p.pipe;
     if (p.pipe>=3) return LinearStatus::NotSingleHDMI;
@@ -229,8 +303,10 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
         !value(r,0x701AC+delta,surfLive) || !value(r,0x60400+delta,trans) ||
         !value(r,0x70008+delta,pipeConf) || !value(r,0x60000+delta,htotal) || !value(r,0x6000C+delta,vtotal))
         return LinearStatus::NotLinearFHD;
-    if(!(trans&(1U<<31)) || ((trans>>27)&15)!=ddi+1 || ((trans>>24)&7)>1)
+    if(!(trans&(1U<<31)) || ((trans>>27)&15)!=ddi+1 ||
+       (protocol==GOPProtocol::TMDS && ((trans>>24)&7)>1))
         return LinearStatus::NotSingleHDMI;
+    if(protocol==GOPProtocol::DP && !dpSource(r,p.pipe,ddi))return LinearStatus::InvalidDPSource;
     p.geometry=XELPGeometry::linear(p.control,p.stride,p.size,p.position,p.offset);
     if(!p.geometry.valid || (p.surface&4095) || p.surface!=surfLive ||
        ((trans>>20)&7)!=0 || (pipeConf&0xC0000000)!=0xC0000000 ||
@@ -251,24 +327,32 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
     return LinearStatus::Ready;
 }
 
-template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout &r, bool admitted,unsigned ddi=1) {
+template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout &r, bool admitted,unsigned ddi=1,
+                                                  GOPProtocol protocol=GOPProtocol::TMDS) {
     LinearResult out;
     if (!admitted) return out;
     LinearPlan p;
-    out.status=linearPlan(r,p,ddi);
+    out.status=linearPlan(r,p,ddi,protocol);
     if(out.status!=LinearStatus::Ready)return out;
     out.pipe=p.pipe;
     const auto d=0x1000*p.pipe;
     const uint32_t ctl=0x70180+d, surf=0x7019C+d, frame=0x70040+d;
     const auto write=[&](uint32_t reg,uint32_t v){io.write(reg,v);++out.writes;io.read(reg);};
+    bool linkChanged=false;
+    const auto linkStable=[&] {
+        if(protocol==GOPProtocol::DP && !dpSourceUnchanged(io,r,p.pipe,ddi))linkChanged=true;
+        return !linkChanged;
+    };
     // Check all captured words used by the transaction before the first write.
     uint32_t trans=0;value(r,0x60400+d,trans);
     const Register expected[] {{0x60400+d,trans},{0x42084,p.chicken},{0x70028+d,p.arb},{ctl,p.control},
         {0x70188+d,p.stride},{0x7018C+d,p.position},{0x70190+d,p.size},
         {0x701A4+d,p.offset},{surf,p.surface}};
     for(auto pair:expected)if(io.read(pair.offset)!=pair.value){out.status=LinearStatus::StateChanged;return out;}
+    if(!linkStable()){out.status=LinearStatus::StateChanged;return out;}
     const auto waitFrames=[&](uint32_t start) {
         for(unsigned i=0;i<1000;++i) {
+            if(!linkStable())return false;
             const auto now=io.read(frame);
             if(now==UINT32_MAX)return false;
             if(uint32_t(now-start)>=2 && uint32_t(now-start)<0x10000000)return true;
@@ -278,14 +362,17 @@ template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout 
     };
     out.framesBefore=io.read(frame);
     if(out.framesBefore==UINT32_MAX || !waitFrames(out.framesBefore)) {
-        out.status=LinearStatus::NoVblank;return out;
+        out.status=linkChanged ? LinearStatus::StateChanged : LinearStatus::NoVblank;return out;
     }
     const auto rollback=[&] {
+        if(!linkStable()){out.status=LinearStatus::StateChanged;return;}
         write(ctl,p.control & ~0x80000000U);write(surf,p.surface);
         const bool stopped=waitFrames(io.read(frame));
+        if(linkChanged){out.status=LinearStatus::StateChanged;return;}
         write(0x42084,p.chicken);write(0x70028+d,p.arb);
         write(ctl,p.control);write(surf,p.surface);
         const bool running=waitFrames(io.read(frame));
+        if(linkChanged){out.status=LinearStatus::StateChanged;return;}
         out.restored=stopped && running && io.read(ctl)==p.control && io.read(surf)==p.surface &&
             io.read(0x42084)==p.chicken && io.read(0x70028+d)==p.arb;
         if(!out.restored)out.status=LinearStatus::RollbackFailed;

@@ -21,31 +21,46 @@
 #ifndef KERN_TGL_COMBO_SIGNAL_HPP
 #define KERN_TGL_COMBO_SIGNAL_HPP
 #include <stdint.h>
+#include "kern_alderlake_s.hpp"
+#include "kern_xelp_combo_policy.hpp"
 struct TGLComboSignal {
-    uint32_t base {},lanes {},level {},swing {},scalar {},cursor {},post1 {};
+    uint32_t base {},lanes {},linkRate {},level {},swing {},scalar {},cursor {},post1 {};
     bool low {};
     bool select(uint32_t ddi,uint32_t count,uint32_t rate,bool lowSwing,bool hobl,
-                uint32_t voltage,uint32_t emphasis) {
-        // Normal HBR2 has a separate U/Y-family table. Leave that unreviewed
-        // path, HOBL and HBR3 with the donor until their contracts are covered.
-        if(ddi>1 || (count!=1 && count!=2 && count!=4) || hobl ||
-           (rate!=6 && rate!=10 && !(lowSwing && rate==20)) ||
-           voltage>3 || emphasis>3 || voltage+emphasis>3)return false;
-        static const uint8_t first[]={0,4,7,9};
-        static const uint8_t normal[10][4]={
-            {0xA,0x32,0x3F,0},{0xA,0x4F,0x37,8},{0xC,0x71,0x2F,0x10},{6,0x7D,0x2B,0x14},
-            {0xA,0x4C,0x3F,0},{0xC,0x73,0x34,0xB},{6,0x7F,0x2F,0x10},
-            {0xC,0x6C,0x3C,3},{6,0x7F,0x35,0xA},{6,0x7F,0x3F,0}
-        };
-        static const uint8_t reduced[10][4]={
-            {0,0x7F,0x3F,0},{8,0x7F,0x38,7},{1,0x7F,0x33,0xC},{9,0x7F,0x31,0xE},
-            {8,0x7F,0x3F,0},{1,0x7F,0x38,7},{9,0x7F,0x35,0xA},
-            {1,0x7F,0x3F,0},{9,0x7F,0x38,7},{9,0x7F,0x3F,0}
-        };
-        base=ddi ? 0x6C000:0x162000;lanes=count;level=first[voltage]+emphasis;low=lowSwing;
-        const auto row=low ? reduced[level]:normal[level];
-        swing=row[0];scalar=row[1];cursor=row[2];post1=row[3];return true;
+                uint32_t voltage,uint32_t emphasis,
+                XELP::ComboPolicy::Platform platform=XELP::ComboPolicy::Platform::TGL,bool panel=true) {
+        // HOBL is an optional optimization. Until a retry backend owns its
+        // hobl_active/hobl_failed lifecycle, select Linux's standard fallback
+        // directly. Never fall through to unqualified donor coefficients just
+        // because firmware requests HOBL. At HBR3 neither panel flag applies.
+        (void)hobl;
+        if(ddi>1 || (count!=1 && count!=2 && count!=4) ||
+           (platform!=XELP::ComboPolicy::Platform::TGL && platform!=XELP::ComboPolicy::Platform::TGLUY))return false;
+        XELP::ComboPolicy policy;
+        if(!policy.select(platform,rate,panel,lowSwing,false,voltage,emphasis))return false;
+        base=ddi?0x6C000:0x162000;lanes=count;linkRate=rate;low=panel && lowSwing;assign(policy);return true;
     }
+    // The platform adapter chooses coordinates; electrical policy contains no
+    // physical DDI, donor field or board-specific connector condition.
+    bool selectADLP(uint32_t ddi,uint32_t count,uint32_t rate,uint32_t voltage,uint32_t emphasis,bool panel=false,bool lowSwing=false) {
+        if(ddi>1 || (count!=1 && count!=2 && count!=4))return false;
+        XELP::ComboPolicy policy;
+        if(!policy.select(XELP::ComboPolicy::Platform::ADLP,rate,panel,lowSwing,false,voltage,emphasis))return false;
+        base=ddi?0x6C000:0x162000;lanes=count;linkRate=rate;low=panel && lowSwing;assign(policy);return true;
+    }
+    bool selectADLS(uint32_t ddi,uint32_t count,uint32_t rate,uint32_t voltage,uint32_t emphasis,bool panel=false,bool lowSwing=false) {
+        if(count!=1 && count!=2 && count!=4)return false;
+        AlderLakeS::Port route;
+        if(!AlderLakeS::Port::resolve(ddi,route) || !(AlderLakeS::ComboBackendMask&(1U<<ddi)))return false;
+        XELP::ComboPolicy policy;
+        if(!policy.select(XELP::ComboPolicy::Platform::ADLS,rate,panel,lowSwing,false,voltage,emphasis))return false;
+        base=route.phyBase();lanes=count;linkRate=rate;low=panel && lowSwing;assign(policy);return true;
+    }
+    void assign(const XELP::ComboPolicy &p) {
+        level=p.level;swing=p.coefficients.swing;scalar=p.coefficients.scalar;
+        cursor=p.coefficients.cursor;post1=p.coefficients.post1;
+    }
+
     // Caller owns this live port's power. Pre-read all lane words before any
     // write; refuse an inaccessible bank without a partial programming sequence.
     template<class Read,class Write> bool program(Read read,Write write) const {
@@ -60,7 +75,8 @@ struct TGLComboSignal {
         }
         write(base+0x604,pcs|(1U<<26));
         for(unsigned n=0;n<4;++n) {
-            const bool load=n==1 || n==2 || (lanes==4 && n==3);
+            // Linux icl_combo_phy_loadgen_select: no loadgen above 600 MHz.
+            const bool load=linkRate!=30 && (n==1 || n==2 || (lanes==4 && n==3));
             dw4[n]=(dw4[n]&~0x80000000U)|(load?0x80000000U:0);
             write(base+0x890+0x100*n,dw4[n]);
         }
@@ -84,7 +100,7 @@ struct TGLComboSignal {
             (read(base+0x28)&0xFCU)==laneMask;
         for(unsigned n=0;n<4;++n) {
             ok&=(read(base+0x888+0x100*n)&0xB8FFU)==(((swing&8)<<12)|((swing&7)<<11)|0x98U);
-            ok&=(read(base+0x890+0x100*n)&0x3FFFFU)==((post1<<12)|cursor);
+            ok&=(read(base+0x890+0x100*n)&0x8003FFFFU)==((dw4[n]&0x80000000U)|(post1<<12)|cursor);
             ok&=(read(base+0x89C+0x100*n)&0x7F000000U)==(scalar<<24);
         }
         return ok;

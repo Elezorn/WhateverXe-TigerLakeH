@@ -13,14 +13,14 @@ code=r'''
 #include <cstdio>
 #include <vector>
 #include "kern_xelp_platform.hpp"
-std::vector<int> events;bool publish=true,published=false;uint32_t identity=0x9a498086;
+std::vector<int> events;bool publish=true,published=false;uint32_t identity=0x9a498086;uint8_t revision=0;
 struct Object {virtual ~Object()=default;};
 struct OSData:Object {uint32_t value=0;void *getBytesNoCopy(){return &value;}size_t getLength(){return 4;}};
 OSData fake;Object customModel;bool hasModel=false;unsigned modelWrites=0;Object *deviceProperty=nullptr;
 struct IOPCIDevice {
  const char *name="GFX0";unsigned renames=0;
  uint32_t configRead32(int){assert(published);events.push_back(2);return identity;}
- uint8_t configRead8(int){assert(published);events.push_back(3);return 0;}
+ uint8_t configRead8(int){assert(published);events.push_back(3);return revision;}
  uint16_t configRead16(int){assert(published);events.push_back(4);return 0x300;}
  const char *getName(){return name;}Object *getProperty(const char *key){return !strcmp(key,"device-id")?deviceProperty:!strcmp(key,"model")&&hasModel?&customModel:nullptr;}
  void setProperty(const char *,const char *){}void setProperty(const char *key,const void *value,unsigned size){if(!strcmp(key,"model")){assert(value && size>1);++modelWrites;}}void setProperty(const char *,uint64_t,unsigned){}
@@ -62,6 +62,13 @@ for(unsigned firmware=0;firmware<2;++firmware)for(unsigned me=0;me<5;++me)for(un
  if(test<2){assert(!host.active&&graphics.off);assert(events.size()==(test==0?1:2));}
  else if(test==2 || test==5){assert(!host.active&&graphics.off);assert(events.size()==4);}
  else {assert(host.active&&!graphics.off);assert(events.front()==1);assert(events[events.size()-2]==8);}
+}
+for(unsigned rev:{0U,12U,255U})for(bool apple:{false,true}) {
+ DeviceInfo::value.videoBuiltin=&gpu;DeviceInfo::value.managementEngine=nullptr;
+ DeviceInfo::value.firmwareVendor=apple?DeviceInfo::FirmwareVendor::Apple:DeviceInfo::FirmwareVendor::Other;
+ publish=true;published=false;deviceProperty=nullptr;identity=0x46908086;revision=rev;events.clear();
+ XeHost host;host.processKernel(patcher);assert(host.active);
+ assert(host.backlightEnabled==!apple);assert(host.backlightGPU==(!apple?&gpu:nullptr));
 }
 puts("PASS actual host admission: absent/unpublished/unsupported GPUs never enter Xe; published PCI reads precede selected-driver dispatch");}
 '''

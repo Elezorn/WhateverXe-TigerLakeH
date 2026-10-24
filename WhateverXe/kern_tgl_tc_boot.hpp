@@ -5,6 +5,7 @@
 #ifndef kern_tgl_tc_boot_hpp
 #define kern_tgl_tc_boot_hpp
 #include "kern_tgl_tc_mode.hpp"
+#include "kern_xelp_sst_route.hpp"
 #include "kern_tgl_boot_readout.hpp"
 struct TGLTCWiring {
  static constexpr uint32_t Mask=0x1F8; // physical DDI3..8, not framebuffer IDs
@@ -22,6 +23,9 @@ struct TGLTCWiring {
   auto p=static_cast<const uint8_t *>(bytes);uint32_t q[4] {};
   for(unsigned i=0;i<4;++i)for(unsigned j=0;j<4;++j)q[i]|=uint32_t(p[4*i+j])<<(8*j);
   return q[0]==1?fromMasks(q[1],q[2],q[3]):TGLTCWiring{};
+ }
+ XELP::Display12SSTRoutes sstRoutes(uint32_t backend,uint32_t registered,uint32_t alt) const {
+  return {0,((valid?legacy:0)|registered)&backend&Mask,alt&Mask};
  }
  bool legacyEligible(uint32_t d,uint32_t backend) const {
   return valid && d>=3 && d<=8 && (legacy&backend&(1u<<d));

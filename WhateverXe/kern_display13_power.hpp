@@ -16,6 +16,10 @@ constexpr uint32_t LegacyDomains = (1U << 7) - 1; // Existing B backend scope.
 constexpr uint32_t BootHDMIA = bit(Domain::PipeA) | bit(Domain::DDIA);
 constexpr uint32_t BootHDMIB = bit(Domain::PipeA) | bit(Domain::DDIB);
 constexpr uint32_t Driver = 0x45404, DDI = 0x45454, AUX = 0x45444, Fuses = 0x42000;
+// gen9_wait_for_power_well_fuses passes 1 to intel_de_wait_for_set.
+// That API reaches intel_wait_for_register(timeout_ms), despite the 1/5 us
+// hardware timing comment. Keep an explicit microsecond budget here.
+constexpr unsigned FuseTimeoutUs = 1000;
 constexpr bool tcAux(unsigned d) { return d>=12 && d<Count && !(d&1); }
 constexpr bool tcDDI(unsigned d) { return d>=11 && d<Count && (d&1); }
 constexpr uint32_t control(unsigned d) { return (d == 5 || d == 7 || d == 9 || tcDDI(d)) ? DDI : (d == 6 || d == 8 || d == 10 || tcAux(d)) ? AUX : Driver; }
@@ -66,6 +70,29 @@ template<class IO> bool valid(IO &io, uint32_t reg, uint32_t &value) {
     if (!io.readable(reg)) return false;
     value = io.read(reg);
     return value != UINT32_MAX;
+}
+
+// Read-only proof for a caller already holding leases. The same owner lock
+// must cover this snapshot and the subsequent register operation. Hardware
+// left on by firmware is not a logical reference; no acquisition or polling
+// is performed here. TC ownership/health is a separate transport contract.
+template<class IO> bool held(IO &io,const State &s,uint32_t domains) {
+    if(!s.ready || s.faulted || s.suspended || !domains || (domains&~All))return false;
+    domains=dependencies(domains);
+    if(domains&~s.allowed)return false;
+    uint32_t driverMask=0,ddiMask=0,auxMask=0,fuseMask=1U<<27;
+    for(unsigned d=0;d<Count;++d)if(domains&(1U<<d)) {
+        if(!s.refs[d] || !((s.owned|s.borrowed)&(1U<<d)))return false;
+        const auto mask=request(d)|enabled(d);
+        if(control(d)==DDI)ddiMask|=mask;
+        else if(control(d)==AUX)auxMask|=mask;
+        else {driverMask|=mask;fuseMask|=fuse(d);}
+    }
+    const uint32_t registers[]={Driver,DDI,AUX,Fuses},masks[]={driverMask,ddiMask,auxMask,fuseMask};
+    for(unsigned i=0;i<4;++i)if(masks[i]) {
+        uint32_t value;if(!valid(io,registers[i],value) || (value&masks[i])!=masks[i])return false;
+    }
+    return true;
 }
 
 // No writes and no adoption of pre-existing driver requests. BIOS/KVMR/debug
@@ -152,7 +179,7 @@ template<class IO> Result acquire(IO &io, State &s, Lease &lease, uint32_t domai
         if (!(domains & mask)) continue;
         r.domain = d;
         if (d == 0) {
-            r.status = wait(io, Fuses, 1U << 27, 5); // PG0 before PW1.
+            r.status = wait(io, Fuses, 1U << 27, FuseTimeoutUs); // PG0 before PW1.
             if (r.status != Status::Complete) break;
         }
         if (!valid(io, control(d), value)) { r.status = Status::Unavailable; break; }
@@ -173,7 +200,7 @@ template<class IO> Result acquire(IO &io, State &s, Lease &lease, uint32_t domai
             r.status=waitTCAuxHealth(io,d);if(r.status!=Status::Complete)break;
         }
         if (d < 5) {
-            r.status = wait(io, Fuses, fuse(d), 1);
+            r.status = wait(io, Fuses, fuse(d), FuseTimeoutUs);
             if (r.status != Status::Complete) break;
         }
     }
@@ -260,7 +287,7 @@ template<class IO> Result restore(IO &io,State &s) {
     r.status=Status::Complete;
     for(unsigned d=0;d<Count;++d)if(s.refs[d]) {
         r.domain=d;
-        if(!d)r.status=wait(io,Fuses,1U<<27,5);
+        if(!d)r.status=wait(io,Fuses,1U<<27,FuseTimeoutUs);
         if(r.status!=Status::Complete)break;
         if(!valid(io,control(d),value)) {r.status=Status::Unavailable;break;}
         if(tcAux(d)) {r.status=enableTCAux(io,d);if(r.status!=Status::Complete)break;}
@@ -273,7 +300,7 @@ template<class IO> Result restore(IO &io,State &s) {
         r.status=wait(io,control(d),enabled(d),tcAux(d)?500000:1000);
         if(r.status==Status::Complete && tcAux(d))r.status=waitTCAuxHealth(io,d);
         if(r.status!=Status::Complete)break;
-        if(d<5)r.status=wait(io,Fuses,fuse(d),1);
+        if(d<5)r.status=wait(io,Fuses,fuse(d),FuseTimeoutUs);
         if(r.status!=Status::Complete)break;
     }
     if(r.status==Status::Complete) {s.suspended=false;r.domain=Count;}

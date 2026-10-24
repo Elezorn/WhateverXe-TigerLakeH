@@ -1,3 +1,5 @@
+#include "kern_alderlake_s.hpp"
+#include "kern_xelp_sst_program.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +25,7 @@ void clock_get_uptime(uint64_t *p){*p=1;}
 void absolutetime_to_nanoseconds(uint64_t t,uint64_t *p){*p=t;}
 unsigned observations,nativeCalls;
 struct XE {
+ bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;
  // FIELDS
  bool tglActive=true,tglSinkFramingReady=true;void *tglObservationController{};uintptr_t orgTGLTrainingPattern{};
  static uint32_t wrapTGLTrainingPattern(void *,uint32_t);
@@ -90,6 +93,34 @@ int main(){
   if(pat==1){assert(r.pre.size()==22&&r.pre[1]==0&&r.pre[18]==d&&r.pre[21]==356);}
   else {assert(r.pre.empty());assert(reg(0x46140+4*p)==0x3456&&reg(0x60400+0x1000*p)==0x01000020);}
   ++cases;
+ }
+ // Reuse the actual wrapper for every admitted ADL-S Combo route on every
+ // pipe, independent of which connector/pipe a physical fixture happened to use.
+ for(bool adls:{false,true})for(unsigned d:{0u,1u,3u,4u})for(unsigned p=0;p<3;++p)
+ for(unsigned lanes:{1u,2u,4u})for(unsigned framing=0;framing<2;++framing)
+ for(unsigned pat=0;pat<6;++pat){
+  if(adls?d==1:d>1)continue;
+  reset(d,p,pat);object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);
+  object.adlsDisplaySelected=adls;object.adlsWiring.valid=adls;object.adlsWiring.dp=adls?1U<<d:0;
+  object.tglComboDPMask=adls?0:1U<<d;
+  config[2]=1;field(port,0x550,1U);field(port,0x124,lanes);port[0x11A]=framing;
+  emitTP=true;expectPre=pat==1;
+  reg(0x45454)=3U<<(2*d);reg(0x45404)=p==2?0xFF:(d==0&&p==0?3:0x3F);
+  invoke();neighbors();assert(reg(0x60540+0x1000*p)==(0x80100A00|(framing<<18)));
+  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post.size()==13&&r.post[9]==p&&r.post[10]==d);
+  assert(!r.post[11]); // No eDP Alternate SR on external Combo DP, including A.
+  ++cases;
+ }
+ // ADL-S panel composes with every native pipe/lane/training pattern and
+ // negotiated Alternate SR, without requiring a lease for an external port.
+ for(unsigned p=0;p<3;++p)for(unsigned lanes:{1U,2U,4U})for(unsigned framing=0;framing<2;++framing)
+ for(unsigned pat=0;pat<6;++pat)for(unsigned sr=0;sr<2;++sr) {
+  reset(0,p,pat);object.adlsDisplaySelected=true;object.adlsWiring.valid=true;object.adlsWiring.panel=1;
+  object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);
+  field(port,0x124,lanes);port[0x11A]=framing;port[0x118]=sr;emitTP=true;expectPre=pat==1;
+  reg(0x45454)=3;reg(0x45404)=p==2?0xFF:p==1?0x3F:3;
+  invoke();neighbors();assert(reg(0x60540+0x1000*p)==(0x80100A00|(framing<<18)|(sr<<6)));
+  auto &r=*IORegistryEntry::getRegistryRoot();assert(r.post[11]&&r.post[12]==sr);++cases;
  }
  // Normal/fast pattern transitions must agree with the sink's negotiated
  // Alternate SR mode. Preserve unrelated bits, external ports, invalid

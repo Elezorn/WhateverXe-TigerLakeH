@@ -191,9 +191,10 @@ int main() {
     assert(stuck.status==AlderLakeN::GTStatus::ReleaseFailed && stuck.releaseFailedMask==1 && stuck.releasedMask==2);
     std::puts("AlderLakeN GT forcewake ownership, ACK failure, fuse profile and release fixtures passed");
     assert(AlderLakeN::matches(0x46d18086,0));
-    for(unsigned id=0x46d0;id<=0x46d4;++id) {assert(AlderLakeN::matches((id<<16)|0x8086,0));assert(!AlderLakeN::matches((id<<16)|0x8086,1));}
+    for(unsigned id=0x46d0;id<=0x46d4;++id)for(unsigned rev=0;rev<256;++rev)
+        assert(AlderLakeN::matches((id<<16)|0x8086,rev));
     assert(!AlderLakeN::family(0x46cf8086) && !AlderLakeN::family(0x46d58086) && !AlderLakeN::family(0x46d11234));
-    assert(!AlderLakeN::matches(0x46d18086,1));
+    assert(AlderLakeN::matches(0x46d18086,1));
     assert(!AlderLakeN::matches(0x9a498086,0));
     AlderLakeN::Resources res;
     assert(AlderLakeN::resources(1,3,0x88,0xf0,res));
@@ -223,7 +224,12 @@ int main() {
     uint32_t owner=0;
     for(auto reg:{0x45400U,0x45408U,0x4540CU,0x45450U,0x45454U,0x4545CU})
         assert(AlderLakeN::value(ra,reg,owner) && owner==a.regs[reg]);
-    for(auto offset:a.reads)assert(offset!=0x61400 && offset!=0x62400);
+    for(auto offset:a.reads)for(auto pipe:{1U,2U}) {
+        for(auto reg:{0x60400U,0x60404U,0x60540U,0x60030U,0x60034U,0x60040U,0x60044U})
+            assert(offset!=reg+0x1000*pipe);
+        assert(offset!=0x46140+4*pipe && offset!=0x78000+0x200*pipe && offset!=0x78004+0x200*pipe);
+    }
+    for(auto offset:a.reads)assert(offset!=0x60038 && offset!=0x6003C && offset!=0x60048 && offset!=0x6004C);
     // Linux reference: pipe B -> Combo B, with the ADL-N PW_B at index 6.
     IO b;b.regs[0x45404]=0x1005;b.regs[0x61400]=0x90000000;
     auto rb=AlderLakeN::readDisplay(b,true);
@@ -237,6 +243,10 @@ int main() {
     IO shortMap;shortMap.limit=0x40000;
     assert(AlderLakeN::readDisplay(shortMap,true).status==AlderLakeN::ReadoutStatus::Unavailable);
     assert(shortMap.reads.empty());
+    for(auto reg:{0x60540U,0x60030U,0x60034U,0x60040U,0x60044U,0x46140U,0x78000U,0x78004U}) {
+        auto bad=a;bad.regs[reg]=UINT32_MAX;
+        assert(AlderLakeN::readDisplay(bad,true).status==AlderLakeN::ReadoutStatus::Unavailable);
+    }
     a.changePower=true;a.reads.clear();
     assert(AlderLakeN::readDisplay(a,true).status==AlderLakeN::ReadoutStatus::PowerChanged);
     auto live=firmware();auto snapshot=AlderLakeN::readDisplay(live,true);AlderLakeN::LinearPlan plan;

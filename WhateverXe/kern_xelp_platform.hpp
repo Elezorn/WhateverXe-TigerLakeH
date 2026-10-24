@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "kern_xelp_devices.hpp"
+#include "kern_xelp_display_resources.hpp"
 namespace XELP {
 struct Profile {
     uint32_t identity {}, revision {}; // Physical config-space identity, never spoofed.
@@ -14,9 +15,12 @@ struct Profile {
     Donor donor {Donor::Unknown};
     uint32_t effectiveIdentity {}; // Table selector; may come from device-id.
     bool overridden() const {return identity!=effectiveIdentity;}
+    // Select the implemented family backend for every PCI revision. Hardware
+    // validation is independent; a stepping split needs a concrete behavior delta.
     bool admitted() const {return (identity&0xFFFF)==0x8086 && revision<=255 &&
         donor==Donor::C004FC1A && gt!=GT::Unknown &&
-        (family!=Family::AlderLakeN || revision==0);}
+        ((!display12SmallGT(gt) && !display12SmallGTDevice(identity)) ||
+         (display12SmallGT(gt) && display12SmallGTDevice(identity) && !overridden()));}
 };
 inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) {
     Profile p;p.identity=physical;p.revision=revision;p.effectiveIdentity=effective;
@@ -63,13 +67,27 @@ struct NativePorts {
 // legacy permits probing for mode4; it does not force mode4 or classify a
 // USB-C-capable connector as physically fixed DP. The provider still checks FIA.
 // Type-C intent is represented but not admitted by either current backend.
+constexpr uint32_t ProbeABI=3,ProbeCapabilityABI=1,ProbeDisplay13ComboDP=1U;
+using QueryProbeCapabilities=uint32_t (*)(uint32_t,uint32_t);
+// Optional export: old ABI3 providers remain valid for their existing routes,
+// but their lack of a capability reply cannot authorize a new DP route.
+inline bool display13ProbeCapable(QueryProbeCapabilities query) {
+    return query && (query(ProbeCapabilityABI,ProbeABI)&ProbeDisplay13ComboDP);
+}
 struct ProbeConfig {
-    uint32_t abi {3},bytes {sizeof(ProbeConfig)};
+    uint32_t abi {ProbeABI},bytes {sizeof(ProbeConfig)};
     Profile profile;
     uint32_t combo {},legacy {},typeC {},excluded {},comboBackend {},legacyBackend {};
     bool valid() const {
-        if(abi!=3 || bytes!=sizeof(ProbeConfig) || !profile.admitted() ||
+        if(abi!=ProbeABI || bytes!=sizeof(ProbeConfig) || !profile.admitted() ||
            !same(profile,identify(profile.identity,profile.revision,profile.effectiveIdentity)))return false;
+        // ADL-S firmware routes use the donor's three Combo PHY slots.
+        // Its TC label grants neither Type-C nor Dekel register access.
+        if(displayAdapter(profile.family)==DisplayAdapter::ADLS) {
+            const auto capacity=ADLSComboBackend::mask(profile.donor);
+            return profile.display==Display::XeD && combo && !(combo&~capacity) && comboBackend==capacity &&
+                !(excluded&~PortMask) && !(excluded&combo) && !legacy && !typeC && !legacyBackend;
+        }
         if((combo&~7U) || ((legacy|typeC|excluded|legacyBackend)&~0x1F8U) ||
            (comboBackend&~7U) || (legacy&typeC) || (legacy&excluded) || (typeC&excluded))return false;
         if(profile.display==Display::XeD)return comboBackend==7;
