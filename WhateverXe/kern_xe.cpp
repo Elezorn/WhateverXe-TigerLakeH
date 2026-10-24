@@ -3307,6 +3307,7 @@ static bool tglTransitionSerialize(void *,void *reference,OSSerialize *serialize
 // ring. Never overwrite a pending call when another CPU/IRQ makes progress.
 // Observers copy memory only; the original caller still owns every HW access.
 static uint32_t tglDisplayTraceScopes {};
+static uint64_t tglDisplayTraceUntil {};
 static uint64_t tglDisplayActivityCount {}, tglDisplayActivityDropped {};
 static TGLTransitionRecord tglDisplayActivity[64] {};
 struct TGLDisplayTraceScope {
@@ -3315,13 +3316,23 @@ struct TGLDisplayTraceScope {
   if(enabled)__atomic_fetch_add(&tglDisplayTraceScopes,1U,__ATOMIC_RELAXED);
  }
  ~TGLDisplayTraceScope() {
-  if(enabled)__atomic_fetch_sub(&tglDisplayTraceScopes,1U,__ATOMIC_RELAXED);
+  if(enabled) {
+   uint64_t ticks,ns;clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,&ns);
+   // Include asynchronous IRQ work between successive AGDC requests and
+   // after their return. No timer, callback or hardware access is scheduled.
+   const auto until=ns+2000000000ULL;
+   auto previous=__atomic_load_n(&tglDisplayTraceUntil,__ATOMIC_RELAXED);
+   while(previous<until && !__atomic_compare_exchange_n(&tglDisplayTraceUntil,&previous,until,false,__ATOMIC_RELEASE,__ATOMIC_RELAXED)){}
+   __atomic_fetch_sub(&tglDisplayTraceScopes,1U,__ATOMIC_RELEASE);
+  }
  }
 };
 static uint64_t tglDisplayActivityBegin(unsigned kind,void *object,uint64_t argument) {
- if(!tglTransitionLock || !__atomic_load_n(&tglDisplayTraceScopes,__ATOMIC_RELAXED))return 0;
+ if(!tglTransitionLock)return 0;
  TGLTransitionRecord r {};uint64_t ticks;
  clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,r.q);
+ if(!__atomic_load_n(&tglDisplayTraceScopes,__ATOMIC_ACQUIRE) &&
+    r.q[0]>__atomic_load_n(&tglDisplayTraceUntil,__ATOMIC_ACQUIRE))return 0;
  r.q[2]=reinterpret_cast<uintptr_t>(current_thread());r.q[4]=kind;
  r.q[5]=reinterpret_cast<uintptr_t>(object);r.q[6]=argument;
  const auto irq=IOSimpleLockLockDisableInterrupt(tglTransitionLock);
@@ -11471,6 +11482,31 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				const bool traced=patcher.routeMultiple(index,traceRoutes,arrsize(traceRoutes),address,size);
 				IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeHotplugBoundaryTrace",traced);
 				patcher.clearError();
+				const char *irqNames[] {
+					"__ZN31AppleIntelFramebufferController16ProcessInterruptEv",
+					"__ZN31AppleIntelFramebufferController18SWInterruptHandlerEP8OSObjectP22IOInterruptEventSourcei",
+					"__ZN31AppleIntelFramebufferController18dpProcessInterruptEP14AppleIntelPort"
+				};
+				const uint32_t irqOffsets[] {0x72F92,0x73FE0,0x75FFA};
+				const uint8_t irqEntries[][17] {
+					{0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x28},
+					{0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xEC,0x18},
+					{0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x54,0x53,0x48,0x83,0xEC,0x10,0x48,0xFF}
+				};
+				bool irqKnown=size>0x761BA;
+				for(unsigned i=0;i<arrsize(irqNames) && irqKnown;++i) {
+					const auto entry=patcher.solveSymbol<mach_vm_address_t>(index,irqNames[i],address,size);
+					irqKnown=entry==address+irqOffsets[i] && !memcmp(reinterpret_cast<void *>(entry),irqEntries[i],sizeof(irqEntries[i]));
+				}
+				patcher.clearError();
+				KernelPatcher::RouteRequest irqRoutes[] {
+					{irqNames[0],wrapTGLTraceFBIRQ,orgTGLTraceFBIRQ},
+					{irqNames[1],wrapTGLTraceFBSWIRQ,orgTGLTraceFBSWIRQ},
+					{irqNames[2],wrapTGLTraceDPIRQ,orgTGLTraceDPIRQ}
+				};
+				const bool irqTraced=irqKnown && patcher.routeMultiple(index,irqRoutes,arrsize(irqRoutes),address,size);
+				IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDisplayIRQBoundaryTrace",irqTraced);
+				patcher.clearError();
 			}
    tglRecordStartOrder(1,nullptr);
 			return true;
@@ -14542,6 +14578,23 @@ void XE::wrapTGLTraceDisablePG(void *power, uint32_t pg) {
 	tglTransitionRecord(93,false,power,pg,0,0);
 	FunctionCast(wrapTGLTraceDisablePG,callbackXE->orgTGLTraceDisablePG)(power,pg);
 	tglTransitionRecord(93,true,power,pg,0,0);
+}
+
+// These observers may run with interrupts disabled. Keep objects opaque and
+// use only the IRQ-safe pending-call recorder, never IORegistry publication.
+bool XE::wrapTGLTraceFBIRQ(void *controller) {
+	TGLDisplayActivity activity(14,controller);
+	const auto result=FunctionCast(wrapTGLTraceFBIRQ,callbackXE->orgTGLTraceFBIRQ)(controller);
+	activity.finish(result);
+	return result;
+}
+void XE::wrapTGLTraceFBSWIRQ(void *owner, void *source, int count) {
+	TGLDisplayActivity activity(15,owner,static_cast<uint32_t>(count));
+	FunctionCast(wrapTGLTraceFBSWIRQ,callbackXE->orgTGLTraceFBSWIRQ)(owner,source,count);
+}
+void XE::wrapTGLTraceDPIRQ(void *controller, void *port) {
+	TGLDisplayActivity activity(16,controller,reinterpret_cast<uintptr_t>(port));
+	FunctionCast(wrapTGLTraceDPIRQ,callbackXE->orgTGLTraceDPIRQ)(controller,port);
 }
 
 uint32_t XE::wrapTGLCheckLinkStatus(void *port) {

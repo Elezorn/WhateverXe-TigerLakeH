@@ -495,6 +495,10 @@ private:
 
 	mach_vm_address_t orgTGLTrainingPattern {}, orgTGLPowerDDIState {};
 	mach_vm_address_t orgTGLTraceHotplug {}, orgTGLTraceClearHPD {}, orgTGLTraceEnablePG {}, orgTGLTraceDisablePG {};
+	mach_vm_address_t orgTGLTraceFBIRQ {}, orgTGLTraceFBSWIRQ {}, orgTGLTraceDPIRQ {};
+	static bool wrapTGLTraceFBIRQ(void *controller);
+	static void wrapTGLTraceFBSWIRQ(void *owner, void *source, int count);
+	static void wrapTGLTraceDPIRQ(void *controller, void *port);
 	static void wrapTGLTraceHotplug(void *controller, uint32_t ddi, uint32_t mode);
 	static void wrapTGLTraceClearHPD(void *port);
 	static void wrapTGLTraceEnablePG(void *power, uint32_t pg);

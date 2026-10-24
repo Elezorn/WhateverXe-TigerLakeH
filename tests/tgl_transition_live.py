@@ -2,10 +2,23 @@
 """Actual lifecycle recorder: concurrent snapshots, IRQ state and opaque objects."""
 from pathlib import Path
 import subprocess
+import re
+import argparse
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'WhateverXe/kern_xe.cpp').read_text()
+p = argparse.ArgumentParser(); p.add_argument('--donor', type=Path); args = p.parse_args()
+if args.donor:
+    data = args.donor.read_bytes()
+    guard = source[source.index('const uint32_t irqOffsets[]'):source.index('bool irqKnown=size>0x761BA')]
+    offsets = [int(x, 16) for x in re.search(r'irqOffsets\[\] \{([^}]+)', guard).group(1).split(',')]
+    rows = re.findall(r'\{((?:0x[0-9A-F]+,?)+)\}', guard)[1:]
+    assert len(offsets) == len(rows) == 3
+    for offset, row in zip(offsets, rows):
+        entry = bytes(int(x, 16) for x in row.split(','))
+        assert data[offset:offset+len(entry)] == entry
+    print('PASS: exact donor display IRQ entry guards')
 # Tracing rewrites PG entry bytes. Qualify the native ABI before routing those
 # entries, or enabling diagnostics alone blocks framebuffer startup.
 trace_install = source.index('KernelPatcher::RouteRequest traceRoutes[]')
@@ -14,6 +27,7 @@ assert source.index('tglNativeLegacyHPDCaller=hotplug+0x185') < trace_install
 assert source.rfind('if (tglDisplayTraceEnabled)', 0, trace_install) >= 0
 body = source[source.index('struct TGLTransitionRecord {'):
               source.index('// Independent and nested training calls')]
+irq_wrappers = '\n'.join(re.search(r'(?:bool|void) XE::wrapTGLTrace' + name + r'\(.*?\n\}', source, re.S).group() for name in ['FBIRQ', 'FBSWIRQ', 'DPIRQ'])
 fixture = r'''
 #include <cassert>
 #include <cstdint>
@@ -54,6 +68,19 @@ struct OSData{
  void release(){assert(!held);delete this;}
 };
 // BODY
+struct XE {
+ uintptr_t orgTGLTraceFBIRQ{},orgTGLTraceFBSWIRQ{},orgTGLTraceDPIRQ{};
+ static bool wrapTGLTraceFBIRQ(void*);
+ static void wrapTGLTraceFBSWIRQ(void*,void*,int);
+ static void wrapTGLTraceDPIRQ(void*,void*);
+};
+XE driver,*callbackXE=&driver;
+#define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
+// IRQ_WRAPPERS
+void *expectedOpaque;bool nativeResult,expectedIRQ;unsigned nativeCalls;
+bool nativeIRQ(void*p){assert(p==expectedOpaque && irqEnabled==expectedIRQ && !held);++nativeCalls;return nativeResult;}
+void nativeSW(void*p,void*q,int count){assert(p==expectedOpaque && q==p && count==-2);assert(irqEnabled==expectedIRQ && !held);++nativeCalls;}
+void nativeDP(void*p,void*q){assert(p==expectedOpaque && q==p);assert(irqEnabled==expectedIRQ && !held);++nativeCalls;}
 void validate(OSSerialize&s){
  assert(s.data.size()==16+1024*128);uint32_t h[4];memcpy(h,s.data.data(),16);
  assert(h[0]==1&&h[2]==1024&&h[3]==128);
@@ -168,14 +195,32 @@ int main(){
   }
   c.join();d.join();assert(tglDisplayActivityDropped==1);
  }
- assert(!tglDisplayTraceScopes && !tglDisplayActivityBegin(0,inaccessible,0));
+ assert(!tglDisplayTraceScopes);
+ auto tail=tglDisplayActivityBegin(14,inaccessible,0);assert(tail);
+ ticks=__atomic_load_n(&tglDisplayTraceUntil,__ATOMIC_RELAXED)+1;
+ assert(!tglDisplayActivityBegin(14,inaccessible,0));
+ // A call that entered during the tail remains pending and may finish later.
+ tglDisplayActivityEnd(tail,7);
+ assert(tglDisplayActivity[(tail&255)-1].q[7]==7);
+ expectedOpaque=inaccessible;
+ driver.orgTGLTraceFBIRQ=(uintptr_t)nativeIRQ;driver.orgTGLTraceFBSWIRQ=(uintptr_t)nativeSW;driver.orgTGLTraceDPIRQ=(uintptr_t)nativeDP;
+ {
+  TGLDisplayTraceScope scope;
+  for(bool prior:{false,true})for(bool value:{false,true}){
+   irqEnabled=expectedIRQ=prior;nativeResult=value;nativeCalls=0;
+   assert(XE::wrapTGLTraceFBIRQ(inaccessible)==value && nativeCalls==1);
+   XE::wrapTGLTraceFBSWIRQ(inaccessible,inaccessible,-2);
+   XE::wrapTGLTraceDPIRQ(inaccessible,inaccessible);
+   assert(nativeCalls==3 && irqEnabled==prior && !held);
+  }
+ }
  munmap(inaccessible,4096);
  IOFree(tglTransitions,tglTransitionSlots*sizeof(TGLTransitionRecord));
  IOFree(tglTransitionFirst,tglTransitionFirstSlots*sizeof(TGLTransitionRecord));
  IOSimpleLockFree(tglTransitionLock);
  puts("PASS: 10051 events; compact chronological snapshots; concurrent/pending activity, overflow and stale tokens; IRQ restore; no object/MMIO access");
 }
-'''.replace('// BODY', body)
+'''.replace('// BODY', body).replace('// IRQ_WRAPPERS', irq_wrappers)
 with tempfile.TemporaryDirectory(prefix='tgl-transition-') as tmp:
     tmp = Path(tmp)
     cpp, binary = tmp / 'check.cpp', tmp / 'check'
