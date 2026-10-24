@@ -6,6 +6,8 @@ WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィック
 
 本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。
 
+WEX **0.5.0**ではWhateverXe Graphics **0.2.0以上**が必要です。両方を更新してください。
+
 ## 対応範囲
 
 単一のWEXバイナリと1つのグラフィックスpkgで、以下のmacOSに対応します。
@@ -23,15 +25,39 @@ Big Sur〜Sonomaは検証済みカーネルの識別を必要とします。Sequ
 
 WEXはOSのABIとGPUバックエンドを独立して選択します。OS別のグラフィックス資材と共通のAppleIntelTGLCompatはWhateverXe Graphicsが導入し、GPU世代・コネクタ配線への対応はWEXが担います。
 
-| GPUファミリー | バックエンド実装があるdevice ID |
+### 実機で動作確認済み
+
+| GPUファミリー | 確認した構成 |
 | --- | --- |
-| Tiger Lake GT2 / G4 | `9A40`、`9A49`、`9A78` |
-| Tiger Lake GT1（H45） | `9A60`、`9A68`、`9A70` |
-| Alder Lake-N / Twin Lake | `46D0`–`46D4` |
+| Tiger Lake-U | 48 EU・80 EU。外部画面を使う構成とノートPCの画面構成 |
+| Alder Lake-N | 16 EU・24 EU。HDMI 2画面 |
+| Alder Lake-S | UHD Graphics 770（`4690`）。HDMI、DisplayPort、固定DisplayPortとして配線されたUSB-C端子 |
 
-TGL GT1はTGLの表示経路と、ヒューズ由来の16/24/32 EU・4-bank GT資源処理を組み合わせます。CPU試験と実donor再生で検証していますが、TGL-H実機では未検証です。対応する更新済みWEX Graphics資材が必要で、公開済みGraphics 0.1.0はこれらのIDを受け付けません。
+各ファミリーの一部構成で確認した結果であり、全モデル・全端子の動作保証ではありません。
+OS別の検証範囲と残る問題は[動作確認済みの機能と既知の問題](#動作確認済みの機能と既知の問題)を参照してください。
 
-対応状況は機種やコネクタ構成によって異なります。この表はバックエンドの実装範囲を示すもので、すべての機種での動作を保証するものではありません。詳細な選択条件と上書き設定は[デバイス選択](docs/device-selection.md)を参照してください。
+### 動作を期待できるが実機未検証
+
+- 96 EUを含む、対応IDの他のTiger Lake-U/H35構成。
+- Tiger Lake-H45（GT1）：`9A60`、`9A68`、`9A70`。
+- 対応IDの他のAlder Lake-N構成とTwin Lake。
+- 対応IDの他のAlder Lake-S構成、Alder Lake-HX、Raptor Lake-S、Raptor Lake-HX。
+
+確認済みのファミリーと処理を共有する実装があり、IDは自動で受け付けます。
+CPUモデル名や機種固有の設定は不要ですが、実機での動作確認は残っています。
+受付IDの一覧と対応する資源構成は[デバイス選択](docs/device-selection.md)を参照してください。
+
+### 対応に追加改修が必要
+
+- Alder Lake-H/P/U、Raptor Lake-H/P/U：描画・表示処理の追加対応が必要です。
+  上記のHX製品とは別の系統です。
+- Rocket Lake-S：Tiger Lakeとは表示の電源・クロック制御が異なります。
+  このリリースでは未対応で、実機検証の予定もありません。
+
+### 対応予定なし
+
+- Meteor Lakeの内蔵GPUなど、Xe-LPG。
+- Xe2以降のグラフィックス世代。
 
 ## 必須構成
 
@@ -48,7 +74,7 @@ SIPは`csr-active-config=03080000`（値`0x803`）に設定してください。
 
 Tahoeでは`CoreMedia / AllowOnePassMetalScaling`の無効化が必要です。WhateverXe Graphicsのインストーラーが設定します。
 
-グラフィックスpkgはWEX **0.3.0以上**を読み込んだ対象OSから実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
+グラフィックスpkgはWEX **0.5.0以上**を読み込んだ対象OSから実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
 
 リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。upstreamのAMFIPassはMod版の署名チェーンに対応していません。
 
@@ -106,8 +132,10 @@ GPU backendの選択と実機検証範囲は独立しています。未検証の
 | ハードウェア | 確認済みの機能 |
 | --- | --- |
 | Tiger Lake / Alder Lake-N | Big Sur〜Tahoe：外部2画面の1920×1080・60Hz出力、Metal/MPS、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、HEVCデコード、画面の消灯／復帰、Safariの動画デコード、Widevine再生 |
-| Tiger Lakeラップトップ | Big Sur〜Tahoe：内蔵1366×768 eDP、輝度調整、HDMI、USB-C DisplayPort Alt Mode、最大3画面同時出力。TahoeではHDMIとUSB-Cの2端子で抜き差しも確認 |
+| Tiger Lakeラップトップ | Big Sur〜Tahoe：内蔵1366×768 eDP、輝度調整、HDMI、USB-C DisplayPort Alt Mode、最大3画面同時出力。USB-Cの再接続には未解決の問題あり |
 | Alder Lake-N | Big Sur/Tahoe：EFIの`AAPL,GfxYTile`設定なしでのYタイル自動選択 |
+| Alder Lake-S | Big Sur〜Tahoe：Metal、OpenGL、OpenCL、ハードウェアH.264エンコード／デコード、HEVCデコード、3画面（1080p60×2＋720p60×1）、Safari動画再生。WidevineはBig SurとTahoeで確認 |
+| Tiger Lake / Alder Lake-S | Tahoe：ChromeのCanvas、WebGL、WebGPUによるハードウェア描画 |
 
 検証した機器での結果であり、すべてのGPU・ディスプレイ・アダプター・ドックでの動作を保証するものではありません。
 記載した解像度は検証範囲であり、WEXが設けた固定の解像度制限ではありません。
@@ -117,44 +145,23 @@ Safariのインストール先や更新による配置変更に依存せずData�
 
 ### 既知の問題と制限
 
-- 一部の画像変換処理で、アプリケーションがクラッシュすることがあります。
-- DisplayPort専用端子でモニターを接続し直すと、黒画面になったりコンピューターが応答しなくなったりすることがあります。USB-CのDisplayPort Alt Modeでも再接続時にハングする場合があり、Big SurとTahoeの両方で再現しています。上記の抜き差し試験の成功だけでは、間欠的な失敗を否定できません。
-- Safariの動画再生で、ときどきコマ落ちが発生します。
-- 同時出力は最大3画面です。4画面目には映像が出ません。
-- 開発版ではTGL Combo A/Bの固定外部DPもVBTから配線を生成し、他のDP経路とSST訓練・電源・AUX保持を共有します。この組合せはCPU試験済みで実機未検証です。AUXの交差配線やType-C/TBT管理を必要とするCombo配線は除外します。
-- TGL eDPの信号設定は、物理GPUのsubplatformとVBTのpanel情報からRBR〜HBR3を選択します。HOBLを要求するfirmwareでも標準のLinux fallback係数を使用します。HOBL最適化は再試行処理を実装するまで無効です。高速度の選択はCPU試験済みですが、上記の実機結果は全link rateの動作保証ではありません。
-- 資格を満たすTGLのPWM/PPS 0 panelでは、VBTの待ち時間・firmwareの初期値・明示panelプロパティを統合し、nativeの電源シーケンスを維持します。新しい待ち時間adapterはCPU・実donorコードで検証済みです。他のbacklight方式やPPS controllerはこのadapterの対象外です。
-- システム全体のスリープ／復帰と、上記を超える解像度は未検証です。USB-C映像出力では現在、表示回路の一部を省電力状態へ移行させずに動作させています。
+- 一部の画像変換処理でアプリがクラッシュすることがあります。
+- 専用DisplayPort端子の抜き差しで黒画面やシステム停止が起きることがあります。
+  USB-C DisplayPort Alt Modeでも再接続時のシステム停止がBig SurとTahoeの両方で再現しています。
+- Safariの動画再生で時折コマ落ちすることがあります。
+- 同時表示は最大3画面です。4画面目には映像が出ません。
+- Alder Lake-SではDisplayPortの表示開始や再接続後の復帰に時間がかかる場合があります。
+- 一部の端子配線、Thunderbolt管理の出力、内蔵画面の輝度制御方式は未対応です。
+  詳細は[表示の制限](docs/device-selection.md#display-limits)を参照してください。
+- FairPlayで保護されたコンテンツの再生には未対応です。
+- システム全体のスリープ／復帰と、上記を超える解像度は未検証です。
+  USB-C映像出力中は表示ハードウェアの一部が低消費電力状態へ移行しません。
 
 ## ロードマップ
 
-### Planned
-
-- Alder Lake／Raptor LakeのS/H/P/U対応。開発版のAlder Lake-S `4690`では、
-  Big Sur〜TahoeでMetal／OpenGLアクセラレーションと3画面同時表示（1080p60×2＋720p60×1）を確認しています。
-  更新版VA資材との組み合わせでは、Big SurとTahoeでハードウェアH.264エンコード／デコード、
-  HEVCデコード、Safariのハードウェア動画デコード、Widevine再生も確認しています。
-  未公開のグラフィックス資材変更が必要で、公開済みpkgでは対応しません。
-  Big Surで固定DPの再接続は確認済みですが、起動時の表示や再接続後の復帰に時間がかかる場合があります。
-  HDMI／固定DPの配線は機種・コネクタのプリセットではなくVBTから生成し、現在のバックエンドはCombo PHY A～Cを扱います。
-  曖昧な配線、DDIと異なるAUXへの配線、Type-C／TBT機能、PHY D／Eは除外します。
-  開発版のGPU受付は、ADL-S/HX `4680/4682/4688/468A/468B/4690/4692/4693` と、
-  RPL-S/HX `A780/A781/A782/A783/A788/A789/A78A/A78B` が対象で、すべてのPCI revisionが共通backendを選択します。
-  物理IDの一致、1 slice・最大2 DSS・16/24/32 EU・4 L3 bank・対応media engine構成を要求し、
-  この実装範囲外の資源構成は未対応です。実機確認済みは `4690` revision `0C` のみで、他IDはCPU試験の範囲です。
-  追加IDには更新版のcompanion側ID受付も必要です。
-  別のポート配置はCPUテストで確認していますが、実機では未検証です。
-  VBT上でCombo PHY Aの固定DPとして扱われるUSB-C端子でも実表示を確認しています。
-  これはType-C/TBT管理経路の動作確認ではありません。開発版のeDP経路は、VBTで確認したDDI Aのpanelを
-  native PPS0／PWM controller 0に接続し、panel timing、信号設定、firmware由来のPWM周期・極性を適用します。
-  この経路はCPU試験と実donor再生で検証していますが、ADL-S eDPの実機検証は未実施です。
-  PPS1とAUX制御のbacklightは未対応です。消灯／復帰は未検証です。
-- Display 13のUSB-C / eDP対応
-
-### Not Planned
-
-- Xe-LPG対応
-- Xe2以降のアーキテクチャへの対応
+- Alder Lake-H/P/UとRaptor Lake-H/P/Uへの対応。
+- Display 13 GPUでのUSB-C・内蔵画面対応。
+- 画面再接続の安定性改善とシステム全体のスリープ／復帰の調査。
 
 ## ビルドとテスト
 

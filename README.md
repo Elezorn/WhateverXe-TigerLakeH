@@ -9,7 +9,8 @@ This project is experimental and requires the signed graphics package from
 [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics). It installs
 the graphics stack under `/Library` and updates the Auxiliary Kernel Collection
 (AuxKC), without patching System files or snapshots. WEX and the graphics package
-have independent release versions.
+have independent release versions. WEX **0.5.0** requires WhateverXe Graphics
+**0.2.0 or newer**; update both components together.
 
 ## Compatibility
 
@@ -32,20 +33,41 @@ WEX selects the OS ABI and GPU backend independently. OS-specific graphics
 payloads and the common AppleIntelTGLCompat provider are installed by WhateverXe
 Graphics; GPU generation and connector routing are handled by WEX.
 
-| GPU family | Device IDs with an implemented backend |
+### Tested on hardware
+
+| GPU family | Tested configurations |
 | --- | --- |
-| Tiger Lake GT2 / G4 | `9A40`, `9A49`, `9A78` |
-| Tiger Lake GT1 (H45) | `9A60`, `9A68`, `9A70` |
-| Alder Lake-N / Twin Lake | `46D0`–`46D4` |
+| Tiger Lake-U | 48- and 80-EU graphics; desktop-style and laptop display layouts |
+| Alder Lake-N | 16- and 24-EU graphics; two HDMI displays |
+| Alder Lake-S | UHD Graphics 770 (`4690`); HDMI, DisplayPort and a USB-C port wired as fixed DisplayPort |
 
-TGL GT1 uses the TGL display path and fuse-derived 16/24/32-EU, four-bank
-GT resources. This composition has CPU and exact-donor test coverage, but no
-TGL-H hardware validation. It requires matching updated WEX Graphics payloads;
-the published Graphics 0.1.0 package does not admit these IDs.
+These are tested configurations within each family, not a guarantee for every
+model or connector. See [tested features and known issues](#tested-features-and-known-issues)
+for OS coverage and remaining problems.
 
-Support varies by system and connector layout. The table includes implemented
-backends, not a guarantee for every machine. See [device selection](docs/device-selection.md)
-for detailed selection conditions and overrides.
+### Expected to work, not yet tested on hardware
+
+- Other supported Tiger Lake-U/H35 configurations, including 96-EU graphics.
+- Tiger Lake-H45 (GT1): `9A60`, `9A68`, `9A70`.
+- Other supported Alder Lake-N configurations and Twin Lake.
+- Other supported Alder Lake-S configurations, Alder Lake-HX, Raptor Lake-S and Raptor Lake-HX.
+
+These devices use implemented support shared with the tested families. Their
+IDs are accepted automatically; no CPU-model or machine-specific setting is
+needed. Hardware validation is still outstanding. All accepted IDs and resource
+limits are listed in [device selection](docs/device-selection.md).
+
+### Further implementation required
+
+- Alder Lake-H/P/U and Raptor Lake-H/P/U: additional graphics and display support
+  is needed. These are distinct from the HX products listed above.
+- Rocket Lake-S: its display power and clock handling differ from Tiger Lake.
+  It is not supported by this release, and no hardware validation is scheduled.
+
+### No support planned
+
+- Xe-LPG, including Meteor Lake integrated graphics.
+- Xe2 and later graphics architectures.
 
 ## Required components
 
@@ -68,7 +90,7 @@ supported. With the signed graphics package and linked Mod AMFIPass,
 Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled; the
 WhateverXe Graphics installer applies this setting.
 
-Boot the target OS with WEX **0.3.0 or newer** before installing the graphics
+Boot the target OS with WEX **0.5.0 or newer** before installing the graphics
 pkg. If an older Xe System patch is installed, restore it using its original
 recovery procedure first. The pkg does not change EFI, System files, snapshots
 or SIP settings. See [installation and removal](https://github.com/b00t0x/WhateverXe-Graphics#install)
@@ -152,8 +174,10 @@ its X-tiled scanout path is unsupported. Display 12 tiling selection is unchange
 | Hardware | Verified features |
 | --- | --- |
 | Tiger Lake / Alder Lake-N | Big Sur–Tahoe: dual 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware H.264 encode/decode, HEVC decode, display sleep/wake, Safari video decoding and Widevine playback |
-| Tiger Lake laptops | Big Sur–Tahoe: internal 1366×768 eDP display, brightness control, HDMI and USB-C DisplayPort Alt Mode, up to three simultaneous displays; HDMI and both USB-C ports reconnected successfully on Tahoe |
+| Tiger Lake laptops | Big Sur–Tahoe: internal 1366×768 eDP display, brightness control, HDMI and USB-C DisplayPort Alt Mode, up to three simultaneous displays; USB-C reconnection remains unreliable |
 | Alder Lake-N | Big Sur/Tahoe: automatic Y tiling without an EFI `AAPL,GfxYTile` setting |
+| Alder Lake-S | Big Sur–Tahoe: Metal, OpenGL, OpenCL, hardware H.264 encode/decode, HEVC decode and three displays (two 1080p60 and one 720p60); Safari video playback; Widevine checked on Big Sur and Tahoe |
+| Tiger Lake / Alder Lake-S | Tahoe: Chrome hardware-accelerated Canvas, WebGL and WebGPU |
 
 These results cover tested systems, not every GPU, display, adapter or dock.
 The listed resolutions describe test coverage; they are not a fixed resolution
@@ -169,53 +193,23 @@ installation or update location.
 - Reconnecting a monitor to a dedicated DisplayPort connector can leave the
   screen black or freeze the computer. USB-C DisplayPort Alt Mode reconnection
   can also freeze the computer; this has been reproduced on both Big Sur and
-  Tahoe. The successful reconnection checks above do not rule out intermittent
-  failures.
+  Tahoe.
 - Safari video playback may occasionally drop frames.
 - Up to three displays can be used simultaneously; a fourth display will not
   receive an image.
-- Development builds also derive fixed external DP on TGL Combo A/B from VBT and share the SST training, power and AUX lifetime with other DP routes. This composition has CPU coverage and is not yet hardware-qualified. Cross-routed AUX and Type-C/TBT-managed Combo wiring remain excluded.
-- TGL eDP signal selection covers RBR through HBR3 using the physical GPU subplatform and VBT panel flags. Firmware requesting HOBL uses standard Linux fallback coefficients; the HOBL optimization remains disabled until its retry lifecycle is supported. High-rate selection has CPU coverage; the hardware results above do not qualify every link rate.
-- Qualified TGL PWM/PPS 0 panels combine VBT delays, initial firmware timing and explicit panel properties while retaining native power sequencing. The new timing adapter has CPU and exact-donor coverage; other backlight methods and PPS controllers remain outside its scope.
+- DisplayPort output or reconnection can be slow on Alder Lake-S.
+- Some connector layouts, Thunderbolt-managed outputs and panel backlight
+  methods are not supported. See [display limits](docs/device-selection.md#display-limits).
+- FairPlay-protected playback is not supported.
 - Full system sleep/wake and resolutions above those listed above are unverified.
   USB-C display output currently prevents part of the display hardware from
   entering a low-power state.
 
 ## Roadmap
 
-### Planned
-
-- Alder Lake and Raptor Lake S/H/P/U support. Development support for Alder Lake-S
-  `4690` has been tested from Big Sur through Tahoe with Metal and OpenGL
-  acceleration and three simultaneous displays (two 1080p60 and one 720p60).
-  With the revised VA assets, hardware H.264 encode/decode, HEVC decode,
-  Safari hardware video decoding and Widevine playback have also been tested
-  on Big Sur and Tahoe.
-  It requires unreleased companion graphics changes and is not supported by the
-  published graphics pkg. Fixed DP reconnection has been tested on Big Sur, but
-  initial display output and reconnection can be delayed. HDMI/fixed-DP routing is derived
-  from VBT rather than a board or connector preset, within the current Combo
-  PHY A–C backend. Ambiguous routes, cross-routed AUX, Type-C/TBT capability
-  and PHY D/E are excluded. Development GPU admission covers ADL-S/HX IDs `4680/4682/4688/468A/468B/4690/4692/4693`
-  and RPL-S/HX IDs `A780/A781/A782/A783/A788/A789/A78A/A78B`.
-  All PCI revisions select the shared family backend. Physical identity must match, with one slice,
-  up to two DSS, 16/24/32 EUs, four L3 banks and the supported media-engine mask.
-  Resource layouts outside that implementation remain unsupported. Only `4690` revision `0C` has hardware validation;
-  the other IDs have CPU coverage and need the updated companion ID dispatch. Other port layouts have CPU-test
-  coverage but are not hardware-qualified. A USB-C connector exposed by VBT
-  as fixed DP on Combo PHY A has also been tested. This does not qualify
-  Type-C/TBT-managed routes. Development eDP routing also composes a
-  VBT-qualified DDI A panel with native PPS0 and PWM controller 0, including
-  panel timing, signal settings and firmware-derived PWM period/polarity.
-  CPU tests and exact-donor replay cover this path; ADL-S eDP has not been
-  tested on hardware. PPS1 and AUX-controlled backlights remain unsupported.
-  Sleep/wake remains unqualified.
-- Display 13 USB-C and eDP support
-
-### Not Planned
-
-- Xe-LPG support
-- Xe2 and later architectures
+- Alder Lake-H/P/U and Raptor Lake-H/P/U support.
+- USB-C and internal-display support on Display 13 GPUs.
+- Improve display reconnection reliability and investigate full system sleep/wake.
 
 ## Build and test
 

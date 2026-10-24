@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0
+
+Requires **WhateverXe Graphics 0.2.0 or newer**. Update both components.
+
+### Added
+
+- Add Alder Lake-S graphics acceleration and HDMI/DisplayPort output, including compatible USB-C wiring and up to three displays.
+- Accept Tiger Lake-H45, Alder Lake-HX and Raptor Lake-S/HX using shared support. These configurations still need hardware testing.
+- Use firmware information to configure more display layouts automatically.
+
+### Fixed
+
+- Avoid some startup panics caused by display hardware not being ready.
+- Restore Safari graphics-driver access regardless of where macOS installs Safari updates.
+- With the updated graphics package, fix observed Chrome drawing failures and rendering errors on smaller integrated GPUs.
+
+DisplayPort/USB-C reconnection can still freeze the computer. See the [README](https://github.com/b00t0x/WhateverXe#tested-features-and-known-issues) for tested configurations and other known issues.
+
 ## 0.4.0
 
 Add experimental Tiger Lake laptop display support and automatic Display 13 tiling selection.
