@@ -5960,7 +5960,7 @@ uint32_t XE::adlnRequestedSharedReservation(IOService *controller) {
 		const auto prefix=(uint64_t(Display13FBMemory::field<uint32_t>(controller,0xDF8))+0xFFF)&~0xFFFULL;
 		return prefix<0x10000000 ? static_cast<uint32_t>(prefix) : 0;
 	}
-	if(!Display13FBTopology::adlnWiring(callbackXE->adlnOutputWiring))return 0;
+	if(!Display13FBTopology::xeLPDWiring(callbackXE->adlnOutputWiring))return 0;
 	// Allocation/free may change descriptor/state fields later. The validated
 	// fixed layout's registration promise is stable across those transitions.
 	const auto prefix=__atomic_load_n(&display13FBGTT.sharedPoolPrefix,__ATOMIC_ACQUIRE);
@@ -5974,9 +5974,14 @@ IOReturn XE::wrapDisplay13FramebufferPlatformCall(IOService *controller,const OS
 		controller->getMetaClass()->getClassSize()>=0x1C20 && name &&
 		name==Display13FBMemory::field<const OSSymbol *>(controller,0x1560);
 	if(!fixed)return FunctionCast(wrapDisplay13FramebufferPlatformCall,self->orgDisplay13FramebufferPlatformCall)(controller,name,wait,arg1,arg2,arg3,arg4);
-	const auto layout=Display13FBMemory::poolLayout(controller,controller->getMetaClass()->getClassSize(),0x10000000);
+	// Disabled SysMem windows are native descriptions, not aperture allocations.
+	// A large stolen prefix can place their unused tail beyond the aperture.
+	// sharedReservation rejects every occupied secondary window and bounds the
+	// actual promised prefix to the aperture before any native registration.
+	const auto layout=Display13FBMemory::poolLayout(controller,controller->getMetaClass()->getClassSize(),
+		adlnFixedSysMemEnabled ? 0x10000000 : UINT32_MAX);
 	const auto plan=Display13FBMemory::sharedReservation(layout,0x10000000,adlnFixedSysMemEnabled);
-	const bool ready=Display13FBTopology::adlnWiring(self->adlnOutputWiring) && plan.valid &&
+	const bool ready=Display13FBTopology::xeLPDWiring(self->adlnOutputWiring) && plan.valid &&
 		display13FBGTT.initialized && !display13FBGTT.faulted && !display13FBPower.memoryFaulted &&
 		arg1 && arg1==__atomic_load_n(&adlnSharedOwner,__ATOMIC_ACQUIRE) && arg2 && arg3;
 	if(!ready)return kIOReturnNotReady;
