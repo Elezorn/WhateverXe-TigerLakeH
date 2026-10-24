@@ -173,7 +173,7 @@ Safariのインストール先や更新による配置変更に依存せずData�
 開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
 `-wex-adlp-load-only` は選択済みADL-P/RPL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。
 `-wex-display13-offline` はDisplay 13のnative controller初期化を有効に保ち、選択した出力を未接続として扱います。FB診断でHPD/EDIDとmode設定を切り離すための設定で、表示成立を意味しません。
-ADL-P/RPL-Pは物理IDとfuseから求めた資源で共有Display13バックエンドを選択します。固定HDMI配線はVBTから取得し、`-wex-noaccel`でFramebufferのみの動作を維持します。旧9A49 donor選択も受け付けますが不要です。モバイル系IDと対応providerを含むGraphics資材が必要で、Graphics 0.2.0には含まれていません。IGPUをunloadするAGDP policyでは、表示登録前の設定が引き続き必要です。
+ADL-P/RPL-Pは物理IDとfuseから求めた資源で共有Display13バックエンドを選択します。固定HDMI配線はVBTから取得し、`-wex-noaccel`でFramebufferのみの動作を維持します。旧9A49 donor選択も受け付けますが不要です。モバイル系IDと対応providerを含むGraphics資材が必要で、Graphics 0.2.0には含まれていません。対応するCompat providerは、起動を許可したDisplay13 framebufferのclientだけにAGDP personalityを提供します。既定policyでcallback登録を有効にし、board-IDごとの上書き設定を不要にします。
 
 
 ## ビルドとテスト

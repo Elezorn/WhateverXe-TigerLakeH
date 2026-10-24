@@ -225,7 +225,7 @@ installation or update location.
 Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
 `-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on a selected ADL-P/RPL-P device, for load-only diagnostics without GPU initialization.
 `-wex-display13-offline` keeps Display 13 native controller initialization enabled but reports selected outputs as disconnected, isolating HPD/EDID and mode programming for framebuffer diagnostics. It does not establish display operation.
-ADL-P/RPL-P uses its physical ID and fuse-derived resources with the shared Display13 backend. Fixed HDMI routes come from VBT; `-wex-noaccel` retains framebuffer-only operation. A legacy 9A49 donor selector is accepted but unnecessary. Use matching Graphics payloads containing the mobile IDs and provider; Graphics 0.2.0 does not include them. AGDP policies that unload the integrated GPU still require configuration before display registration.
+ADL-P/RPL-P uses its physical ID and fuse-derived resources with the shared Display13 backend. Fixed HDMI routes come from VBT; `-wex-noaccel` retains framebuffer-only operation. A legacy 9A49 donor selector is accepted but unnecessary. Use matching Graphics payloads containing the mobile IDs and provider; Graphics 0.2.0 does not include them. The matching Compat provider supplies an AGDP personality only for the admitted Display13 framebuffer client. Its default policy keeps callback registration active without a board-ID-specific override.
 
 
 ## Build and test
