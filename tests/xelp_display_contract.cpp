@@ -7,7 +7,7 @@ static void faults(C c) {
  assert(c.required && c.ready());
  // Every dependency must independently close admission. An unrelated failed
  // operation must not disable this route. Reinstalling restores admission.
- for(unsigned i=0;i<63;++i) {
+ for(unsigned i=0;i<64;++i) {
   auto broken=c;auto bit=1ULL<<i;broken.available&=~bit;
   assert(broken.missing()==(c.required&bit));
   assert(broken.ready()==!(c.required&bit));
@@ -25,7 +25,7 @@ int main() {
   assert(bool(c.required&C::AltFIA)==(r.alt||r.legacy));
   assert(bool(c.required&C::AUXParent)==(r.combo||r.legacy));
   assert(bool(c.required&C::Lease)==(r.combo||r.legacy||r.alt||r.leaseRequested));
-  assert(!(c.required&C::Backend13));
+  assert(!(c.required&(C::Backend13&~C::DonorRuntime)));
   // Requirements compose by set union. Adding another output does not
   // silently remove the dependencies of the first output.
   C::Mask joined=C::display12(~0ULL,{}).required;
@@ -52,6 +52,6 @@ int main() {
  auto dp13=C::display13(~0ULL,true);faults(dp13);
  assert(dp13.required==(d13.required|C::DP13));
  assert(C::display13(C::Backend13|C::SST13|C::AUX13|C::DPProbe13,true).missing()==(C::DPBoot13|C::Training12|C::Framing));
- assert(d13.required==(C::Power13|C::Clock13|C::MemoryGroup13|C::IRQ13|C::WMLayout13|C::Output13|C::Topology13));
+ assert(d13.required==(C::DonorRuntime|C::Power13|C::Clock13|C::MemoryGroup13|C::IRQ13|C::WMLayout13|C::Output13|C::Topology13));
  printf("PASS %u route combinations, union composition and all single-operation failures/restores\n",cases);
 }

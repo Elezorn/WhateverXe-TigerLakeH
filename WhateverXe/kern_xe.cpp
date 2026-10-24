@@ -5211,6 +5211,7 @@ bool XE::processDisplay13Framebuffer(KernelPatcher &patcher,size_t index,mach_vm
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBGTTHooksReady",display13FBGTTHooksReady);
 	display13FBTopologyHooksReady=processDisplay13FramebufferTopology(patcher,index,address,size);
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBTopologyHooksReady",display13FBTopologyHooksReady);
+ processFramebufferDonorRuntime(patcher,index,address,size);
  using C=XELP::DisplayContract;const auto installed=display13Available();
  display13FBPowerBackendReady=C{C::Power13,installed}.ready();
  display13FBClockReady=C{C::Clock13,installed}.ready();
@@ -11118,6 +11119,87 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			return true;
 }
 
+// CPU object initialization and posted FIFO writes belong to this donor,
+// not to a Display generation. Both framebuffer dispatchers install them.
+bool XE::processFramebufferDonorRuntime(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ if(framebufferDonorRuntimeReady)return true;
+ bool hdcpReady=false,meiReady=false;
+ {
+  const char *symbol="__ZN15AppleIntelHDCP24initEP21AppleIntelDisplayPath";
+  const uint8_t init[]={0x55,0x48,0x89,0xe5,0x41,0x56,0x53,0x48,0xff,0x05,0x96,0x02,0x06,0x00,0x49,0x89};
+  const uint8_t associations[]={0x4c,0x89,0x73,0x20,0x49,0x8b,0xbe,0xb0,0x32,0x00,0x00,0x48,0x89,0x7b,0x18,0x48,0x8b,0x87,0xd0,0x01,0x00,0x00,0x48,0x89,0x43,0x10,0x48,0xff,0x05,0x00,0xf5,0x05,0x00,0x49,0x8b,0x8e,0x48,0x36,0x00,0x00};
+  const uint8_t use[]={0x48,0x8b,0x7f,0x38,0xbe,0xc0,0x50,0x06,0x00,0xe8,0x10,0x2c,0xfd,0xff};
+  const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,symbol,address,size);patcher.clearError();
+  const bool known=fn==address+0x8AB94 && size>=0x8B734 &&
+   !memcmp(reinterpret_cast<void *>(fn),init,sizeof(init)) &&
+   !memcmp(reinterpret_cast<void *>(address+0x8AC17),associations,sizeof(associations)) &&
+   !memcmp(reinterpret_cast<void *>(address+0x8B726),use,sizeof(use));
+  KernelPatcher::RouteRequest route(symbol,wrapTGLHDCP2Init,orgTGLHDCP2Init);
+  hdcpReady=known && patcher.routeMultiple(index,&route,1,address,size);patcher.clearError();
+  IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGHDCP2InitRouted",hdcpReady);
+ }
+ // DONOR_PANEL_PROPERTY_BEGIN
+ {
+				// Both power-on and power-off converge on this property update.
+				// Native getBuiltInFramebuffer returns null when there is no
+				// built-in port; the donor nevertheless dereferences its vtable.
+				// Replace only the metadata call, preserving the PPS sequence.
+				const auto fn = patcher.solveSymbol(index, "__ZN31AppleIntelFramebufferController15hwSetPanelPowerEj", address, size);
+				static const uint8_t expected[] {0x48,0x8B,0x07,0x48,0x8D,0x35,0x1D,0xDB,0x05,0x00,0xFF,0x90,0x68,0x02,0x00,0x00};
+				uint8_t replacement[] {0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x90,0x90,0x90,0x90};
+				const auto handler = reinterpret_cast<uintptr_t>(wrapTGLPanelPowerProperty);
+				memcpy(replacement+2,&handler,sizeof(handler));
+				auto site = reinterpret_cast<uint8_t *>(fn+0x45A);
+				if (fn == address+0x48652 && size >= 0x48ABC && !memcmp(site,expected,sizeof(expected))) {
+					patcher.routeBlock(fn+0x45A,replacement,sizeof(replacement));
+					tglPanelPowerPropertyReady = patcher.getError()==KernelPatcher::Error::NoError &&
+						!memcmp(site,replacement,sizeof(replacement));
+				}
+				IORegistryEntry::getRegistryRoot()->setProperty("TGLPanelPowerPropertyGuard",tglPanelPowerPropertyReady);
+				patcher.clearError();
+ }
+ // DONOR_PANEL_PROPERTY_END
+
+			// Native HDCP TX reported 21 bytes sent but H_CBWP advanced only
+			// three of seven required FIFO slots (r363). Flush the previous
+			// FIFO store before each payload store; the native trailing CSR
+			// read flushes the final word before H_IG. Replace only a profiling
+			// increment. ESI is reloaded immediately; framing/fragmentation,
+			// secure flags, queues and completion semantics remain native.
+			{
+				static const uint8_t loop[] {
+					0x44,0x89,0x38,0x85,0xd2,0x74,0x3d,0x48,0xff,0x05,0xd1,0x4b,0x07,0x00,
+					0x89,0xd1,0x31,0xd2,0x48,0xff,0x05,0xce,0x4b,0x07,0x00,
+					0x41,0x8b,0x34,0x96,0x48,0xff,0x05,0xd3,0x4b,0x07,0x00,
+					0x89,0x30,0x48,0xff,0xc2,0x48,0x39,0xd1,0x75,0xe4};
+				static const uint8_t readback[] {0x8b,0x70,0x04,0x90,0x90,0x90,0x90};
+				static const uint8_t notify[] {0x8b,0x48,0x04,0x83,0xe1,0xf9,0x83,0xc9,0x04,0x89,0x48,0x04};
+				const auto fn = patcher.solveSymbol<mach_vm_address_t>(index,
+					"__ZN19AppleIntelMEIDriver16writeMessageToMEEPvPjhhb", address, size);
+				bool known = size >= 0x716f7 && fn == address + 0x714b6 &&
+					!memcmp(reinterpret_cast<void *>(address + 0x71699), loop, sizeof(loop)) &&
+					!memcmp(reinterpret_cast<void *>(address + 0x716eb), notify, sizeof(notify));
+				if (known) {
+					patcher.clearError();
+					patcher.routeBlock(address + 0x716ab, readback, sizeof(readback));
+					known = patcher.getError() == KernelPatcher::Error::NoError &&
+						!memcmp(reinterpret_cast<void *>(address + 0x716ab), readback, sizeof(readback));
+				}
+				// The four-byte HBM path also checks each accepted FIFO word.
+                // Keep this functional correction independent of trace allocation.
+                KernelPatcher::RouteRequest control(
+                    "__ZN19AppleIntelMEIDriver16writeMessageToMEEPvPjhhb",
+                    wrapTGLMEIWrite,orgTGLMEIWrite);
+                meiReady=known && patcher.routeMultiple(index,&control,1,address,size);
+                IORegistryEntry::getRegistryRoot()->setProperty("WEXMEIControlWriteReady",meiReady);
+				IORegistryEntry::getRegistryRoot()->setProperty("TGLMEITXFIFOReadbackR364", known);
+				patcher.clearError();
+			}
+ framebufferDonorRuntimeReady=hdcpReady && tglPanelPowerPropertyReady && meiReady;
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXFramebufferDonorRuntimeReady",framebufferDonorRuntimeReady);
+ return framebufferDonorRuntimeReady;
+}
+
 bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
 	if (adlnRequested || adlnDetected) {
 		if (!adlnDetected || !adlnNativeRequested || !adlnNativeReady || !tglActive ||
@@ -11126,6 +11208,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 	if (tglRequested) {
 		if (!tglActive) return false;
 		if (currentFramebuffer->loadIndex == index) {
+            processFramebufferDonorRuntime(patcher,index,address,size);
 			tglSonomaSurfaceFramebufferReady=tglInstallSonomaSurfaceABI(patcher,index,address,size,true);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLSonomaSurfaceFramebufferReady",tglSonomaSurfaceFramebufferReady);
 			if (modDVMTCalcFix.enabled && modDVMTCalcFix.available)
@@ -11447,23 +11530,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				patcher.clearError();
 			}
 			if (tglActive) {
-				// Both power-on and power-off converge on this property update.
-				// Native getBuiltInFramebuffer returns null when there is no
-				// built-in port; the donor nevertheless dereferences its vtable.
-				// Replace only the metadata call, preserving the PPS sequence.
-				const auto fn = patcher.solveSymbol(index, "__ZN31AppleIntelFramebufferController15hwSetPanelPowerEj", address, size);
-				static const uint8_t expected[] {0x48,0x8B,0x07,0x48,0x8D,0x35,0x1D,0xDB,0x05,0x00,0xFF,0x90,0x68,0x02,0x00,0x00};
-				uint8_t replacement[] {0x48,0xB8,0,0,0,0,0,0,0,0,0xFF,0xD0,0x90,0x90,0x90,0x90};
-				const auto handler = reinterpret_cast<uintptr_t>(wrapTGLPanelPowerProperty);
-				memcpy(replacement+2,&handler,sizeof(handler));
-				auto site = reinterpret_cast<uint8_t *>(fn+0x45A);
-				if (fn == address+0x48652 && size >= 0x48ABC && !memcmp(site,expected,sizeof(expected))) {
-					patcher.routeBlock(fn+0x45A,replacement,sizeof(replacement));
-					tglPanelPowerPropertyReady = patcher.getError()==KernelPatcher::Error::NoError &&
-						!memcmp(site,replacement,sizeof(replacement));
-				}
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLPanelPowerPropertyGuard",tglPanelPowerPropertyReady);
-				patcher.clearError();
+
 				if (framebufferPatchFlags.bits.FPFStolenMemorySize) {
 					const auto fn = patcher.solveSymbol(index, "__ZN31AppleIntelFramebufferController16getOSInformationEv", address, size);
 					// Selected platform +0x14 is copied to controller +0xDE8
@@ -11500,12 +11567,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			tglFramebufferInitReady = patcher.routeMultiple(index, &initRequest, 1, address, size);
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGFramebufferInitRouted", tglFramebufferInitReady);
 			patcher.clearError();
-			{
-				KernelPatcher::RouteRequest init("__ZN15AppleIntelHDCP24initEP21AppleIntelDisplayPath", wrapTGLHDCP2Init, orgTGLHDCP2Init);
-				const bool routed = patcher.routeMultiple(index, &init, 1, address, size);
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGHDCP2InitRouted", routed);
-				patcher.clearError();
-			}
+
 			{
 				KernelPatcher::RouteRequest hdcp[] {
 					{"__ZN15AppleIntelHDCP113dispatchEventENS_10HDCP1EventE", wrapTGLHDCP1Dispatch, orgTGLHDCP1Dispatch},
@@ -11923,34 +11985,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteMEConnectTiming", routed);
 				patcher.clearError();
 			}
-			// Native HDCP TX reported 21 bytes sent but H_CBWP advanced only
-			// three of seven required FIFO slots (r363). Flush the previous
-			// FIFO store before each payload store; the native trailing CSR
-			// read flushes the final word before H_IG. Replace only a profiling
-			// increment. ESI is reloaded immediately; framing/fragmentation,
-			// secure flags, queues and completion semantics remain native.
-			{
-				static const uint8_t loop[] {
-					0x44,0x89,0x38,0x85,0xd2,0x74,0x3d,0x48,0xff,0x05,0xd1,0x4b,0x07,0x00,
-					0x89,0xd1,0x31,0xd2,0x48,0xff,0x05,0xce,0x4b,0x07,0x00,
-					0x41,0x8b,0x34,0x96,0x48,0xff,0x05,0xd3,0x4b,0x07,0x00,
-					0x89,0x30,0x48,0xff,0xc2,0x48,0x39,0xd1,0x75,0xe4};
-				static const uint8_t readback[] {0x8b,0x70,0x04,0x90,0x90,0x90,0x90};
-				static const uint8_t notify[] {0x8b,0x48,0x04,0x83,0xe1,0xf9,0x83,0xc9,0x04,0x89,0x48,0x04};
-				const auto fn = patcher.solveSymbol<mach_vm_address_t>(index,
-					"__ZN19AppleIntelMEIDriver16writeMessageToMEEPvPjhhb", address, size);
-				bool known = size >= 0x716f7 && fn == address + 0x714b6 &&
-					!memcmp(reinterpret_cast<void *>(address + 0x71699), loop, sizeof(loop)) &&
-					!memcmp(reinterpret_cast<void *>(address + 0x716eb), notify, sizeof(notify));
-				if (known) {
-					patcher.clearError();
-					patcher.routeBlock(address + 0x716ab, readback, sizeof(readback));
-					known = patcher.getError() == KernelPatcher::Error::NoError &&
-						!memcmp(reinterpret_cast<void *>(address + 0x716ab), readback, sizeof(readback));
-				}
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLMEITXFIFOReadbackR364", known);
-				patcher.clearError();
-			}
+
 			tglMEILock = IOSimpleLockAlloc();
 			if (tglMEILock) {
 				KernelPatcher::RouteRequest observations[] {
@@ -11958,8 +11993,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 					{"__ZN19AppleIntelMEIDriver15handleInterruptEP22IOInterruptEventSourcei", wrapTGLMEIInterrupt, orgTGLMEIInterrupt},
 					{"__ZN19AppleIntelMEIDriver15filterInterruptEP28IOFilterInterruptEventSource", wrapTGLMEIFilter, orgTGLMEIFilter},
 					{"__ZN19AppleIntelMEIDriver16readHeaderFromMEEv", wrapTGLMEIHeader, orgTGLMEIHeader},
-					{"__ZN19AppleIntelMEIDriver17readMessageFromMEEPvPjPh", wrapTGLMEIRead, orgTGLMEIRead},
-					{"__ZN19AppleIntelMEIDriver16writeMessageToMEEPvPjhhb", wrapTGLMEIWrite, orgTGLMEIWrite}
+					{"__ZN19AppleIntelMEIDriver17readMessageFromMEEPvPjPh", wrapTGLMEIRead, orgTGLMEIRead}
 				};
 				const bool routed = patcher.routeMultiple(index, observations, arrsize(observations), address, size);
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteMEIProtocol", routed);
@@ -12543,6 +12577,7 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
 
 XELP::DisplayContract::Mask XE::display12Available() const {
  using C=XELP::DisplayContract;C::Mask a=0;
+ if(framebufferDonorRuntimeReady)a|=C::DonorRuntime;
  if(tglSonomaSurfaceFramebufferReady)a|=C::Surface;
  if(tglPlatformNVRAMReady)a|=C::NVRAM;
  if(tglFBIRQReady)a|=C::IRQ;
@@ -12592,6 +12627,7 @@ XELP::DisplayContract::Mask XE::display12Available() const {
 
 XELP::DisplayContract::Mask XE::display13Available() const {
  using C=XELP::DisplayContract;C::Mask a=0;
+ if(framebufferDonorRuntimeReady)a|=C::DonorRuntime;
  if(display13FBPowerReferencesReady)a|=C::PowerRefs13;
  if(display13FBEngineEnableHookReady)a|=C::Engine13;
  if(display13FBLifecycleHooksReady)a|=C::Lifecycle13;

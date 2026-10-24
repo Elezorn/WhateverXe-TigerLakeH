@@ -589,6 +589,8 @@ private:
 	bool tglPlatformNVRAMReady {false};
 	bool tglFramebufferInitReady {false};
 	mach_vm_address_t orgTGLFramebufferInit {};
+ bool framebufferDonorRuntimeReady {};
+ bool processFramebufferDonorRuntime(KernelPatcher &,size_t,mach_vm_address_t,size_t);
 	mach_vm_address_t orgTGLHDCP2Init {};
 	static bool wrapTGLHDCP2Init(void *hdcp, void *path);
 	mach_vm_address_t orgTGLHDCP1Dispatch {}, orgTGLHDCP1Timer {};

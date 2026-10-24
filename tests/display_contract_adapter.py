@@ -28,7 +28,11 @@ METHODS
 };
 int main() {
  State s;
- assert(s.display12Available()==((1ULL<<39)-1|C::ClockOrder|C::ComboAUXGate|C::PanelDepth|C::PanelTiming|C::PanelPWM));
+ s.framebufferDonorRuntimeReady=false;
+ assert(s.start().missing()==C::DonorRuntime);
+ assert(C::display13(s.display13Available()).missing()==C::DonorRuntime);
+ s.framebufferDonorRuntimeReady=true;
+ assert(s.display12Available()==((1ULL<<39)-1|C::ClockOrder|C::ComboAUXGate|C::PanelDepth|C::PanelTiming|C::PanelPWM|C::DonorRuntime));
  assert(s.display13Available()==(C::Backend13|C::SST13|C::AUX13|C::DPProbe13|C::Training12|C::Framing));
  assert(C::display13(s.display13Available(),true).missing()==C::DPBoot13);
  s.display13DPProbeReady=false;
@@ -69,7 +73,7 @@ int main() {
  return 0;
 }
 '''
-code=code.replace('FIELDS','\n'.join(' bool '+f+'=true;' for f in fields)).replace('METHODS','\n'.join(methods)).replace('ADAPTER',adapter)
+code=code.replace('FIELDS','\n'.join(' bool '+f+'=true;' for f in dict.fromkeys(fields))).replace('METHODS','\n'.join(methods)).replace('ADAPTER',adapter)
 with tempfile.TemporaryDirectory(prefix='display-contract-') as d:
  p=Path(d);(p/'test.cpp').write_text(code)
  subprocess.run(['clang++','-std=c++17','-O1','-fsanitize=address,undefined','-I'+str(r/'WhateverXe'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
