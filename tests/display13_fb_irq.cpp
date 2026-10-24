@@ -48,6 +48,31 @@ struct IO {
     }
 };
 int main() {
+    // Firmware may leave north TC/TBT enables for excluded connectors.
+    // Cover all exclusion subsets and each selected TC1..4 independently.
+    for(unsigned selected=0;selected<4;++selected)for(unsigned mask=0;mask<64;++mask) {
+        if(mask&(1U<<selected))continue;
+        IO io;State state;const auto excluded=mask<<24,north=mask|(mask<<16);
+        const uint32_t keep=0x80000000U|(1U<<selected)|(1U<<(16+selected));
+        io.r[HPDBank+4]=north|keep;io.r[HPDBank-4]=keep;io.r[HPDBank]=north|keep;
+        assert(enable(io,state,excluded,NativeGT,1,8U<<selected)==Status::Complete);
+        assert(io.r[HPDBank+4]==keep && io.r[HPDBank-4]==(north|keep));
+        assert(io.r[HPDBank]==(north|keep));
+        assert(std::find(io.writes.begin(),io.writes.end(),HPDBank)==io.writes.end());
+    }
+    {IO io;State state;io.r[HPDBank+4]=0x40004;io.r[HPDBank-4]=0;
+     assert(enable(io,state,0x3e000000,NativeGT,1,8)==Status::Complete);}
+    {IO io;State state;io.r[HPDBank+4]=0x40004;io.r[HPDBank-4]=0;
+     assert(enable(io,state,0,NativeGT,1,8)==Status::ForeignIRQ && io.writes==std::vector<uint32_t>{Master});}
+    for(uint32_t bits:{1U,1U<<16,1U<<30}) {
+        IO io;State state;io.r[HPDBank+4]=0x40004|bits;io.r[HPDBank-4]=0;
+        assert(enable(io,state,0x3e000000,NativeGT,1,8)==Status::ForeignIRQ && io.writes==std::vector<uint32_t>{Master});
+        assert(state.failureRegister==HPDBank+4 && state.failureBits==bits);
+    }
+    for(auto reg:{HPDBank-4,HPDBank+4}) {
+        IO io;State state;io.r[HPDBank+4]=0x40004;io.r[HPDBank-4]=0;io.rejectRegister=reg;
+        assert(enable(io,state,0x3e000000,NativeGT,1,8)==Status::Readback && !(io.r[Master]&Enable));
+    }
     // ADL-P/N TC legacy HPD is PCH bit24+tc and a separate control bank.
     // Foreign masked statuses must survive both enable and collect.
     for(unsigned tc=0;tc<4;++tc)for(unsigned pulse=0;pulse<4;++pulse) {

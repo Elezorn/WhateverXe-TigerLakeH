@@ -82,6 +82,13 @@ inline uint32_t nativePipe(uint32_t raw,unsigned pipe) {
     return result;
 }
 inline uint32_t pchOwned(const State &s) {return ((s.ports&7)<<16)|((s.ports>>3)<<24);}
+// Linux GEN11_DE_HPD: TC1..6 at bits16..21, TBT1..6 at bits0..5.
+// Apply the same connector exclusion to both PCH and north HPD banks.
+// Reference: samranahmad09/WhateverXe-RaptorLakeP, 2195924, this header.
+constexpr uint32_t HPDBank=0x44478;
+constexpr uint32_t hpdExcluded(uint32_t excludedPCH) {
+    const uint32_t ports=(excludedPCH>>24)&0x3FU;return ports|(ports<<16);
+}
 inline uint32_t ddiMask(const State &s,uint32_t value) {
     uint32_t m=0;for(unsigned p=0;p<3;++p)if(s.ports&(1U<<p))m|=value<<(4*p);return m;
 }
@@ -142,9 +149,11 @@ template<class IO> Status enable(IO &io,State &s,uint32_t excludedPCH=0,uint32_t
         configured|=1U<<p;
     }
     if(active!=expectedPipes)return fail(io,s,Status::Topology);
-    constexpr uint32_t otherBanks[] {0x44448,0x44468,0x44478,0x44488};
+    const uint32_t excludedHPD=hpdExcluded(excludedPCH);
+    constexpr uint32_t otherBanks[] {0x44448,0x44468,HPDBank,0x44488};
     for(auto iir : otherBanks) {
-        const auto pending=io.read(iir+4)&~io.read(iir-4);
+        auto pending=io.read(iir+4)&~io.read(iir-4);
+        if(iir==HPDBank)pending&=~excludedHPD;
         if(pending)return fail(io,s,Status::ForeignIRQ,iir+4,pending);
     }
     const auto pchIER=io.read(0xC400C),pchIMR=io.read(0xC4004);
@@ -165,6 +174,11 @@ template<class IO> Status enable(IO &io,State &s,uint32_t excludedPCH=0,uint32_t
         io.write(0xC4004,pchIMR|excludedPCH);
         io.write(0xC400C,pchIER&~excludedPCH);
         if((io.read(0xC400C)&excludedPCH) || (~io.read(0xC4004)&excludedPCH))
+            return fail(io,s,Status::Readback);
+        // Do not ACK pending status or alter selected/unrelated bits.
+        io.write(HPDBank-4,io.read(HPDBank-4)|excludedHPD);
+        io.write(HPDBank+4,io.read(HPDBank+4)&~excludedHPD);
+        if((io.read(HPDBank+4)&excludedHPD) || (~io.read(HPDBank-4)&excludedHPD))
             return fail(io,s,Status::Readback);
     }
     s.excludedPCH=excludedPCH;
