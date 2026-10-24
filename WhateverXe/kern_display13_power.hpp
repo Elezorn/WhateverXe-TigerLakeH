@@ -49,6 +49,7 @@ enum class Status : uint32_t {
 struct Result {
     Status status {Status::NotReady};
     uint32_t domain {Count}, writes {}, rollbackFailed {}, forcedOn {};
+    bool isolated {}; // Failed new TC leaf, rollback and retained scopes proven.
 };
 struct State {
     bool ready {}, faulted {}, suspended {};
@@ -156,7 +157,9 @@ template<class IO> Status waitTCAuxHealth(IO &io,unsigned d) {
     }
 }
 
-template<class IO> Result acquire(IO &io, State &s, Lease &lease, uint32_t domains) {
+// Isolation is opt-in for a caller that can propagate a failed acquisition.
+// Native void getPower wrappers must retain controller-wide failure behavior.
+template<class IO> Result acquire(IO &io, State &s, Lease &lease, uint32_t domains,bool isolateTC=false) {
     Result r;
     if (!s.ready || s.faulted || s.suspended) return r;
     if (lease.owner || !domains || (domains & ~s.allowed)) { r.status = Status::InvalidDomains; return r; }
@@ -173,6 +176,7 @@ template<class IO> Result acquire(IO &io, State &s, Lease &lease, uint32_t domai
         if ((domains & (1U << d)) && s.refs[d] == UINT32_MAX) {
             r.status = Status::Overflow; r.domain = d; return r;
         }
+    const uint32_t previousOwned=s.owned;
     uint32_t added = 0;
     r.status = Status::Complete;
     for (unsigned d = 0; d < Count; ++d) {
@@ -211,10 +215,13 @@ template<class IO> Result acquire(IO &io, State &s, Lease &lease, uint32_t domai
         r.domain = Count;
         return r;
     }
-    // Failure is latched; no caller may continue using partially acquired
-    // domains. Roll back only requests made by this transaction, in reverse
-    // dependency order. Stop at a failed release to retain its prerequisites.
-    s.faulted = true;
+    // A newly requested, unshared TC leaf may fail without invalidating other
+    // outputs. Only isolate bounded ack/health timeouts after proving rollback
+    // and every previously held scope. Lost/borrowed/shared resources, unknown
+    // MMIO and failed rollback still poison the controller.
+    const bool local=isolateTC && (tcDDI(r.domain)||tcAux(r.domain)) && !s.refs[r.domain] &&
+        (added&(1U<<r.domain)) && !(s.borrowed&(1U<<r.domain)) &&
+        (r.status==Status::StateTimeout || r.status==Status::AuxHealthTimeout);
     for (unsigned d = Count; d-- > 0;) {
         if (!(added & (1U << d))) continue;
         if (clear(io, s, d, r) != Status::Complete) {
@@ -222,6 +229,11 @@ template<class IO> Result acquire(IO &io, State &s, Lease &lease, uint32_t domai
             break;
         }
     }
+    uint32_t retained=0;
+    for(unsigned d=0;d<Count;++d)if(s.refs[d])retained|=1U<<d;
+    s.faulted=!local || r.rollbackFailed || s.owned!=previousOwned ||
+        (retained && !held(io,s,retained));
+    r.isolated=!s.faulted;
     return r;
 }
 

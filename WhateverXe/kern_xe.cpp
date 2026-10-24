@@ -4662,9 +4662,9 @@ struct Display13FBTCAuxIO {
     void write(uint32_t r,uint32_t v) {*reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+r)=v;}
     bool lanesPowered() const {
         if(!admitted(tc))return false;
-        const auto pw=read(Display13Power::Driver),ddi=read(Display13Power::DDI),mode=read(0x161500+4*tc);
-        return pw!=UINT32_MAX && ddi!=UINT32_MAX && mode!=UINT32_MAX && (pw&5)==5 &&
-            (ddi&(1U<<(2*(tc+3)))) && (mode&7)==4;
+        const auto pw=read(Display13Power::Driver),buffer=read(0x64300+0x100*tc),mode=read(0x161500+4*tc);
+        return pw!=UINT32_MAX && buffer!=UINT32_MAX && mode!=UINT32_MAX && (pw&5)==5 &&
+            (buffer&64) && (mode&7)==4;
     }
     bool auxPowered(unsigned candidate) const {
         if(!admitted(candidate))return false;const auto value=read(Display13Power::AUX);
@@ -4714,12 +4714,19 @@ struct Display13FBBootIO : Display13FBPowerIO {
 struct Display13FBTCIO : Display13FBTCAuxIO {
     OSObject *object;
     Display13FBTCIO(OSObject *p,unsigned t):Display13FBTCAuxIO{display13FBPower.map,t},object(p) {}
-    bool powerHeld() {
+    bool accessHeld() {
         if(!admitted(tc))return false;auto &c=display13FBPower;const auto &mode=c.tcMode[tc];
         if(!object || c.tcObject[tc]!=object || mode.controller!=reinterpret_cast<uintptr_t>(c.controller) ||
-           mode.object!=reinterpret_cast<uintptr_t>(object) || mode.lease.owner!=&c.bridge.state ||
-           mode.lease.domains!=Display13Power::dependencies(Display13TC::Mode::domains(tc+3)))return false;
-        Display13FBPowerIO io{map};return Display13Power::held(io,c.bridge.state,mode.lease.domains);
+           mode.object!=reinterpret_cast<uintptr_t>(object) || mode.accessLease.owner!=&c.bridge.state ||
+           mode.accessLease.domains!=Display13Power::dependencies(Display13TC::Mode::accessDomains()))return false;
+        Display13FBPowerIO io{map};return Display13Power::held(io,c.bridge.state,mode.accessLease.domains);
+    }
+    bool powerHeld() {
+        if(!accessHeld())return false;auto &c=display13FBPower;const auto &mode=c.tcMode[tc];
+        if(mode.lease.owner!=&c.bridge.state || mode.auxLease.owner!=&c.bridge.state ||
+           mode.lease.domains!=Display13Power::dependencies(Display13Power::ddiDomain(tc+3)) ||
+           mode.auxLease.domains!=Display13Power::dependencies(Display13Power::auxDomain(tc+3)))return false;
+        Display13FBPowerIO io{map};return Display13Power::held(io,c.bridge.state,Display13TC::Mode::domains(tc+3));
     }
     bool owned(unsigned ddi) {
         const auto &m=display13FBPower.tcMode[tc];
@@ -4728,7 +4735,7 @@ struct Display13FBTCIO : Display13FBTCAuxIO {
             Display13FBMemory::field<uint32_t>(object,0x550)==4;
     }
     bool quiescent(unsigned ddi) {
-        if(ddi!=tc+3 || !powerHeld())return false;
+        if(ddi!=tc+3 || !accessHeld())return false;
         const auto buffer=read(0x64000+0x100*ddi),power=read(Display13Power::Driver);
         if(buffer==UINT32_MAX || power==UINT32_MAX || (buffer&0x80000000))return false;
         for(unsigned pipe=0;pipe<3;++pipe)if(power&(1U<<(10+2*pipe))) {
@@ -6242,14 +6249,14 @@ uint32_t XE::wrapDisplay13TCMode(OSObject *port,uint32_t wanted) {
             auto result=base(object,value);IOLockLock(c.lock);--c.tcBusy[tc];return result;
         }
         Display13Power::Result acquireDomains(Display13Power::Lease &lease,uint32_t domains) {
-            Display13FBPowerIO io{map};return Display13Power::acquire(io,display13FBPower.bridge.state,lease,domains);
+            Display13FBPowerIO io{map};return Display13Power::acquire(io,display13FBPower.bridge.state,lease,domains,true);
         }
         Display13Power::Result releaseDomains(Display13Power::Lease &lease) {
             Display13FBPowerIO io{map};return Display13Power::release(io,display13FBPower.bridge.state,lease);
         }
         bool powerHeld(uintptr_t controller,uintptr_t port,unsigned d) {
             return controller==reinterpret_cast<uintptr_t>(display13FBPower.controller) &&
-                port==reinterpret_cast<uintptr_t>(object) && d==tc+3 && Display13FBTCIO::powerHeld();
+                port==reinterpret_cast<uintptr_t>(object) && d==tc+3 && Display13FBTCIO::accessHeld();
         }
         bool inheritedVerified(uintptr_t controller,uintptr_t port,unsigned d) {
             return firmware && controller==reinterpret_cast<uintptr_t>(display13FBPower.controller) &&
@@ -6280,6 +6287,13 @@ uint32_t XE::wrapDisplay13TCMode(OSObject *port,uint32_t wanted) {
     uint32_t record[]={1,ddi,wanted,uint32_t(result.status),uint32_t(result.phy.status),uint32_t(result.power.status),uint32_t(mode.phase),mode.disconnectPending};
     IOLockUnlock(c.lock);auto root=IORegistryEntry::getRegistryRoot();
     root->setProperty("WEXDisplay13TCMode",record,sizeof(record));
+    // Keep the initiating power-domain result; subsequent native getPG errors
+    // can only observe the shared fault and cannot reconstruct this boundary.
+    if(result.status==Display13TC::Status::NoPower) {
+        uint32_t power[]={1,ddi,wanted,uint32_t(result.power.status),result.power.domain,
+            result.power.writes,result.power.rollbackFailed,result.power.forcedOn,result.power.isolated};
+        if(!root->getProperty("WEXDisplay13TCFirstPowerError"))root->setProperty("WEXDisplay13TCFirstPowerError",power,sizeof(power));
+    }
     if(!done && !root->getProperty("WEXDisplay13TCModeFailure"))root->setProperty("WEXDisplay13TCModeFailure",record,sizeof(record));
     return done ? kIOReturnSuccess : kIOReturnNotReady;
 }

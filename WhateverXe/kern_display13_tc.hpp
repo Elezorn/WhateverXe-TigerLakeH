@@ -64,8 +64,9 @@ struct Boot {
             now.buffer==buffer && now.clock==clock && now.pll==pll && now.transClock==transClock;
     }
 };
-// Caller keeps lifecycle/port exclusion, live mapping, and separate DDI,
-// lane/PW2 and qualified legacy AUX leases for the entire transaction.
+// Caller keeps lifecycle/port exclusion, live mapping and lane/PW2 access.
+// ADLP ownership precedes AUX cold blocking and DDI IO acquisition. Requiring
+// those later scopes here creates an inverted dependency on a cold port.
 // A matching owner identity is insufficient without that power witness.
 struct Ownership {
     uintptr_t owner {},identity {};Port port;bool active {};
@@ -75,14 +76,9 @@ struct Ownership {
         if(owner && (owner!=who || identity!=object || port.ddi!=ddi)){r.status=Status::InUse;return r;}
         if(!io.powerHeld(who,object,ddi)){r.status=Status::NoPower;return r;}
         if(!io.readable(p.ready) || !io.readable(p.buffer)){r.status=Status::Unavailable;return r;}
-        for(;;) {
-            const auto ready=io.read(p.ready);
-            if(ready==UINT32_MAX){r.status=Status::Unavailable;return r;}
-            if(ready&3){r.status=Status::UnsupportedMode;return r;} // DP-alt/TBT excluded here.
-            if(ready&4)break;
-            if(r.elapsedUs==500000){r.status=Status::NotReady;return r;}
-            io.delayUs(100);r.elapsedUs+=100;
-        }
+        const auto initialReady=io.read(p.ready);
+        if(initialReady==UINT32_MAX){r.status=Status::Unavailable;return r;}
+        if(initialReady&3){r.status=Status::UnsupportedMode;return r;}
         r.before=io.read(p.buffer);if(r.before==UINT32_MAX){r.status=Status::Unavailable;return r;}
         if(owner && active && !(r.before&64)) {r.status=Status::Readback;return r;}
         if(!owner && ((r.before&0x80000040U)!=0) && (!adopt || !io.inheritedVerified(who,object,ddi))) {
@@ -95,6 +91,16 @@ struct Ownership {
         r.after=io.read(p.buffer);
         if(r.after==UINT32_MAX){r.status=Status::Unavailable;return r;}
         if(r.after!=(r.before|64)){r.status=Status::Readback;return r;}
+        // Linux adlp_tc_phy_connect takes ownership before testing ready.
+        // Retain the identity on timeout so cleanup can release only our bit.
+        for(;;) {
+            const auto ready=io.read(p.ready);
+            if(ready==UINT32_MAX){r.status=Status::Unavailable;return r;}
+            if(ready&3){r.status=Status::UnsupportedMode;return r;}
+            if(ready&4)break;
+            if(r.elapsedUs==500000){r.status=Status::NotReady;return r;}
+            io.delayUs(100);r.elapsedUs+=100;
+        }
         active=true;r.status=Status::Complete;return r;
     }
     template<class IO> Result release(IO &io,uintptr_t who,uintptr_t object,unsigned ddi) {

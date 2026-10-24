@@ -133,7 +133,10 @@ int main(){
         PHYIO io;io.regs={{0x161500,ready},{0x64300,0}};Display13TC::Ownership s;
         const auto r=s.acquire(io,0x100,0x200,3);
         assert(r.status==(ready==0?Display13TC::Status::NotReady:ready==UINT32_MAX?Display13TC::Status::Unavailable:Display13TC::Status::UnsupportedMode));
-        assert(!s.owner && io.writes.empty() && (ready!=0 || io.time==500000));
+        if(ready==0) {
+            assert(s.owner && io.writes.size()==1 && io.time==500000);
+            assert(s.release(io,0x100,0x200,3).status==Display13TC::Status::Complete);
+        } else assert(!s.owner && io.writes.empty());
     }
     {PHYIO io;io.regs={{0x161500,4},{0x64300,0}};io.rejectWrite=true;Display13TC::Ownership s;
      assert(s.acquire(io,0x100,0x200,3).status==Display13TC::Status::Readback && s.owner && !s.active);
