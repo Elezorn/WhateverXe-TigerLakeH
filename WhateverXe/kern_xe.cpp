@@ -4711,7 +4711,7 @@ struct Display13FBBootIO : Display13FBPowerIO {
     }
 };
 struct Display13FBTCIO : Display13FBTCAuxIO {
-    OSObject *object;
+    OSObject *object;Display13Power::Result linkResult;
     Display13FBTCIO(OSObject *p,unsigned t):Display13FBTCAuxIO{display13FBPower.map,t},object(p) {}
     bool accessHeld() {
         if(!admitted(tc))return false;auto &c=display13FBPower;const auto &mode=c.tcMode[tc];
@@ -4734,7 +4734,7 @@ struct Display13FBTCIO : Display13FBTCAuxIO {
     bool linkPower(bool enable) {
         auto &c=display13FBPower;Display13FBPowerIO io{map};const auto ddi=tc+3;
         if(!Display13Power::objectAssociations(c.power,0x80,c.controller,0xC60))return false;
-        Display13Power::Result r;r.status=Display13Power::Status::Complete;
+        auto &r=linkResult;r.status=Display13Power::Status::Complete;
         if(enable) {
             if(!c.bridge.retainsDDI(ddi))r=c.bridge.getDDI(io,ddi);
         } else if(c.bridge.nativeDDIRefs(ddi)) {
@@ -6329,18 +6329,20 @@ void XE::wrapDisplay13TCEnableClocks(void *controller,void *raw,void *other,uint
     auto config=port && port->getMetaClass()->getClassSize()>=0x580 ? Display13FBMemory::field<uint32_t *>(port,0x548):nullptr;
     if(config && config[0]<3){FunctionCast(wrapDisplay13TCEnableClocks,self->orgDisplay13TCEnableClocks)(controller,raw,other,params);return;}
     if(!c.lock)return;IOLockLock(c.lock);const auto ddi=display13TCTarget(port);
-    bool ok=false;uint32_t rate=0;
+    bool ok=false;uint32_t rate=0;Display13Power::Result power;
+    auto stage=Display13TC::Clock::LinkStage::Preflight;
     if(controller==c.controller && (!other || other==raw) && ddi<7 && !c.tcBusy[ddi-3]) {
         const auto tc=ddi-3;Display13FBTCIO io{port,tc};Display13TC::Port p;Display13TC::Port::resolve(ddi,p);
         rate=Display13TC::TMDSClock::nativeRate(params,c.clock.refIndex);
         const auto plan=Display13TC::TMDSClock::calculate(rate,c.clock.refKHz);
         // Native modeset must first stop the old scanout; this transaction
         // may then retire its PLL before programming a different timing.
-        ok=Display13TC::Clock::startLink(io,p,plan,self->firmwarePorts.port[ddi].hdmiPreset);
+        ok=Display13TC::Clock::startLink(io,p,plan,self->firmwarePorts.port[ddi].hdmiPreset,&stage);
+        power=io.linkResult;
         c.tcSignalReady[tc]=ok;
     }
     if(!ok)adlnFault(c.clockFaulted,__LINE__);
-    uint32_t record[]={1,ddi,rate,ok};IOLockUnlock(c.lock);
+    uint32_t record[]={2,ddi,rate,ok,uint32_t(stage),uint32_t(power.status),power.domain,power.writes,power.rollbackFailed};IOLockUnlock(c.lock);
     IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13TCClockEnable",record,sizeof(record));
 }
 void XE::wrapDisplay13TCDisableClocks(void *controller,void *raw,void *other) {

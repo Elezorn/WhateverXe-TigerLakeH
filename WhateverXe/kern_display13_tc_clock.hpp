@@ -154,13 +154,28 @@ struct Clock {
         return rmw(io,p.pll,Enable,Enable) && wait(io,p.pll,Locked,Locked) &&
             rmw(io,p.clock,0xf0000000,0x80000000) && rmw(io,Gate,gateBit(p.tc),0);
     }
+    // ADLP uses modular FIA, two TC ports per instance (intel_tc.c).
+    // Fixed HDMI uses all four main-link lanes. PHY ownership registers are
+    // generation-specific, but the FIA lane-enable register is still required.
+    static uint32_t laneRegister(unsigned tc) {return tc<2?0x1638c0:0x16e8c0;}
+    static uint32_t laneMask(unsigned tc) {return 15U<<(4*(tc&1));}
+    template<class IO> static bool lanes(IO &io,const Port &p) {
+        return preflight(io,p) && io.readable(laneRegister(p.tc)) &&
+            rmw(io,laneRegister(p.tc),laneMask(p.tc),laneMask(p.tc));
+    }
+    enum class LinkStage : uint32_t {Preflight,ReleaseDDI,StopPLL,Lanes,PLL,DDI,Signal,Complete};
     // Both Linux and the exact donor acquire DDI IO after enabling the PLL.
-    // Stop the link in reverse order. A control/AUX lease alone is sufficient
-    // to access the PLL; it must never require the output it is powering up.
-    template<class IO> static bool startLink(IO &io,const Port &p,const TMDSClock &plan,uint32_t preset) {
-        return plan.valid() && preflight(io,p) && io.linkPower(false) &&
-            disable(io,p) && enable(io,p,plan) && io.linkPower(true) &&
-            TMDSSignal::program(io,p,preset);
+    // Control/AUX power permits PLL access; output power cannot be its prerequisite.
+    template<class IO> static bool startLink(IO &io,const Port &p,const TMDSClock &plan,uint32_t preset,LinkStage *stage=nullptr) {
+        auto step=[&](LinkStage s){if(stage)*stage=s;};
+        step(LinkStage::Preflight);if(!plan.valid() || !preflight(io,p))return false;
+        step(LinkStage::ReleaseDDI);if(!io.linkPower(false))return false;
+        step(LinkStage::StopPLL);if(!disable(io,p))return false;
+        step(LinkStage::Lanes);if(!lanes(io,p))return false;
+        step(LinkStage::PLL);if(!enable(io,p,plan))return false;
+        step(LinkStage::DDI);if(!io.linkPower(true))return false;
+        step(LinkStage::Signal);if(!TMDSSignal::program(io,p,preset))return false;
+        step(LinkStage::Complete);return true;
     }
     template<class IO> static bool stopLink(IO &io,const Port &p) {
         return io.unstarted() || (preflight(io,p) && io.linkPower(false) && disable(io,p));

@@ -11,7 +11,7 @@ struct IO {
     unsigned time {},locks {},unlocks {};uint32_t reject {},absent {};
     bool link {},failLink {},coldCleanup {};unsigned linkGets {},linkPuts {};
     bool linkPower(bool enable) {
-        if(enable){assert((regs[p.pll]&0xcc000000U)==0xcc000000U && !(regs[Clock::Gate]&Clock::gateBit(p.tc)));++linkGets;if(failLink)return false;link=true;}
+        if(enable){assert((regs[Clock::laneRegister(p.tc)]&Clock::laneMask(p.tc))==Clock::laneMask(p.tc));assert((regs[p.pll]&0xcc000000U)==0xcc000000U && !(regs[Clock::Gate]&Clock::gateBit(p.tc)));++linkGets;if(failLink)return false;link=true;}
         else {if(link){assert(regs[p.pll]&Clock::Enable);++linkPuts;}link=false;}
         return true;
     }
@@ -19,7 +19,7 @@ struct IO {
     IO(unsigned ddi) {
         assert(Port::resolve(ddi,p));
         regs={{p.pll,0x20000000},{p.clock,0x1234},{p.ready,0xc},{p.buffer,0xc0},
-              {Clock::Gate,0xdeadffff|Clock::gateBit(p.tc)},{p.hip,0x01010101}};
+              {Clock::Gate,0xdeadffff|Clock::gateBit(p.tc)},{p.hip,0x01010101},{Clock::laneRegister(p.tc),0xa5a50000}};
         for(auto w:TMDSClock::calculate(148500,38400).words)bank[w.reg]=0xa5a5a5a5;
     }
     bool powerHeld(){return power;}
@@ -106,10 +106,18 @@ int main() {
     for(unsigned d=3;d<=6;++d) {
         IO io(d);for(unsigned lane=0;lane<2;++lane)for(unsigned reg:{0xa0U,0xd00U,0x2c0U,0x2c4U,0x2c8U})io.bank[lane*0x1000+reg]=0;
         // Cold control/AUX is held, but DDI IO is off until the PLL is locked.
+        const auto prior=io.regs[Clock::laneRegister(io.p.tc)];
         assert(Clock::startLink(io,io.p,full,7) && io.link && io.linkGets==1);
+        assert(io.regs[Clock::laneRegister(io.p.tc)]==(prior|Clock::laneMask(io.p.tc)));
         assert(Clock::stopLink(io,io.p) && !io.link && io.linkPuts==1);
         assert(Clock::startLink(io,io.p,hd,7) && io.linkGets==2);
         assert(Clock::stopLink(io,io.p) && io.linkPuts==2);
+    }
+    for(unsigned d=3;d<=6;++d) {
+        IO io(d);auto reg=Clock::laneRegister(io.p.tc);io.regs[reg]=0xa5a500a5;
+        auto prior=io.regs[reg];assert(Clock::lanes(io,io.p));
+        assert(io.regs[reg]==(prior|Clock::laneMask(io.p.tc)));
+        io.regs[reg]=UINT32_MAX;auto n=io.writes.size();assert(!Clock::lanes(io,io.p) && io.writes.size()==n);
     }
     {IO io(4);io.stuckLock=true;assert(!Clock::startLink(io,io.p,full,7) && !io.linkGets);}
     {IO io(4);io.failLink=true;assert(!Clock::startLink(io,io.p,full,7) && io.linkGets==1 && !io.link);}
