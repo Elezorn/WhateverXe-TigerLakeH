@@ -14875,11 +14875,19 @@ void XE::wrapTGLDisableAUXPower(void *power, uint32_t ddi) {
 }
 
 uint32_t XE::wrapTGLRunAUX(void *port, uint32_t command, uint32_t *packet, uint32_t length, bool flag) {
+	TGLDisplayTraceScope scope;
+	TGLDisplayActivity activity(13, port, command);
 	const auto header = packet && length >= 4 ? packet[0] : 0;
 	const uint32_t args = length | (static_cast<uint32_t>(flag) << 16);
+	// Metadata only: do not copy arbitrary AUX/HDCP packet contents into this ring.
+	tglTransitionRecord(101, false, port, command, args, 0);
 	tglAUXRecord(port, 0, false, 0, command, args, header, header);
+	tglTransitionRecord(104, false, port, command, args, 0);
 	const auto result = FunctionCast(wrapTGLRunAUX, callbackXE->orgTGLRunAUX)(port, command, packet, length, flag);
+	tglTransitionRecord(104, true, port, command, args, result);
 	tglAUXRecord(port, 0, true, result, command, args, header, packet && length >= 4 ? packet[0] : 0);
+	tglTransitionRecord(101, true, port, command, args, result);
+	activity.finish(result);
 	return result;
 }
 
@@ -15444,10 +15452,17 @@ uint32_t XE::wrapTGLLinkConfig(void *controller, void *request, void *output) {
 }
 
 uint32_t XE::wrapTGLClientAttribute(void *client, uint32_t attribute, unsigned long *input, unsigned long inputSize, unsigned long *output, unsigned long *outputSize, void *arguments) {
+	// Keep concurrent activity visible through post-training AUX/End/stream
+	// dispatch and diagnostic publication, not only inside linkTraining().
+	TGLDisplayTraceScope scope;
+	TGLDisplayActivity activity(10, client, attribute);
 	// The dispatcher owns validation. Observe sizes without reading its buffers.
 	tglTrace(10, 9, false, attribute, static_cast<uint32_t>(inputSize), 0, 0);
+	tglTransitionRecord(102, false, client, attribute, inputSize, 0);
 	const auto r = FunctionCast(wrapTGLClientAttribute, callbackXE->orgTGLClientAttribute)(client, attribute, input, inputSize, output, outputSize, arguments);
+	tglTransitionRecord(102, true, client, attribute, inputSize, r);
 	tglTrace(10, 9, true, attribute, static_cast<uint32_t>(inputSize), r, 0);
+	activity.finish(r);
 	return r;
 }
 
@@ -15513,12 +15528,18 @@ uint32_t XE::wrapTGLFBUserClient(void *fb, void *task, void *security, uint32_t 
 }
 
 uint32_t XE::wrapTGLAGDCAUX(void *controller, void *request, void *output) {
+	TGLDisplayTraceScope scope;
+	TGLDisplayActivity activity(11, controller);
 	auto req = static_cast<uint8_t *>(request);
 	const uint32_t id = req ? *reinterpret_cast<uint32_t *>(req) : 9;
 	uint32_t a = req ? *reinterpret_cast<uint32_t *>(req + 8) : 0;
 	uint32_t b = req ? req[12] | (static_cast<uint32_t>(req[13]) << 8) : 0;
 	tglTrace(16, id, false, a, b, 0, 0);
+	// Separate native entry/return from IORegistry publication on either side.
+	// Record address, direction and length only, including vendor DPCD addresses.
+	tglTransitionRecord(99, false, controller, id, (uint64_t(a) << 32) | b, 0);
 	const auto r = FunctionCast(wrapTGLAGDCAUX, callbackXE->orgTGLAGDCAUX)(controller, request, output);
+	tglTransitionRecord(99, true, controller, id, (uint64_t(a) << 32) | b, r);
 	uint64_t value = 0;
 	// Retain bounded data per port and outcome; unrelated ports cannot overwrite it.
 	if (request && (req[13] || (r == 0 && output))) {
@@ -15535,6 +15556,7 @@ uint32_t XE::wrapTGLAGDCAUX(void *controller, void *request, void *output) {
 		IORegistryEntry::getRegistryRoot()->setProperty(key, failure, sizeof(failure));
 	}
 	tglTrace(16, id, true, a, b, r, value);
+	activity.finish(r);
 	return r;
 }
 
@@ -17056,22 +17078,39 @@ void XE::wrapTGLEnablePipe(void *controller, void *fb, void *path, const void *t
 }
 
 uint32_t XE::wrapTGLReadAUX(void *port, uint32_t address, void *data, uint32_t length) {
+	TGLDisplayTraceScope scope;
+	TGLDisplayActivity activity(12, port, address);
 	auto caller = __builtin_return_address(0);
+	tglTransitionRecord(100, false, port, address, length, 0);
 	tglDPCDRecord(port, address, data, length, false, false, 0, caller);
 	const auto r = tglInvokeBootstrapAUX(callbackXE->tglBootstrapAUXReady, 0, port, [&] {
-		return FunctionCast(wrapTGLReadAUX, callbackXE->orgTGLReadAUX)(port, address, data, length);
+		tglTransitionRecord(103, false, port, address, length, 0);
+		const auto result = FunctionCast(wrapTGLReadAUX, callbackXE->orgTGLReadAUX)(port, address, data, length);
+		tglTransitionRecord(103, true, port, address, length, result);
+		return result;
 	});
 	tglDPCDRecord(port, address, data, length, false, true, r, caller);
+	tglTransitionRecord(100, true, port, address, length, r);
+	activity.finish(r);
 	return r;
 }
 
 uint32_t XE::wrapTGLWriteAUX(void *port, uint32_t address, void *data, uint32_t length) {
+	TGLDisplayTraceScope scope;
+	TGLDisplayActivity activity(12, port, (1ULL << 32) | address);
 	auto caller = __builtin_return_address(0);
+	const auto args = (1ULL << 32) | length;
+	tglTransitionRecord(100, false, port, address, args, 0);
 	tglDPCDRecord(port, address, data, length, true, false, 0, caller);
 	const auto r = tglInvokeBootstrapAUX(callbackXE->tglBootstrapAUXReady, 1, port, [&] {
-		return FunctionCast(wrapTGLWriteAUX, callbackXE->orgTGLWriteAUX)(port, address, data, length);
+		tglTransitionRecord(103, false, port, address, args, 0);
+		const auto result = FunctionCast(wrapTGLWriteAUX, callbackXE->orgTGLWriteAUX)(port, address, data, length);
+		tglTransitionRecord(103, true, port, address, args, result);
+		return result;
 	});
 	tglDPCDRecord(port, address, data, length, true, true, r, caller);
+	tglTransitionRecord(100, true, port, address, args, r);
+	activity.finish(r);
 	return r;
 }
 
