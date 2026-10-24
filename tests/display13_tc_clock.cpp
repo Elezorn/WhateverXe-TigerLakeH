@@ -1,4 +1,4 @@
-#include "kern_display13_tc_clock.hpp"
+#include "kern_display13_tc_dp.hpp"
 #include <cassert>
 #include <cstdio>
 #include <map>
@@ -9,9 +9,10 @@ struct IO {
     std::vector<std::pair<uint32_t,uint32_t>> writes;
     bool held {},power {true},owner {true},idle {true},stuckPower {},stuckLock {},fault {};
     unsigned time {},locks {},unlocks {};uint32_t reject {},absent {};
+    unsigned expectedLanes {4};
     bool link {},failLink {},coldCleanup {};unsigned linkGets {},linkPuts {};
     bool linkPower(bool enable) {
-        if(enable){assert((regs[Clock::laneRegister(p.tc)]&Clock::laneMask(p.tc))==Clock::laneMask(p.tc));assert((regs[p.pll]&0xcc000000U)==0xcc000000U && !(regs[Clock::Gate]&Clock::gateBit(p.tc)));++linkGets;if(failLink)return false;link=true;}
+        if(enable){assert((regs[Clock::laneRegister(p.tc)]&Clock::laneMask(p.tc))==((1U<<expectedLanes)-1)<<(4*(p.tc&1)));assert((regs[p.pll]&0xcc000000U)==0xcc000000U && !(regs[Clock::Gate]&Clock::gateBit(p.tc)));++linkGets;if(failLink)return false;link=true;}
         else {if(link){assert(regs[p.pll]&Clock::Enable);++linkPuts;}link=false;}
         return true;
     }
@@ -43,6 +44,41 @@ struct IO {
     void bankFault(){fault=true;}
 };
 int main() {
+    // Independent DP divisor oracle: 8.1 GHz / (5 * link symbol clock).
+    const unsigned rates[]={6,10,20,30},high[]={5,3,3,2},div[]={2,2,1,1};
+    // Existing independent Linux capture of TC3 at RBR x4.
+    const uint32_t liveDP[]={0x100,0xa00,0x6200,0x84269,0x1c0027,0x40002000,0x5e000000,0x52};
+    auto measured=DPClock::calculate(6,38400);for(unsigned i=0;i<8;++i)assert(measured.words[i].value==liveDP[i]);
+    for(unsigned ref:{19200U,24000U,38400U})for(unsigned i=0;i<4;++i) {
+        const auto plan=DPClock::calculate(rates[i],ref);
+        assert(plan.valid() && plan.dco==8100000 && plan.hs==high[i] && plan.ds==div[i]);
+        assert(TMDSClock::frequency(ref,plan.words[3].value,plan.words[6].value,plan.words[2].value)==rates[i]*27000);
+        assert(!(plan.words[2].value&0x10000));
+        for(unsigned ddi=3;ddi<=6;++ddi)for(unsigned lanes:{1U,2U,4U}) {
+            IO io(ddi);io.expectedLanes=lanes;
+            for(unsigned group=0;group<2;++group)for(unsigned reg:{0xa0U,0xd00U,0x2c0U,0x2c4U,0x2c8U})io.bank[group*0x1000+reg]=0xa5a5a5a5;
+            const auto peer=io.regs[Clock::laneRegister(ddi-3)]&~Clock::laneMask(ddi-3),hip=io.regs[io.p.hip];
+            Clock::LinkStage stage;assert(DPSignal::startLink(io,io.p,plan,lanes,&stage));
+            assert(stage==Clock::LinkStage::Complete && io.link && io.linkGets==1);
+            assert((io.regs[Clock::laneRegister(ddi-3)]&~Clock::laneMask(ddi-3))==peer && io.regs[io.p.hip]==hip);
+            for(unsigned group=0;group<2;++group) {
+                assert((io.bank[group*0x1000+0xa0]&0xc0)==(lanes==1?(group?0x40U:0U):0x80U));
+                assert(!(io.bank[group*0x1000+0x2c8]&0x7c));
+            }
+            io.idle=false; // Training signal changes are valid with a live buffer.
+            for(unsigned swing=0;swing<4;++swing)for(unsigned pre=0;pre+swing<4;++pre)assert(DPSignal::program(io,io.p,rates[i],swing,pre));
+            assert(!DPSignal::program(io,io.p,rates[i],3,1));
+            io.idle=true;assert(Clock::stopLink(io,io.p) && io.linkPuts==1);
+        }
+    }
+    for(unsigned rate:{0U,12U,19U,31U})assert(!DPClock::calculate(rate,38400).valid());
+    // ADLP RBR/HBR and HBR2/HBR3 independently expected coefficient vectors.
+    const unsigned expectedLow[]={0x107,0x605,0xb02,0x1700,5,0x802,0x1400,2,0xb00,0};
+    const unsigned expectedHigh[]={7,0x405,0xa02,0x1800,5,0x602,0x1400,2,0x900,0};
+    unsigned index=0;for(unsigned v=0;v<4;++v)for(unsigned pre=0;v+pre<4;++pre,++index) {
+        unsigned value;assert(DPSignal::coefficients(6,v,pre,value) && value==expectedLow[index]);
+        assert(DPSignal::coefficients(20,v,pre,value) && value==expectedHigh[index]);
+    }
     const auto full=TMDSClock::calculate(148500,38400),hd=TMDSClock::calculate(74250,38400);
     // Independent live i915 shared-PLL captures: central FHD / outer 720p.
     const uint32_t f[]={0x100,0x500,0x15400,0x84274,0x1c0027,0x40002000,0x41000000,0x4a};

@@ -153,7 +153,7 @@ private:
  static uint32_t wrapDisplay13TrainingPattern(void *path,uint32_t pattern);
  static uint32_t wrapDisplay13SignalLevels(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig);
 	mach_vm_address_t xelpProviderProbe {},xelpProviderConfigureProbe {};
- bool display13DPProbeReady {},display13TCProbeReady {};
+ bool display13DPProbeReady {},display13TCProbeReady {},display13TCDPProbeReady {},display13FBDPHooksReady {};
  bool adlpDisplaySelected {};
  bool adlpRenderRequested {};
  Display13OutputWiring display13BoardWiring(IOService *);
@@ -202,7 +202,13 @@ private:
     mach_vm_address_t orgDisplay13TCMode {},display13TCBaseMode {},orgDisplay13TCEnableClocks {},orgDisplay13TCDisableClocks {};
     mach_vm_address_t orgDisplay13TCLightUp {},orgDisplay13TCSetMode {},display13TCNotify {};
     mach_vm_address_t display13TCFullClocks {},display13TCPlane {},display13TCScaler {},display13TCPipe {},display13TCPackets {};
-    static uint32_t wrapDisplay13TCLightUp(void *,void *,void *,const void *);
+    static uint32_t wrapDisplay13DPLightUp(void *,void *,void *,const void *);
+ static void wrapDisplay13DPPhyGating(void *,bool);
+ static uint32_t wrapDisplay13DPLaneMask(void *);
+ static void wrapDisplay13DPPortWrite(void *,uint32_t,uint32_t);
+ mach_vm_address_t orgDisplay13DPLightUp {},display13DPTraining {},display13DPSDPs {};
+ mach_vm_address_t orgDisplay13DPPhyGating {},orgDisplay13DPLaneMask {},orgDisplay13DPPortWrite {},display13DPImage {};
+ static uint32_t wrapDisplay13TCLightUp(void *,void *,void *,const void *);
     static uint32_t wrapDisplay13TCSetMode(void *,void *,const void *);
     bool processDisplay13FramebufferTC(KernelPatcher &,size_t,mach_vm_address_t,size_t);
     static unsigned display13TCTarget(OSObject *,bool cleanup=false);

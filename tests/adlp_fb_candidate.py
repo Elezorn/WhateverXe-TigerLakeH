@@ -23,7 +23,7 @@ struct XE {
  XELP::VBT::Ports firmwarePorts;
  bool adlpDisplaySelected=true,adlsDisplaySelected=false,tglHDMIWiringApplied=false,tglTCWiringLoaded=false;
  bool display13FBTopologyHooksReady=true,display13TCProbeReady=true,display13FBTCHooksReady=true;
- bool display13DPProbeReady=false,display13FBSSTHooksReady=true,display13FBAUXHooksReady=true;
+ bool display13TCDPProbeReady=true,display13DPProbeReady=false,display13FBSSTHooksReady=true,display13FBAUXHooksReady=true;
  uintptr_t xelpProviderProbe=1,xelpProviderConfigureProbe=reinterpret_cast<uintptr_t>(configure);
  void *adlnTopologyController=(void*)1;Display13OutputWiring adlnOutputWiring,tglHDMIWiring;
  struct {bool valid=false;unsigned excluded=0;unsigned selected(){return 0;}}adlsWiring;
@@ -51,6 +51,19 @@ int main(){
  x.firmwarePorts.port[3].type=4;
  assert(x.display13BoardWiring(&pci).hdmi==0x10); // Exclude DP without dropping unrelated HDMI.
  x.firmwarePorts.port[4].type=4;assert(!x.display13BoardWiring(&pci).described());
+ // DP-capable records with TC AUX F..I compose with the existing HDMI.
+ for(unsigned ddi=3;ddi<=6;++ddi) {
+  XE dp;dp.firmwarePorts.status=XELP::VBT::Status::Valid;dp.firmwarePorts.present=1|(1U<<ddi);
+  dp.firmwarePorts.port[0].type=0x12;dp.firmwarePorts.port[0].ddc=1;
+  auto &v=dp.firmwarePorts.port[ddi];v.type=0x60d6;v.aux=(ddi+3)*0x10;v.capabilities=3;
+  dp.adlnOutputWiring=dp.display13BoardWiring(&pci);
+  assert(dp.adlnOutputWiring.hdmi==1 && dp.adlnOutputWiring.dp==(1U<<ddi));
+  assert(Display13FBTopology::supportedWiring(dp.adlnOutputWiring,true) && dp.xelpBindProbe((void*)1));
+  assert(seen.legacy==(1U<<ddi));
+  assert(Display13FBTopology::bootDDI(dp.adlnOutputWiring,0x82000000|((ddi+1)<<27))==~0U); // DP GOP stays unqualified.
+  dp.display13TCDPProbeReady=false;const auto before=calls;assert(!dp.xelpBindProbe((void*)1) && calls==before);
+  dp.firmwarePorts.port[ddi].aux=0x40;assert(!dp.display13BoardWiring(&pci).dp);
+ }
  unsigned cases=0;
  for(unsigned identity : {0x46A68086U,0x46D18086U})
  for(unsigned mask=1;mask<128;++mask)if(!(mask&~Display13OutputWiring::Physical)) {

@@ -18,12 +18,12 @@ inline bool adlnWiring(const Display13OutputWiring &w) {return selectedWiring(w)
 inline bool supportedWiring(const Display13OutputWiring &w,bool fixedTC=false) {
     // Fixed HDMI is composable across the physical Combo A/B and TC1..4.
     // TC provider capability, legacy mode and clock hooks are checked separately.
-    return !w.dp && w.described() && !(w.selected()&~(fixedTC ? Display13OutputWiring::Physical : 3U));
+    return !(w.dp&~0x78U) && w.described() && !(w.selected()&~(fixedTC ? Display13OutputWiring::Physical : 3U));
 }
 // A TC route uses the same validated handoff regardless of the GT family.
 // Keep the established Combo-only ADL-N startup ordering unchanged.
 inline bool deferredBootPrepare(const Display13OutputWiring &w,bool mobile) {
-    return mobile || (w.hdmi&0x78);
+    return mobile || (w.selected()&0x78);
 }
 inline bool multiOutputWiring(const Display13OutputWiring &w) {
     return selectedWiring(w) && (w.selected()&(w.selected()-1));

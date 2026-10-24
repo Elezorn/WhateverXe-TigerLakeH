@@ -20,6 +20,7 @@
 #include "kern_display13_tc_lightup.hpp"
 #include "kern_display13_tc_native.hpp"
 #include "kern_display13_tc_clock.hpp"
+#include "kern_display13_tc_dp.hpp"
 #include "kern_tgl_gmbus.hpp"
 #include "kern_alderlake_n_gpu.hpp"
 #include "kern_display13_fb_memory.hpp"
@@ -3798,7 +3799,7 @@ Display13OutputWiring XE::display13BoardWiring(IOService *provider) {
     if(!xeProfile.displayAdmitted() || xeProfile.display!=XELP::Display::XeLPD)return {};
     // Display13 physical capacity is shared by ADL-N and mobile ADL/RPL.
     // VBT chooses board routing; a family name must not exclude TC PHYs.
-    if(!property)return XELP::VBT::display13HDMI(firmwarePorts,Display13OutputWiring::Physical);
+    if(!property)return XELP::VBT::display13Fixed(firmwarePorts,Display13OutputWiring::Physical);
     // Preserve the older ADL-N Combo property contract. It cannot select TC.
     if(adlpDisplaySelected)return {};
     auto wiring=OSDynamicCast(OSData,property);
@@ -4099,10 +4100,10 @@ bool XE::xelpBindProbe(void *controller) {
     } else {
         if(!display13FBTopologyHooksReady || controller!=adlnTopologyController ||
             !Display13FBTopology::supportedWiring(adlnOutputWiring,xeProfile.display==XELP::Display::XeLPD) ||
-            ((adlnOutputWiring.hdmi&0x78) && (!display13TCProbeReady || !display13FBTCHooksReady)) ||
-            (adlnOutputWiring.dp && (!display13DPProbeReady || !display13FBSSTHooksReady || !display13FBAUXHooksReady)))return false;
+            ((adlnOutputWiring.selected()&0x78) && (!display13TCProbeReady || !display13FBTCHooksReady)) ||
+            (adlnOutputWiring.dp && (!display13TCDPProbeReady || !display13FBSSTHooksReady || !display13FBAUXHooksReady)))return false;
         config.combo=adlnOutputWiring.selected()&3;config.comboBackend=3;
-        config.legacy=adlnOutputWiring.hdmi&0x78;config.legacyBackend=config.legacy?0x78:0;
+        config.legacy=adlnOutputWiring.selected()&0x78;config.legacyBackend=config.legacy?0x78:0;
     }
     const bool bound=config.valid() && reinterpret_cast<XELP::ConfigureProbe>(xelpProviderConfigureProbe)(controller,&config);
     IORegistryEntry::getRegistryRoot()->setProperty("XELPSharedProbeBound",bound);
@@ -4316,6 +4317,8 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
                 XELP::display13ProbeCapable(reinterpret_cast<XELP::QueryProbeCapabilities>(query));
             display13TCProbeReady=query>=address && query-address<size &&
                 XELP::display13TCProbeCapable(reinterpret_cast<XELP::QueryProbeCapabilities>(query));
+            display13TCDPProbeReady=query>=address && query-address<size &&
+                XELP::display13TCDPProbeCapable(reinterpret_cast<XELP::QueryProbeCapabilities>(query));
         }
         IORegistryEntry::getRegistryRoot()->setProperty("XELPDisplay13DPProbeAvailable",display13DPProbeReady);
         IORegistryEntry::getRegistryRoot()->setProperty("XELPDisplay13TCProbeAvailable",display13TCProbeReady);
@@ -6246,7 +6249,7 @@ unsigned XE::display13TCTarget(OSObject *port,bool cleanup) {
     if(!self->display13FBTCHooksReady || !c.tcSupported || !c.controller || !c.bridge.begun ||
        c.tcBankFaulted || c.bridge.state.faulted || (!cleanup && c.clockFaulted) || !port || port->getMetaClass()->getClassSize()<0x6b0)return UINT32_MAX;
     auto config=Display13FBMemory::field<uint32_t *>(port,0x548);
-    if(!config || !self->adlnOutputWiring.matchesHDMI(config) || config[0]<3 || config[0]>6 ||
+    if(!config || !self->adlnOutputWiring.matches(config) || config[0]<3 || config[0]>6 ||
        !Display13FBTopology::bound(self->adlnPlatform,config,config[0]) ||
        Display13FBMemory::field<void *>(port,0x578)!=c.access ||
        Display13FBMemory::field<uint32_t>(port,0x120)!=config[0])return UINT32_MAX;
@@ -6333,11 +6336,16 @@ void XE::wrapDisplay13TCEnableClocks(void *controller,void *raw,void *other,uint
     auto stage=Display13TC::Clock::LinkStage::Preflight;
     if(controller==c.controller && (!other || other==raw) && ddi<7 && !c.tcBusy[ddi-3]) {
         const auto tc=ddi-3;Display13FBTCIO io{port,tc};Display13TC::Port p;Display13TC::Port::resolve(ddi,p);
-        rate=Display13TC::TMDSClock::nativeRate(params,c.clock.refIndex);
-        const auto plan=Display13TC::TMDSClock::calculate(rate,c.clock.refKHz);
-        // Native modeset must first stop the old scanout; this transaction
-        // may then retire its PLL before programming a different timing.
-        ok=Display13TC::Clock::startLink(io,p,plan,self->firmwarePorts.port[ddi].hdmiPreset,&stage);
+        if(self->adlnOutputWiring.dp&(1U<<ddi)) {
+            const auto linkRate=Display13FBMemory::field<uint32_t>(port,0x128);
+            const auto lanes=Display13FBMemory::field<uint32_t>(port,0x124);
+            const auto plan=Display13TC::DPClock::calculate(linkRate,c.clock.refKHz);rate=plan.rate;
+            ok=Display13TC::DPSignal::startLink(io,p,plan,lanes,&stage);
+        } else {
+            rate=Display13TC::TMDSClock::nativeRate(params,c.clock.refIndex);
+            const auto plan=Display13TC::TMDSClock::calculate(rate,c.clock.refKHz);
+            ok=Display13TC::Clock::startLink(io,p,plan,self->firmwarePorts.port[ddi].hdmiPreset,&stage);
+        }
         power=io.linkResult;
         c.tcSignalReady[tc]=ok;
     }
@@ -6366,9 +6374,70 @@ uint32_t XE::wrapDisplay13TCSignal(void *raw,uint32_t swing,uint32_t emphasis,vo
     if(!c.lock)return kIOReturnNotReady;IOLockLock(c.lock);const auto ddi=display13TCTarget(port);
     // TMDS signal parameters were programmed while the path was stopped,
     // before native enablePipe. Do not run TGL DP's late voltage sequence.
-    bool ok=false;if(ddi<7){Display13FBTCIO io{port,ddi-3};ok=io.owned(ddi) && io.linkHeld() && c.tcSignalReady[ddi-3];}
+    bool ok=false;if(ddi<7){
+        Display13FBTCIO io{port,ddi-3};ok=io.owned(ddi) && io.linkHeld() && c.tcSignalReady[ddi-3];
+        if(ok && (self->adlnOutputWiring.dp&(1U<<ddi))) {
+            Display13TC::Port p;Display13TC::Port::resolve(ddi,p);
+            ok=!drive && Display13TC::DPSignal::program(io,p,Display13FBMemory::field<uint32_t>(port,0x128),swing,emphasis);
+        }
+    }
     if(!ok)adlnFault(c.clockFaulted,__LINE__);IOLockUnlock(c.lock);
     return ok ? 0 : kIOReturnNotReady;
+}
+
+uint32_t XE::wrapDisplay13DPLightUp(void *controller,void *fb,void *path,const void *timing) {
+    auto object=static_cast<OSObject *>(path);
+    if(!object || object->getMetaClass()->getClassSize()<0x3730)return kIOReturnNotReady;
+    auto port=Display13FBMemory::field<OSObject *>(path,0x3648);
+    if(port && port->getMetaClass()->getClassSize()>=0x580 && Display13FBMemory::field<uint32_t>(port,0x120)>=3)
+        return wrapDisplay13TCLightUp(controller,fb,path,timing);
+    return FunctionCast(wrapDisplay13DPLightUp,callbackXE->orgDisplay13DPLightUp)(controller,fb,path,timing);
+}
+uint32_t XE::wrapDisplay13DPLaneMask(void *port) {
+    auto s=callbackXE;auto object=static_cast<OSObject *>(port);
+    auto config=object && object->getMetaClass()->getClassSize()>=0x580?Display13FBMemory::field<uint32_t *>(port,0x548):nullptr;
+    if(!config || config[0]>=7 || !(s->adlnOutputWiring.dp&(1U<<config[0])))
+        return FunctionCast(wrapDisplay13DPLaneMask,s->orgDisplay13DPLaneMask)(port);
+    auto &c=display13FBPower;if(!c.lock)return 0;IOLockLock(c.lock);
+    const auto ddi=display13TCTarget(object);bool ok=false;
+    if(ddi>=3 && ddi<=6){Display13FBTCIO io{object,ddi-3};ok=io.owned(ddi);}
+    IOLockUnlock(c.lock);return ok?15U:0;
+}
+void XE::wrapDisplay13DPPhyGating(void *port,bool gate) {
+    auto s=callbackXE;auto object=static_cast<OSObject *>(port);
+    auto config=object && object->getMetaClass()->getClassSize()>=0x580?Display13FBMemory::field<uint32_t *>(port,0x548):nullptr;
+    if(!config || config[0]>=7 || !(s->adlnOutputWiring.dp&(1U<<config[0]))) {
+        FunctionCast(wrapDisplay13DPPhyGating,s->orgDisplay13DPPhyGating)(port,gate);return;
+    }
+    auto &c=display13FBPower;if(!c.lock)return;IOLockLock(c.lock);
+    const auto ddi=display13TCTarget(object);bool ok=false;
+    if(ddi>=3 && ddi<=6) {
+        Display13FBTCIO io{object,ddi-3};Display13TC::Port p;Display13TC::Port::resolve(ddi,p);
+        ok=io.owned(ddi) && io.linkHeld();
+        // Same fixed-DP contract as TGL: Linux leaves DP_MODE bits5:1
+        // intact during training. Do not run the donor's clear operation.
+        if(ok && gate)for(unsigned group=0;group<2;++group) {
+            uint32_t value=0x3e;ok=Display13TC::PHY::access(io,p,0x1000*group+0xa0,0x3e,value,true) && ok;
+        }
+    }
+    if(!ok)adlnFault(c.clockFaulted,__LINE__);IOLockUnlock(c.lock);
+}
+void XE::wrapDisplay13DPPortWrite(void *port,uint32_t reg,uint32_t value) {
+    auto s=callbackXE;
+    if(reinterpret_cast<uintptr_t>(__builtin_return_address(0))==s->display13DPImage+0x5fba0) {
+        auto object=static_cast<OSObject *>(port);auto &c=display13FBPower;
+        if(c.lock && object && object->getMetaClass()->getClassSize()>=0x580) {
+            IOLockLock(c.lock);const auto ddi=display13TCTarget(object);
+            if(ddi>=3 && ddi<=6 && (s->adlnOutputWiring.dp&(1U<<ddi)) && reg==0x64000+0x100*ddi && (value&0x80000000)) {
+                Display13FBTCIO io{object,ddi-3};const auto rate=Display13FBMemory::field<uint32_t>(port,0x128);
+                if(io.owned(ddi) && io.linkHeld() && (rate==6 || rate==10 || rate==20 || rate==30))
+                    value=(value&~0xff00U)|(((rate*27+9)/10)<<8);
+                else {adlnFault(c.clockFaulted,__LINE__);IOLockUnlock(c.lock);return;}
+            }
+            IOLockUnlock(c.lock);
+        }
+    }
+    FunctionCast(wrapDisplay13DPPortWrite,s->orgDisplay13DPPortWrite)(port,reg,value);
 }
 
 uint32_t XE::wrapDisplay13TCLightUp(void *controller,void *rawFB,void *rawPath,const void *timing) {
@@ -6381,6 +6450,7 @@ uint32_t XE::wrapDisplay13TCLightUp(void *controller,void *rawFB,void *rawPath,c
     struct IO {
         XE *self;void *controller;IOService *fb;OSObject *path,*object;const void *timing;
         unsigned ddi {UINT32_MAX},pipeIndex {UINT32_MAX};
+        bool dp {};
         bool ready(bool clock) {
             auto &c=display13FBPower;IOLockLock(c.lock);
             const auto current=display13TCTarget(object);
@@ -6389,6 +6459,7 @@ uint32_t XE::wrapDisplay13TCLightUp(void *controller,void *rawFB,void *rawPath,c
             Display13FBPowerIO power{c.map};
             bool ok=controller==c.controller && timing && current<7 && current==ddi &&
                 binding.status==TGLFBBinding::Status::Complete && binding.ddi==ddi && binding.pipe==pipeIndex &&
+                (!dp || !Display13FBMemory::field<uint8_t>(object,0x117)) &&
                 scaler && scaler->getMetaClass()->getClassSize()>=0x58 &&
                 Display13FBMemory::field<void *>(scaler,0x10)==fb && Display13FBMemory::field<void *>(scaler,0x28)==c.access &&
                 !c.memoryFaulted && !c.watermarkFaulted && !c.clockStopped && !c.tcBusy[ddi-3] &&
@@ -6411,10 +6482,18 @@ uint32_t XE::wrapDisplay13TCLightUp(void *controller,void *rawFB,void *rawPath,c
         void pipe(){reinterpret_cast<void (*)(void *,void *,void *,const void *)>(self->display13TCPipe)(controller,fb,path,timing);}
         void signal(){wrapDisplay13TCSignal(object,0,0,nullptr);}
         uint32_t port(){return wrapDisplay13EnablePort(object);}
-        void packets(){reinterpret_cast<void (*)(void *,void *,void *)>(self->display13TCPackets)(controller,fb,path);}
+        uint32_t train(){
+            const auto r=reinterpret_cast<uint32_t (*)(void *,void *)>(self->display13DPTraining)(object,nullptr);
+            *(reinterpret_cast<uint8_t *>(fb)+0x4b84)=r!=0;return r;
+        }
+        void packets(){
+            if(dp)reinterpret_cast<void (*)(void *,void *,void *,const void *)>(self->display13DPSDPs)(controller,fb,path,timing);
+            else reinterpret_cast<void (*)(void *,void *,void *)>(self->display13TCPackets)(controller,fb,path);
+        }
     } io{self,controller,fb,path,port,timing};
     IOLockLock(c.lock);io.ddi=display13TCTarget(port);io.pipeIndex=Display13FBMemory::field<uint32_t>(path,0x3640);IOLockUnlock(c.lock);
-    const auto result=Display13TC::lightUpTMDS(io,io.ddi,io.pipeIndex);
+    io.dp=io.ddi<7 && (self->adlnOutputWiring.dp&(1U<<io.ddi));
+    const auto result=io.dp?Display13TC::lightUpDP(io,io.ddi,io.pipeIndex):Display13TC::lightUpTMDS(io,io.ddi,io.pipeIndex);
     uint32_t record[]={1,io.ddi,io.pipeIndex,uint32_t(result.stage),result.status};
     IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13TCLightUp",record,sizeof(record));
     return result.status;
@@ -6430,7 +6509,7 @@ uint32_t XE::wrapDisplay13TCSetMode(void *controller,void *fb,const void *timing
 bool XE::processDisplay13FramebufferTC(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
     using namespace Display13TC::Native;
     // Do not alter the successful Combo machines' native mode-return behavior.
-    if(!(adlnOutputWiring.hdmi&0x78) || !display13FBOutputHooksReady || !display13FBSSTHooksReady ||
+    if(!(adlnOutputWiring.selected()&0x78) || !display13FBOutputHooksReady || !display13FBSSTHooksReady ||
        !display13FBABIReady || size<=0x6e000)return false;
     for(const auto &e:entries) {
         const auto f=patcher.solveSymbol<mach_vm_address_t>(index,e.symbol,address,size);patcher.clearError();
@@ -6452,12 +6531,18 @@ bool XE::processDisplay13FramebufferTC(KernelPatcher &patcher,size_t index,mach_
     display13TCNotify=address+entries[Notify].offset;display13TCFullClocks=address+entries[FullClocks].offset;
     display13TCPlane=address+entries[Plane].offset;display13TCScaler=address+entries[Scaler].offset;
     display13TCPipe=address+entries[Pipe].offset;display13TCPackets=address+entries[Packets].offset;
+    display13DPTraining=address+entries[Training].offset;display13DPSDPs=address+entries[SDPs].offset;
+    display13DPImage=address;
     KernelPatcher::RouteRequest routes[]={
         {entries[Mode].symbol,wrapDisplay13TCMode,orgDisplay13TCMode},
         {entries[Clocks].symbol,wrapDisplay13TCEnableClocks,orgDisplay13TCEnableClocks},
         {entries[DisableClocks].symbol,wrapDisplay13TCDisableClocks,orgDisplay13TCDisableClocks},
         {entries[LightUp].symbol,wrapDisplay13TCLightUp,orgDisplay13TCLightUp},
-        {entries[SetMode].symbol,wrapDisplay13TCSetMode,orgDisplay13TCSetMode}
+        {entries[SetMode].symbol,wrapDisplay13TCSetMode,orgDisplay13TCSetMode},
+        {entries[DPLightUp].symbol,wrapDisplay13DPLightUp,orgDisplay13DPLightUp},
+        {entries[PhyGating].symbol,wrapDisplay13DPPhyGating,orgDisplay13DPPhyGating},
+        {entries[LaneMask].symbol,wrapDisplay13DPLaneMask,orgDisplay13DPLaneMask},
+        {entries[PortWrite].symbol,wrapDisplay13DPPortWrite,orgDisplay13DPPortWrite}
     };
     // Signal is already routed by the common SST frontend; its wrapper
     // dispatches TC here. Never install a second hook over the same entry.
@@ -6475,7 +6560,7 @@ bool XE::processDisplay13FramebufferTC(KernelPatcher &patcher,size_t index,mach_
             !memcmp(reinterpret_cast<void *>(address+change.offset),change.after,change.size);
         patcher.clearError();if(!applied)return false;
     }
-    display13FBPower.tcSupported=true;return true;
+    display13FBDPHooksReady=true;display13FBPower.tcSupported=true;return true;
 }
 
 bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
@@ -6616,11 +6701,16 @@ bool XE::display13AUXReady(void *port,bool command) {
     Display13FBMemory::field<uint8_t>(c.controller,0x1BD8) ||
     !Display13FBMemory::field<void *>(c.controller,0xC30))return false;
  auto p=static_cast<uint8_t *>(port);auto config=Display13FBMemory::field<uint32_t *>(p,0x548);
- if(!Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring) || config[0]>=2 ||
-    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] || Display13FBMemory::field<uint32_t>(p,0x550)>1 ||
+ if(!Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring) || config[0]>=7 || config[0]==2 ||
+    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] ||
+    (config[0]<3 && Display13FBMemory::field<uint32_t>(p,0x550)>1) ||
     Display13FBMemory::field<void *>(p,0x578)!=c.access ||
     Display13FBMemory::field<void *>(c.power,0x10)!=c.controller ||
     Display13FBMemory::field<void *>(c.power,0x78)!=c.access)return false;
+ if(config[0]>=3) {
+  Display13FBTCIO tc{object,config[0]-3};
+  if(!(s->adlnOutputWiring.dp&(1U<<config[0])) || !tc.owned(config[0]))return false;
+ }
  // Exact c004 HAL uses CTL + five DATA offsets from the port object.
  const auto ctl=0x64010+0x100*config[0];
  for(unsigned n=0;n<6;++n)if(Display13FBMemory::field<uint32_t>(p,0x594+4*n)!=ctl+4*n)return false;
@@ -6710,7 +6800,7 @@ uint8_t *XE::display13SSTPort(void *port) {
  auto p=static_cast<uint8_t *>(port);auto config=Display13FBMemory::field<uint32_t *>(p,0x548);
  if(!Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring) ||
     !(s->adlnOutputWiring.dp&(1U<<config[0])) || p[0x117] ||
-    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] || Display13FBMemory::field<uint32_t>(p,0x550)!=1 ||
+    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] || Display13FBMemory::field<uint32_t>(p,0x550)!=(config[0]>=3?4U:1U) ||
     Display13FBMemory::field<void *>(p,0x578)!=c.access)return nullptr;
  return p;
 }
@@ -6730,6 +6820,11 @@ bool XE::display13MainLinkAUX(void *port,bool acquire) {
     Display13FBMemory::field<void *>(c.power,0x10)==c.controller &&
     Display13FBMemory::field<void *>(c.power,0x78)==c.access) {
   const auto ddi=Display13FBMemory::field<uint32_t>(p,0x120);
+  if(ddi>=3 && ddi<=6) {
+   // Mode owns AUX from before first DPCD through buffer/PLL stop. Do not
+   // add the Combo main-link lease or release mode power at buffer-disable.
+   Display13FBTCIO tc{static_cast<OSObject *>(port),ddi-3};ok=tc.owned(ddi) && tc.linkHeld();
+  }
   if(ddi<2 && Display13FBMemory::field<uint32_t>(p,0x590)==0x64000+0x100*ddi) {
    auto &link=c.mainLink[ddi];const auto previous=link.owner;Display13FBPowerIO io{c.map};
    const auto result=acquire ? link.begin(io,c.bridge,reinterpret_cast<uintptr_t>(port),ddi) :
@@ -6813,7 +6908,7 @@ uint32_t XE::wrapDisplay13TrainingPattern(void *path,uint32_t pattern) {
    if(before) {
     ok=true;
     if(pattern==1) {
-     const auto r=XELP::SSTProgram::prepare(read,write,binding.ddi,binding.pipe,Display13FBMemory::field<uint32_t>(p,0x124),true);
+     const auto r=XELP::SSTProgram::prepare(read,write,binding.ddi,binding.pipe,Display13FBMemory::field<uint32_t>(p,0x124),true,binding.ddi>=3?binding.ddi+3:binding.ddi+1);
      // An already-active, identical route needs no rewrite. Never repair an
      // active neighbor or a failed posting read by falling through to native.
      ok=r.bufferBefore!=UINT32_MAX && r.clockBefore!=UINT32_MAX && r.funcBefore!=UINT32_MAX &&
@@ -7438,7 +7533,7 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
     const auto board=s->display13BoardWiring(provider);
     if(!Display13FBTopology::supportedWiring(board,s->xeProfile.display==XELP::Display::XeLPD) ||
        board.selected()!=s->adlnOutputWiring.selected())return false;
-    if((board.hdmi&0x78) && (!s->display13FBTCHooksReady || !s->display13TCProbeReady)) {
+    if((board.selected()&0x78) && (!s->display13FBTCHooksReady || !s->display13TCProbeReady)) {
         IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBTCUnavailable",true);return false;
     }
  const auto contract=XELP::DisplayContract::display13(s->display13Available(),s->adlnOutputWiring.dp!=0);
@@ -12333,7 +12428,9 @@ XELP::DisplayContract::Mask XE::display13Available() const {
  if(display13FBSSTHooksReady)a|=C::SST13;
  if(display13FBAUXHooksReady)a|=C::AUX13;
  if(display13DPProbeReady)a|=C::DPProbe13;
- // No DPBoot13 until GOP handoff and cold-start have a proven backend.
+ // Startup still requires the existing TMDS GOP certificate. Fixed TC DP
+ // is a cold link on that admitted controller; DP GOP adoption stays closed.
+ if(display13FBDPHooksReady && display13TCDPProbeReady)a|=C::DPBoot13;
  return a;
 }
 

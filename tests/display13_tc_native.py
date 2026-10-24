@@ -13,7 +13,7 @@ assert len(arrays['outerBefore'])==len(arrays['outerAfter'])==24
 assert int.from_bytes(arrays['outerAfter'][4:8],'little',signed=True)+0x695ac+8==0x698ed
 assert 0x695ac+18+arrays['outerAfter'][17]==0x695fc
 install=s[s.index('bool XE::processDisplay13FramebufferTC('):s.index('bool XE::processDisplay13FramebufferOutput(')]
-assert '!(adlnOutputWiring.hdmi&0x78)' in install
+assert '!(adlnOutputWiring.selected()&0x78)' in install
 assert 'entries[LightUp].symbol,wrapDisplay13TCLightUp' in install
 assert 'entries[SetMode].symbol,wrapDisplay13TCSetMode' in install
 assert 'wrapDisplay13TCSignal,' not in install # one common SST signal hook
@@ -27,7 +27,7 @@ if len(sys.argv)>1:
              subprocess.check_output(['nm','-n',str(path)],text=True).splitlines()
              if len(line.split())==3 and re.fullmatch('[0-9a-fA-F]+',line.split()[0])}
     entries=re.findall(r'\{"([^"\n]+)",(0x[0-9a-f]+),\{([^}]+)\}\}',h)
-    assert len(entries)==12
+    assert len(entries)==18
     for symbol,value,body in entries:
         offset=int(value,0);prefix=bytes(int(v,0) for v in body.split(','))
         assert symbols[symbol]==offset and donor[offset:offset+len(prefix)]==prefix
@@ -37,4 +37,14 @@ if len(sys.argv)>1:
     # normal unlock path. These are independent of the new outer early return.
     assert donor[0x50004:0x50009]==bytes.fromhex('4585ed7437')
     assert donor[0x5001b:0x50020]==bytes.fromhex('e82cd3ffff')
-    print('PASS exact c004fc1a: 12 entries, full TMDS sequence, native cleanup, both mode-return boundaries')
+    print('PASS exact c004fc1a: 18 entries, full TMDS sequence, native cleanup, both mode-return boundaries')
+
+    # Ordinary probe classifies and acquires mode before any DP AUX access.
+    # Qualify the virtual slots and direct call targets independently of wrappers.
+    for at,expected in [(0x1faad,'ff9078010000'),(0x1fabb,'ff9138010000'),
+                        (0x1fb38,'ff9038010000'),(0x1bdbe,'ff9088010000'),
+                        (0x1be04,'ff9040010000'),(0x1be1e,'ff9028010000')]:
+        assert donor[at:at+6]==bytes.fromhex(expected),hex(at)
+    for at,target in [(0x50979,0x1ba02),(0x50b0c,0x51f56),(0x5fb9b,0x1fea8)]:
+        assert donor[at]==0xe8 and at+5+int.from_bytes(donor[at+1:at+5],'little',signed=True)==target
+    print('PASS native DP mode-before-AUX, training signal/gating/enable slots and SDP/stagger caller ABI')

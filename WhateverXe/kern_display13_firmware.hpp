@@ -19,5 +19,22 @@ namespace XELP { namespace VBT {
         }
         return w;
     }
+    // Display13 VBT AUX F..I maps directly to TC1..4. Capabilities do not
+    // select live DP-alt: only the provider's legacy HPD/mode proof admits it.
+    inline Display13OutputWiring display13Fixed(const Ports &ports,uint32_t backend) {
+        auto w=display13HDMI(ports,backend);
+        if(!w.valid || !ports.valid())return w;
+        for(unsigned d=3;d<7;++d) {
+            const auto &p=ports.port[d];const auto aux=(d+3)*0x10U;
+            if(!(ports.present&backend&(1U<<d)) || (p.type&0x14)!=0x14 ||
+               (p.type&(0x1000|0x400|0x20|1)) || (p.flags&0x17) || p.aux!=aux)continue;
+            bool shared=false;
+            for(unsigned other=0;other<PortCount;++other)if(other!=d && (ports.present&(1U<<other)) &&
+                ports.port[other].dp() && ports.port[other].aux==aux)shared=true;
+            if(!shared)w.dp|=1U<<d;
+        }
+        return w;
+    }
+
 } }
 #endif

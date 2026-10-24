@@ -31,8 +31,10 @@ int main(int argc,char **argv) {
  assert(!XELP::display13TCProbeCapable(nullptr));
  assert(!XELP::display13TCProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return XELP::ProbeDisplay13ComboDP;}));
  assert(XELP::display13TCProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return XELP::ProbeDisplay13FixedTC;}));
+ assert(XELP::display13TCDPProbeCapable(xelpProbeCapabilities));
+ assert(!XELP::display13TCDPProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 3;}));
  for(unsigned schema=0;schema<5;++schema)for(unsigned abi=0;abi<6;++abi)
-  assert(xelpProbeCapabilities(schema,abi)==(schema==1&&abi==3?(XELP::ProbeDisplay13ComboDP|XELP::ProbeDisplay13FixedTC):0));
+  assert(xelpProbeCapabilities(schema,abi)==(schema==1&&abi==3?(XELP::ProbeDisplay13ComboDP|XELP::ProbeDisplay13FixedTC|XELP::ProbeDisplay13FixedDP):0));
  assert(!XELP::display13ProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 0;}));
  assert(!XELP::display13ProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 2;}));
  assert(argc==2);const bool adln=!strncmp(argv[1],"adln",4);
@@ -121,6 +123,12 @@ int main(int argc,char **argv) {
    field<uint32_t>(mmio.data(),0x161500)=ready;field<uint32_t>(mmio.data(),0xc4000)=hpd<<24;
    assert(tglProbePort(&port)==(hpd && (ready&7)==4?4U:0U));
   }
+  rec[2]=1;rec[4]=0x400;rec[5]=0x201;
+  for(unsigned ready=0;ready<16;++ready)for(unsigned hpd=0;hpd<2;++hpd){
+   field<uint32_t>(mmio.data(),0x161500)=ready;field<uint32_t>(mmio.data(),0xc4000)=hpd<<24;
+   assert(tglProbePort(&port)==(hpd && !(ready&3)?4U:0U));
+  }
+  rec[1]=10;assert(!tglProbePort(&port));
   assert(!hardwareAllowed(&controller));puts("PASS actual ADL-P Display13 provider: physical identity, legacy TC probe, no Display12/GT fallback");return 0;
  }
  for(unsigned d=0;d<9;++d){auto rec=reinterpret_cast<uint32_t *>(platform+0x20+24*d);

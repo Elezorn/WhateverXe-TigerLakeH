@@ -41,11 +41,15 @@ template<class IO> uint32_t probeMode(IO &io,const ProbeBinding &b,uintptr_t man
         return legacyTGLMode(io,c[0],b.config.legacy&b.config.legacyBackend);
     if(c[0]>=3) {
         Display13TC::Port p;
+        const bool hdmi=c[1]>=9 && c[1]<=12 && c[2]==2 && c[3]==1 && c[4]==0x800 && (c[5]&0xB)==2;
+        const bool dp=c[1]==c[0]+6 && c[2]==1 && c[3]==1 && c[4]==0x400 && c[5]==0x201;
         if(!(b.config.legacy&b.config.legacyBackend&(1U<<c[0])) ||
-           !Display13TC::Port::resolve(c[0],p) || c[1]<9 || c[1]>12 || c[2]!=2 || c[3]!=1 ||
-           c[4]!=0x800 || (c[5]&0xB)!=2 || !io.readable(0xC4000) || !io.readable(p.ready))return 0;
+           !Display13TC::Port::resolve(c[0],p) || (!hdmi && !dp) ||
+           !io.readable(0xC4000) || !io.readable(p.ready))return 0;
         const auto ready=io.read(p.ready);
-        return ready!=UINT32_MAX && (ready&7)==4 && p.legacyHPD(io.read(0xC4000)) ? 4 : 0;
+        // Fixed DP classification precedes setPortMode and AUX. A cold PHY
+        // can assert ready only after ownership; mode acquisition polls it.
+        return ready!=UINT32_MAX && (dp ? !(ready&3) : (ready&7)==4) && p.legacyHPD(io.read(0xC4000)) ? 4 : 0;
     }
     // Fixed Combo uses the same native mode for HDMI and SST DP. This is
     // classification only: startup separately proves AUX/PHY/boot operations.

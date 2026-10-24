@@ -51,7 +51,7 @@ CPUモデル名や機種固有の設定は不要ですが、実機での動作�
 
 ### 対応に追加改修が必要
 
-- Display13のeDP・固定DP・Type-C管理下の出力は、transportの接続に追加改修が必要です。
+- Display13のeDP・Combo DP・Type-C管理下の出力は、transportの接続に追加改修が必要です。
   モバイル系IDの受付だけでこれらの出力経路が有効になるわけではありません。
 - Rocket Lake-S：Tiger Lakeとは表示の電源・クロック制御が異なります。
   このリリースでは未対応で、実機検証の予定もありません。
@@ -92,7 +92,7 @@ GPUはPCI device IDから自動選択します。対応範囲内ではファー�
 
 Tiger Lakeはnative controllerとAUX配線が一致するVBTの固定DisplayPortをTC1〜TC4で自動選択します。固定DPとDP Alt Modeは検出したFIA構成を使用します。TC3/TC4の固定DPと非modular FIAは実装済み・実機未検証です。非modular FIAのprobeには対応するCompatビルドも使用してください。TC5/TC6と交差AUX配線には追加のbackend対応が必要です。
 
-Display13ではADL-NとADL-P/RPL-Pに共通のVBT選択を使い、Combo A/Bと固定TC1〜4のHDMI配線を扱います。TC配線には固定TC capabilityを持つ対応Compat providerが必要です。従来のADL-N HDMI明示propertyはCombo専用のままです。Display13のDPはAUX・link training・起動時引継ぎの統合が未完のため、実行時の受付を閉じています。
+Display13ではADL-NとADL-P/RPL-Pに共通のVBT選択を使い、Combo A/Bと固定TC1〜4のHDMI配線を扱います。TC配線には固定TC capabilityを持つ対応Compat providerが必要です。従来のADL-N HDMI明示propertyはCombo専用のままです。HDMIから起動したDisplay13 controllerに対して、固定TC1〜TC4のSST DisplayPortを試験的に実装しています。VBTのAUX配線が一致することと、対応するCompatビルドが必要です。実機検証は未完了です。DPからの起動、Combo DP、MST、USB-C DP Alt Mode、Thunderbolt、交差AUX配線は未対応です。
 
 ADL-P/RPL-Pは物理IDとfuseから求めた資源で共有Display13バックエンドを選択します。固定HDMI配線はVBTから取得し、`-wex-noaccel`でFramebufferのみの動作を維持します。旧9A49 donor選択も受け付けますが不要です。モバイル系IDと対応providerを含むGraphics資材が必要で、Graphics 0.2.0には含まれていません。対応するCompat providerは、起動を許可したDisplay13 framebufferのclientだけにAGDP personalityを提供します。既定policyでcallback登録を有効にし、board-IDごとの上書き設定を不要にします。
 

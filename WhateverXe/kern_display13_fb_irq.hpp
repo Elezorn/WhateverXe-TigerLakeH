@@ -149,7 +149,11 @@ template<class IO> Status enable(IO &io,State &s,uint32_t excludedPCH=0,uint32_t
         configured|=1U<<p;
     }
     if(active!=expectedPipes)return fail(io,s,Status::Topology);
-    const uint32_t excludedHPD=hpdExcluded(excludedPCH);
+    // This backend owns fixed legacy TC via PCH HPD. North TC/TBT
+    // interrupts describe DP-alt/TBT transports, even on the same physical
+    // connector. Mask those firmware enables for selected fixed ports too.
+    // Linux adlp_tc_phy_hpd_live_status separates these from PCH legacy HPD.
+    const uint32_t excludedHPD=hpdExcluded(excludedPCH|((ports&0x78)<<21));
     constexpr uint32_t otherBanks[] {0x44448,0x44468,HPDBank,0x44488};
     for(auto iir : otherBanks) {
         auto pending=io.read(iir+4)&~io.read(iir-4);
@@ -175,7 +179,9 @@ template<class IO> Status enable(IO &io,State &s,uint32_t excludedPCH=0,uint32_t
         io.write(0xC400C,pchIER&~excludedPCH);
         if((io.read(0xC400C)&excludedPCH) || (~io.read(0xC4004)&excludedPCH))
             return fail(io,s,Status::Readback);
-        // Do not ACK pending status or alter selected/unrelated bits.
+    }
+    if(excludedHPD) {
+        // Keep pending north status and every unrelated source intact.
         io.write(HPDBank-4,io.read(HPDBank-4)|excludedHPD);
         io.write(HPDBank+4,io.read(HPDBank+4)&~excludedHPD);
         if((io.read(HPDBank+4)&excludedHPD) || (~io.read(HPDBank-4)&excludedHPD))

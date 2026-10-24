@@ -68,8 +68,8 @@ int main() {
     // Cover all exclusion subsets and each selected TC1..4 independently.
     for(unsigned selected=0;selected<4;++selected)for(unsigned mask=0;mask<64;++mask) {
         if(mask&(1U<<selected))continue;
-        IO io;State state;const auto excluded=mask<<24,north=mask|(mask<<16);
-        const uint32_t keep=0x80000000U|(1U<<selected)|(1U<<(16+selected));
+        IO io;State state;const auto excluded=mask<<24,north=(mask|(1U<<selected))|((mask|(1U<<selected))<<16);
+        const uint32_t keep=0x80000000U;
         io.r[HPDBank+4]=north|keep;io.r[HPDBank-4]=keep;io.r[HPDBank]=north|keep;
         assert(enable(io,state,excluded,NativeGT,1,8U<<selected)==Status::Complete);
         assert(io.r[HPDBank+4]==keep && io.r[HPDBank-4]==(north|keep));
@@ -80,7 +80,7 @@ int main() {
      assert(enable(io,state,0x3e000000,NativeGT,1,8)==Status::Complete);}
     {IO io;State state;io.r[HPDBank+4]=0x40004;io.r[HPDBank-4]=0;
      assert(enable(io,state,0,NativeGT,1,8)==Status::ForeignIRQ && io.writes==std::vector<uint32_t>{Master});}
-    for(uint32_t bits:{1U,1U<<16,1U<<30}) {
+    for(uint32_t bits:{1U<<15,1U<<22,1U<<30}) {
         IO io;State state;io.r[HPDBank+4]=0x40004|bits;io.r[HPDBank-4]=0;
         assert(enable(io,state,0x3e000000,NativeGT,1,8)==Status::ForeignIRQ && io.writes==std::vector<uint32_t>{Master});
         assert(state.failureRegister==HPDBank+4 && state.failureBits==bits);
@@ -89,6 +89,12 @@ int main() {
         IO io;State state;io.r[HPDBank+4]=0x40004;io.r[HPDBank-4]=0;io.rejectRegister=reg;
         assert(enable(io,state,0x3e000000,NativeGT,1,8)==Status::Readback && !(io.r[Master]&Enable));
     }
+    // HDMI TC1/2 + cold DP TC3: GOP left north TC3/TBT3 enabled.
+    {IO io;State state;io.r[HPDBank+4]=0x40004;io.r[HPDBank-4]=0;
+     io.r[HPDBank]=0x40004;
+     assert(enable(io,state,0x38070000,NativeGT,1,0x38)==Status::Complete);
+     assert(!(io.r[HPDBank+4]&0x40004) && (io.r[HPDBank-4]&0x40004)==0x40004);
+     assert(io.r[HPDBank]==0x40004 && (io.r[0xC400C]&0x07000000)==0x07000000);}
     // ADL-P/N TC legacy HPD is PCH bit24+tc and a separate control bank.
     // Foreign masked statuses must survive both enable and collect.
     for(unsigned tc=0;tc<4;++tc)for(unsigned pulse=0;pulse<4;++pulse) {

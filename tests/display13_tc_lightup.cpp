@@ -18,6 +18,14 @@ struct IO {
     void signal(){step(6);}uint32_t port(){step(7);return portError;}
     void packets(){step(8);}
 };
+struct DPIO {
+    unsigned count {},fail {};uint32_t trainingError {};bool admission=true;
+    bool ready(bool clock){return admission && (!clock || count>0) && count!=fail;}
+    void step(unsigned n){assert(n==++count);}
+    void clocks(){step(1);}uint32_t train(){step(2);return trainingError;}
+    bool transClock(unsigned r,unsigned v){step(3);assert(r>=0x46140 && r<=0x46148 && v>=0x60000000);return count!=fail;}
+    void plane(){step(4);}void scaler(){step(5);}void pipe(){step(6);}void packets(){step(7);}
+};
 int main(){
     for(unsigned ddi=3;ddi<=6;++ddi)for(unsigned pipe=0;pipe<3;++pipe){
         IO io;const auto r=lightUpTMDS(io,ddi,pipe);
@@ -36,6 +44,18 @@ int main(){
     assert(r.status==port.portError && r.stage==LightStage::Port && port.count==7);
     unsigned notify=0;assert(finishMode([](){return 0U;},[&](){++notify;})==0 && notify==0);
     assert(finishMode([](){return 0xe00002d8U;},[&](){++notify;})==0xe00002d8U && notify==1);
+
+    for(unsigned ddi=3;ddi<=6;++ddi)for(unsigned pipe=0;pipe<3;++pipe){
+        DPIO io;io.fail=99;const auto r=lightUpDP(io,ddi,pipe);
+        assert(!r.status && r.stage==LightStage::Complete && io.count==7);
+    }
+    const LightStage dpStages[]={LightStage::Binding,LightStage::Clocks,LightStage::Training,LightStage::TransClock,
+        LightStage::Plane,LightStage::Scaler,LightStage::Pipe,LightStage::Packets};
+    for(unsigned fail=1;fail<=7;++fail){DPIO io;io.fail=fail;const auto r=lightUpDP(io,5,1);
+        assert(r.status && r.stage==dpStages[fail] && io.count==fail);}
+    for(auto error:{1U,0xe00002d6U,0xe00002d8U}){DPIO io;io.fail=99;io.trainingError=error;
+        const auto r=lightUpDP(io,5,1);assert(r.status==error && io.count==2 && r.stage==LightStage::Training);}
+    DPIO rejected;assert(lightUpDP(rejected,5,0).status && !rejected.count);
 
     // Execute the actual x86 patch bytes with both native flag outcomes.
     // Error keeps eax and skips all post-mode work. Success reaches the same

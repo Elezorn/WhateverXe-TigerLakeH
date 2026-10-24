@@ -17,7 +17,7 @@ struct Display13OutputWiring {
     }
     uint32_t selected() const {return hdmi|dp;}
     bool described() const {
-        if(!valid || !selected() || (selected()&~0x7FU) || (dp&~3U) || (hdmi&dp))return false;
+        if(!valid || !selected() || (selected()&~0x7FU) || (dp&~Physical) || (hdmi&dp))return false;
         uint32_t used=0;
         for(unsigned d=0;d<Ports;++d) {
             const auto pin=ddc[d];
@@ -43,15 +43,15 @@ struct Display13OutputWiring {
         if(!described() || !c || c[0]>=Ports)return false;
         if(hdmi&(1U<<c[0]))return matchesHDMI(c);
         if(!(dp&(1U<<c[0])))return false;
-        const uint32_t expected[]={c[0],c[0]+1,1,0,0x400,0x201};
+        const uint32_t expected[]={c[0],c[0]<3?c[0]+1:c[0]+6,1,c[0]<3?0U:1U,0x400,0x201};
         return !memcmp(c,expected,sizeof(expected));
     }
     // Validate all native identities before any mutation. Preserve TC's
     // donor field3 and every unselected record for the topology adapter.
     bool apply(void *platform,uint32_t bytes) const {
-        if(!described() || !platform || bytes<0x1C0 || !TGLComboDP::accepts(dp,platform,bytes))return false;
+        if(!described() || !platform || bytes<0x1C0 || !TGLComboDP::accepts(dp&3,platform,bytes))return false;
         auto p=static_cast<uint8_t *>(platform);if(p[0x12]!=Ports)return false;
-        for(unsigned d=0;d<Ports;++d)if(hdmi&(1U<<d)) {
+        for(unsigned d=0;d<Ports;++d)if((hdmi|(dp&0x78))&(1U<<d)) {
             const auto c=reinterpret_cast<const uint32_t *>(p+0x20+24*d);
             const uint32_t panel[]={0,0,0,0,2,0x18};
             if(!d && !memcmp(c,panel,24))continue;
@@ -63,7 +63,7 @@ struct Display13OutputWiring {
             const bool panel=!d && !c[2];
             c[1]=ddc[d];c[2]=2;c[4]=0x800;c[5]=panel?0x202:(c[5]&~9U)|2U;
         }
-        return TGLComboDP::apply(dp,platform,bytes);
+        return TGLComboDP::apply(dp&3,platform,bytes);
     }
 };
 #endif

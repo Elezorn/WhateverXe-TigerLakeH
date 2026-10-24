@@ -159,9 +159,9 @@ struct Clock {
     // generation-specific, but the FIA lane-enable register is still required.
     static uint32_t laneRegister(unsigned tc) {return tc<2?0x1638c0:0x16e8c0;}
     static uint32_t laneMask(unsigned tc) {return 15U<<(4*(tc&1));}
-    template<class IO> static bool lanes(IO &io,const Port &p) {
-        return preflight(io,p) && io.readable(laneRegister(p.tc)) &&
-            rmw(io,laneRegister(p.tc),laneMask(p.tc),laneMask(p.tc));
+    template<class IO> static bool lanes(IO &io,const Port &p,unsigned count=4) {
+        return (count==1 || count==2 || count==4) && preflight(io,p) && io.readable(laneRegister(p.tc)) &&
+            rmw(io,laneRegister(p.tc),laneMask(p.tc),((1U<<count)-1)<<(4*(p.tc&1)));
     }
     enum class LinkStage : uint32_t {Preflight,ReleaseDDI,StopPLL,Lanes,PLL,DDI,Signal,Complete};
     // Both Linux and the exact donor acquire DDI IO after enabling the PLL.

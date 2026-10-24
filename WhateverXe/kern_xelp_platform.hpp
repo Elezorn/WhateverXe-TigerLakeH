@@ -83,7 +83,7 @@ struct NativePorts {
 // legacy permits probing for mode4; it does not force mode4 or classify a
 // USB-C-capable connector as physically fixed DP. The provider checks generation-specific live state.
 // Type-C intent is represented but not admitted by either current backend.
-constexpr uint32_t ProbeABI=3,ProbeCapabilityABI=1,ProbeDisplay13ComboDP=1U,ProbeDisplay13FixedTC=2U;
+constexpr uint32_t ProbeABI=3,ProbeCapabilityABI=1,ProbeDisplay13ComboDP=1U,ProbeDisplay13FixedTC=2U,ProbeDisplay13FixedDP=4U;
 using QueryProbeCapabilities=uint32_t (*)(uint32_t,uint32_t);
 // Optional export: old ABI3 providers remain valid for their existing routes,
 // but their lack of a capability reply cannot authorize a new DP route.
@@ -93,6 +93,10 @@ inline bool display13ProbeCapable(QueryProbeCapabilities query) {
 inline bool display13TCProbeCapable(QueryProbeCapabilities query) {
     return query && (query(ProbeCapabilityABI,ProbeABI)&ProbeDisplay13FixedTC);
 }
+inline bool display13TCDPProbeCapable(QueryProbeCapabilities query) {
+    return query && (query(ProbeCapabilityABI,ProbeABI)&ProbeDisplay13FixedDP);
+}
+
 struct ProbeConfig {
     uint32_t abi {ProbeABI},bytes {sizeof(ProbeConfig)};
     Profile profile;

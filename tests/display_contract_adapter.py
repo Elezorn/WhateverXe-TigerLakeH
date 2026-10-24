@@ -16,6 +16,7 @@ code=r'''
 using C=XELP::DisplayContract;
 struct State {
 FIELDS
+ bool display13FBDPHooksReady=false,display13TCDPProbeReady=false;
  struct Native {bool valid=true;bool complete()const{return valid;}}tglTCNativeFunctions;
  bool tglHDMIB=false,adlsDisplaySelected=false,tglTrainingLeaseRequested=true;
  struct {struct {bool valid=false;}panel;}firmwarePorts;
@@ -38,6 +39,9 @@ int main() {
  s.display13FBAUXHooksReady=true;s.display13FBSSTHooksReady=false;
  assert(C::display13(s.display13Available(),true).missing()==(C::DPBoot13|C::SST13));
  s.display13FBSSTHooksReady=true;
+ s.display13FBDPHooksReady=true;assert(C::display13(s.display13Available(),true).missing()==C::DPBoot13);
+ s.display13TCDPProbeReady=true;assert(C::display13(s.display13Available(),true).ready());
+ s.display13FBDPHooksReady=false;assert(C::display13(s.display13Available(),true).missing()==C::DPBoot13);
  // TGL: candidate not yet registered, native donor setup is complete.
  // Missing framing, AUX, mode lock or cleanup must fail before any hotplug.
  s.tglTCAutoCandidates=8;assert(s.start().ready());
