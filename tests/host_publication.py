@@ -76,6 +76,15 @@ for(unsigned rev:{0U,12U,255U}) {
  XeHost host;host.processKernel(patcher);assert(!host.active && graphics.off && !host.backlightEnabled);
  assert(events[events.size()-2]==8); // Diagnostic dispatch does not admit driver hooks.
 }
+for(unsigned rev:{0U,12U,255U}) {
+ DeviceInfo::value.videoBuiltin=&gpu;DeviceInfo::value.managementEngine=nullptr;
+ publish=true;published=false;deviceProperty=&fake;fake.value=0x9A49;identity=0x46A68086;revision=rev;events.clear();graphics.off=false;
+ XeHost host;host.processKernel(patcher);
+ assert(host.active && !graphics.off && !host.backlightEnabled);
+ assert(events[events.size()-2]==8);
+ const auto profile=XELP::identify(identity,revision,0x9A498086);
+ assert(profile.displayAdmitted() && !profile.admitted());
+}
 puts("PASS actual host admission: absent/unpublished/unsupported GPUs never enter Xe; published PCI reads precede selected-driver dispatch");}
 '''
 with tempfile.TemporaryDirectory(prefix='wxe-host-') as d:

@@ -31,7 +31,9 @@ void XeHost::processKernel(KernelPatcher &patcher) {
  // Match WEG ordering: PCI config reads require a published IOPCIDevice.
  const bool published=gpu && WIOKit::awaitPublishing(gpu);
  const auto profile=published ? XELP::deviceProfile(gpu) : XELP::Profile {};
- active=profile.admitted();
+ // The host must dispatch framebuffer patches and accelerator rejection
+ // hooks even when the selected profile deliberately has no Render backend.
+ active=profile.displayAdmitted();
  const auto display=XELP::displayAdapter(profile.family);
  backlightEnabled=active && (display==XELP::DisplayAdapter::TGL || display==XELP::DisplayAdapter::ADLS) &&
   info->firmwareVendor!=DeviceInfo::FirmwareVendor::Apple;
