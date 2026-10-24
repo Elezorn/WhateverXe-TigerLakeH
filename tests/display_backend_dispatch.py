@@ -26,7 +26,7 @@ struct Kext {size_t loadIndex;};Kext kextIntelTGL{2};
 bool loadOnly=false;
 bool checkKernelArgument(const char *arg) {assert(!strcmp(arg,"-wex-adln-load-only"));return loadOnly;}
 struct XE {
- bool adlpFramebufferOnly=false,adlpRenderRequested=false;
+ bool adlpDisplaySelected=false,adlpRenderRequested=false;
  bool display13FramebufferRequested=false,adlnRequested=false,adlnDetected=false;
  bool adlnNativeRequested=false,adlnNativeReady=false,display13BootReady=false,tglActive=false;
  Kext *currentFramebuffer=nullptr,*currentGraphics=nullptr;
@@ -95,14 +95,14 @@ void certificates() {
 }
 int main() {
  for(unsigned module=1;module<=3;++module){
-  XE x;KernelPatcher p;Kext fb{1};x.adlpFramebufferOnly=true;x.display13FramebufferRequested=true;x.currentFramebuffer=&fb;
+  XE x;KernelPatcher p;Kext fb{1};x.adlpDisplaySelected=true;x.display13FramebufferRequested=true;x.currentFramebuffer=&fb;
   const bool result=x.dispatch(p,module,0,0);
   assert(x.call==(module==1?XE::Display13:module==2?XE::Rejected:XE::None));assert(result==(module!=3));
  }
 
  for(bool ready:{false,true})for(unsigned module=1;module<=3;++module) {
   XE x;KernelPatcher p;Kext fb{1},graphics{2};
-  x.adlpFramebufferOnly=x.adlpRenderRequested=x.display13FramebufferRequested=true;
+  x.adlpDisplaySelected=x.adlpRenderRequested=x.display13FramebufferRequested=true;
   x.adlnRequested=x.adlnDetected=x.adlnNativeRequested=true;x.adlnNativeReady=x.tglActive=ready;
   x.currentFramebuffer=&fb;x.currentGraphics=&graphics;
   const bool result=x.dispatch(p,module,0,0);

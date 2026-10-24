@@ -46,7 +46,7 @@ struct KernelPatcher {
  }
 };
 struct XE {
- bool adlpLoadOnly=false,adlpFramebufferOnly=false;XELP::Profile xeProfile;unsigned initialized=0;
+ bool adlpLoadOnly=false,adlpDisplaySelected=false;XELP::Profile xeProfile;unsigned initialized=0;
  void select(){SELECTION ++initialized;}
  bool processADLPLoadOnly(KernelPatcher &,size_t,mach_vm_address_t,size_t);
  static IOService *rejectADLPFramebufferProbe(IOService *,IOService *,SInt32 *);
@@ -79,7 +79,7 @@ int main(){
   std::vector<uint8_t> image(0x50000);auto base=reinterpret_cast<uintptr_t>(image.data());
   const uint8_t gt[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x28};
   memcpy(image.data()+0x238e2,gt,17);memcpy(image.data()+0x23ecc,gt,4);
-  XE xe;xe.adlpFramebufferOnly=true;KernelPatcher p;
+  XE xe;xe.adlpDisplaySelected=true;KernelPatcher p;
   assert(xe.processADLPLoadOnly(p,module,base,image.size())==(module==2));assert(p.routed==(module==2?2U:0U));
   if(module==2)assert(IORegistryEntry::props.at("ADLPFBOnlyAcceleratorBlocked"));++cases;
  }

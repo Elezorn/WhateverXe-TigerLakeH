@@ -20,7 +20,7 @@ bool configure(void *c,const XELP::ProbeConfig *p){assert(c==(void*)1);seen=*p;+
 struct XE {
  XELP::Profile xeProfile=XELP::identify(0x46A68086,12,0x9A498086);
  XELP::VBT::Ports firmwarePorts;
- bool adlpFramebufferOnly=true,adlsDisplaySelected=false,tglHDMIWiringApplied=false,tglTCWiringLoaded=false;
+ bool adlpDisplaySelected=true,adlsDisplaySelected=false,tglHDMIWiringApplied=false,tglTCWiringLoaded=false;
  bool display13FBTopologyHooksReady=true,display13TCProbeReady=true,display13FBTCHooksReady=true;
  bool display13DPProbeReady=false,display13FBSSTHooksReady=true,display13FBAUXHooksReady=true;
  uintptr_t xelpProviderProbe=1,xelpProviderConfigureProbe=reinterpret_cast<uintptr_t>(configure);

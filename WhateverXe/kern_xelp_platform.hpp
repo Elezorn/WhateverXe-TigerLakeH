@@ -14,13 +14,13 @@ struct Profile {
     GT gt {GT::Unknown};
     Donor donor {Donor::Unknown};
     uint32_t effectiveIdentity {}; // Table selector; may come from device-id.
-    // Initial ADL-P FB candidate: donor selector does not change physical
-    // Display13 identity and grants no Render/Accelerator qualification.
-    bool framebufferOnlyADLP() const {
+    // Mobile Display13 selection is distinct from whether Render is requested.
+    // The donor selector never changes the physical Display13 identity.
+    bool mobileDisplay13() const {
         return identity==0x46A68086 && effectiveIdentity==0x9A498086 && revision<=255 &&
             family==Family::AlderLakeP && display==Display::XeLPD && gt==GT::Unknown && donor==Donor::C004FC1A;
     }
-    bool displayAdmitted() const {return admitted() || framebufferOnlyADLP();}
+    bool displayAdmitted() const {return admitted() || mobileDisplay13();}
     bool overridden() const {return identity!=effectiveIdentity;}
     // Select the implemented family backend for every PCI revision. Hardware
     // validation is independent; a stepping split needs a concrete behavior delta.

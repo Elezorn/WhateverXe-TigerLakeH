@@ -45,7 +45,7 @@ struct IOService {
 #define OSDynamicCast(T,p) dynamic_cast<T *>(p)
 #define OSSafeReleaseNULL(p) do{p=nullptr;}while(0)
 struct Handoff {
- bool adlpFramebufferOnly=true,ready=true;unsigned calls=0;
+ bool adlpDisplaySelected=true,ready=true;unsigned calls=0;
  bool prepareDisplay13BootScanout(IOService *provider){assert(provider);++calls;return ready;}
 } handoff;
 bool prepare(IOService *that,IOService *provider){

@@ -215,10 +215,10 @@ static bool xelpSelectedDevice(IOPCIDevice *pci) {
 }
 static bool xelpDisplay13RenderDevice(IOPCIDevice *pci) {
     return (xelpSelectedProfile.family==XELP::Family::AlderLakeN ||
-        xelpSelectedProfile.framebufferOnlyADLP()) && xelpSelectedDevice(pci);
+        xelpSelectedProfile.mobileDisplay13()) && xelpSelectedDevice(pci);
 }
 static bool xelpDisplay13Device(IOPCIDevice *pci) {
-    return (XELP::displayAdapter(xelpSelectedProfile.family)==XELP::DisplayAdapter::ADLN || xelpSelectedProfile.framebufferOnlyADLP()) &&
+    return (XELP::displayAdapter(xelpSelectedProfile.family)==XELP::DisplayAdapter::ADLN || xelpSelectedProfile.mobileDisplay13()) &&
         xelpSelectedProfile.display==XELP::Display::XeLPD && xelpSelectedDevice(pci);
 }
 // Detailed read-only display evidence is opt-in; control and first-fault
@@ -3752,18 +3752,18 @@ void XE::selectProfile(const XELP::Profile &profile) {
         profile.display==XELP::Display::XeLPD && profile.gt==XELP::GT::ADLNSmall;
     modDVMTCalcFix.available=profile.displayAdmitted();
     const bool nativeOS=XELP::kernelOS(version)!=XELP::OS::Unknown && XELP::kernelOS(version)!=XELP::OS::Donor;
-    adlpFramebufferOnly=profile.framebufferOnlyADLP() && nativeOS;
+    adlpDisplaySelected=profile.mobileDisplay13() && nativeOS;
     // Preserve the accepted Display13/TC handoff when enabling Render.
     // noaccel still selects the exact FB-only rejection path.
-    adlpRenderRequested=adlpFramebufferOnly && !checkKernelArgument("-wex-noaccel");
+    adlpRenderRequested=adlpDisplaySelected && !checkKernelArgument("-wex-noaccel");
     adlnRequested=adlnRequested || adlpRenderRequested;
     adlnDetected=adlnRequested;
     display13FramebufferRequested=profile.displayAdmitted() && profile.display==XELP::Display::XeLPD &&
-        (XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLN || adlpFramebufferOnly) && nativeOS;
+        (XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLN || adlpDisplaySelected) && nativeOS;
     display13TraceEnabled=display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
     display13Offline=display13FramebufferRequested && checkKernelArgument("-wex-display13-offline");
     if(display13FramebufferRequested)currentFramebuffer=&kextIntelTGLFb;
-    if(adlpFramebufferOnly && !adlpRenderRequested) {
+    if(adlpDisplaySelected && !adlpRenderRequested) {
         tglRequested=tglAcceleratorRequested=false;currentGraphics=&kextIntelTGL;return;
     }
     if(adlnRequested) {
@@ -3795,7 +3795,7 @@ void XE::deinit() {}
 Display13OutputWiring XE::display13BoardWiring(IOService *provider) {
     auto property=provider->getProperty("xelp-hdmi-wiring");
     if(!property)property=provider->getProperty("tgl-hdmi-wiring");
-    if(adlpFramebufferOnly) {
+    if(adlpDisplaySelected) {
         // VBT remains the authority for pin/transport. No Combo property is
         // silently interpreted as a TC policy. Select every supported fixed HDMI
         // route from firmware; connection state is checked by the provider.
@@ -3825,7 +3825,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	// Bootstrap runs before framebuffer start loads its board policy. Native
 	// GOP qualification must already use that physical port, not assume B.
     const auto board=display13BoardWiring(pci);adlnOutputWiring=board;
-    if(displayRequested && !Display13FBTopology::supportedWiring(board,adlpFramebufferOnly)) {
+    if(displayRequested && !Display13FBTopology::supportedWiring(board,adlpDisplaySelected)) {
         pci->setProperty("N97NativeRoutingUnavailable",true);return;
     }
 	auto bootDDI=displayRequested ? UINT32_MAX : 1U;
@@ -3889,7 +3889,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 		static_cast<uint32_t>(result.status), result.poweredPipes, result.activePipes, result.hdmiBPipes);
 	// ADL-P adopts a validated firmware surface below. A destructive plane
 	// exercise before native controller start is not a startup prerequisite.
-	if (linearTest && !adlpFramebufferOnly) {
+	if (linearTest && !adlpDisplaySelected) {
         auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0);
         if(bootDDI>=3)pci->setProperty("WEXDisplay13TCBoot",&tc,sizeof(tc));
 		auto linear=AlderLakeN::reinitializeLinear(io,result,barReady && xelpMemoryMatches(pci),bootDDI,
@@ -4099,7 +4099,7 @@ bool XE::xelpBindProbe(void *controller) {
         config.legacyBackend=tglAUXParentMask;
     } else {
         if(!display13FBTopologyHooksReady || controller!=adlnTopologyController ||
-            !Display13FBTopology::supportedWiring(adlnOutputWiring,adlpFramebufferOnly) ||
+            !Display13FBTopology::supportedWiring(adlnOutputWiring,adlpDisplaySelected) ||
             ((adlnOutputWiring.hdmi&0x78) && (!display13TCProbeReady || !display13FBTCHooksReady)) ||
             (adlnOutputWiring.dp && (!display13DPProbeReady || !display13FBSSTHooksReady || !display13FBAUXHooksReady)))return false;
         config.combo=adlnOutputWiring.selected()&3;config.comboBackend=3;
@@ -4230,7 +4230,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
         if(map)map->release();
     }
     if(!xeProfile.displayAdmitted())return;
-    SYSLOG("igfx","Xe display bootstrap physical=%x FB-only=%u",xeProfile.identity,adlpFramebufferOnly);
+    SYSLOG("igfx","Xe display bootstrap physical=%x FB-only=%u",xeProfile.identity,adlpDisplaySelected);
     xelpSelectedGPU=physicalGPU;xelpSelectedProfile=xeProfile;
 	if (adlnDetected || display13FramebufferRequested) {
         xelpReadFirmware(physicalGPU);
@@ -4327,7 +4327,7 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
 	// Keep both adapters outside the large Display12 framebuffer patch frame.
 	if(display13FramebufferRequested && currentFramebuffer && currentFramebuffer->loadIndex==index)
 		return processDisplay13Framebuffer(patcher,index,address,size);
-    if(adlpFramebufferOnly && !adlpRenderRequested) {
+    if(adlpDisplaySelected && !adlpRenderRequested) {
         if(index==kextIntelTGL.loadIndex)return processADLPLoadOnly(patcher,index,address,size);
         return false;
     }
@@ -6144,7 +6144,7 @@ bool XE::processDisplay13FramebufferTopology(KernelPatcher &patcher,size_t index
 bool XE::wrapAlderLakeNGetOSInformation(IOService *controller) {
 	auto s=callbackXE;
 	if(!s->display13FBTopologyHooksReady || !controller || controller->getMetaClass()->getClassSize()<0x1C20 ||
-		!Display13FBTopology::supportedWiring(s->adlnOutputWiring,s->adlpFramebufferOnly) || !checkKernelArgument("-disablegfxfirmware"))return false;
+		!Display13FBTopology::supportedWiring(s->adlnOutputWiring,s->adlpDisplaySelected) || !checkKernelArgument("-disablegfxfirmware"))return false;
 	if(!FunctionCast(wrapAlderLakeNGetOSInformation,s->orgAlderLakeNGetOSInformation)(controller))return false;
 	auto platform=Display13FBMemory::field<void *>(controller,0xD40);
 	if(!Display13FBTopology::apply(s->adlnPlatform,sizeof(s->adlnPlatform),platform,s->adlnOutputWiring))return false;
@@ -7391,9 +7391,9 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	if(s->tglObservationController==that)s->tglObservationController=nullptr;
 	if(!pci)return false;
     const auto board=s->display13BoardWiring(provider);
-    if(!Display13FBTopology::supportedWiring(board,s->adlpFramebufferOnly) ||
+    if(!Display13FBTopology::supportedWiring(board,s->adlpDisplaySelected) ||
        board.selected()!=s->adlnOutputWiring.selected())return false;
-    if(s->adlpFramebufferOnly && (!s->display13FBTCHooksReady || !s->display13TCProbeReady)) {
+    if(s->adlpDisplaySelected && (!s->display13FBTCHooksReady || !s->display13TCProbeReady)) {
         IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBTCUnavailable",true);return false;
     }
  const auto contract=XELP::DisplayContract::display13(s->display13Available(),s->adlnOutputWiring.dp!=0);
@@ -7428,7 +7428,7 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 		(provider->getProperty("AAPL,GfxYTile") || provider->setProperty("AAPL,GfxYTile",&enabled,sizeof(enabled)));
 	OSSafeReleaseNULL(yTiling);OSSafeReleaseNULL(mode);OSSafeReleaseNULL(features);
 	if(!featuresSelected)return false;
-    if(s->adlpFramebufferOnly && !s->prepareDisplay13BootScanout(pci))return false;
+    if(s->adlpDisplaySelected && !s->prepareDisplay13BootScanout(pci))return false;
 	SYSLOG("igfx","Display13 native controller start enter offline=%u",display13Offline);
 	const auto started=FunctionCast(wrapDisplay13FramebufferStart,s->orgDisplay13FramebufferStart)(that,provider);
 	SYSLOG("igfx","Display13 native controller start return=%u",started);
@@ -9636,7 +9636,7 @@ bool XE::processADLPLoadOnly(KernelPatcher &patcher,size_t index,mach_vm_address
     const uint8_t startHead[]={0x55,0x48,0x89,0xe5};
     auto p=patcher.solveSymbol<mach_vm_address_t>(index,probe,address,size);
     auto q=patcher.solveSymbol<mach_vm_address_t>(index,start,address,size);patcher.clearError();
-    bool ready=(adlpLoadOnly || (adlpFramebufferOnly && !fb)) && (fb || index==kextIntelTGL.loadIndex) && size>probeOffset+32 && size>startOffset+32 &&
+    bool ready=(adlpLoadOnly || (adlpDisplaySelected && !fb)) && (fb || index==kextIntelTGL.loadIndex) && size>probeOffset+32 && size>startOffset+32 &&
         p==address+probeOffset && q==address+startOffset &&
         !memcmp(reinterpret_cast<void *>(p),fb?fbHead:gtHead,sizeof(gtHead)) &&
         !memcmp(reinterpret_cast<void *>(q),startHead,sizeof(startHead));
@@ -9651,7 +9651,7 @@ bool XE::processADLPLoadOnly(KernelPatcher &patcher,size_t index,mach_vm_address
     }
     patcher.clearError();
     IORegistryEntry::getRegistryRoot()->setProperty(fb?"ADLPFramebufferLoadOnlyReady":"ADLPAcceleratorLoadOnlyReady",ready);
-    if(adlpFramebufferOnly && !fb)IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBOnlyAcceleratorBlocked",ready);
+    if(adlpDisplaySelected && !fb)IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBOnlyAcceleratorBlocked",ready);
     SYSLOG("igfx","ADL-P load-only: %s probe/start barriers ready=%u",fb?"framebuffer":"accelerator",ready);
     return ready;
 }

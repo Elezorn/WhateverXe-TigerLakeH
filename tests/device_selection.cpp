@@ -41,7 +41,7 @@ int main() {
  auto q=p;q.effectiveIdentity=0x46D18086;assert(!same(p,q));
  ProbeConfig c;c.profile=p;c.combo=c.comboBackend=3;assert(!c.valid());
  id=0x9A49;p=select(0x46A68086,12,true,&id,4);
- assert(p.displayAdmitted() && !p.admitted() && p.framebufferOnlyADLP());
+ assert(p.displayAdmitted() && !p.admitted() && p.mobileDisplay13());
  c={};c.profile=p;c.comboBackend=3;c.legacy=8;c.legacyBackend=0x78;assert(c.valid());
  c.abi=2;assert(!c.valid());c.abi=3;c.profile.gt=GT::TGLGT2;assert(!c.valid());
  puts("PASS device table, physical/effective identity, strict override bytes/vendor/revision, model choice and ABI3");

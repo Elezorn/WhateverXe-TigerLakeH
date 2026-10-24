@@ -20,7 +20,7 @@ struct XE {
  XELP::Profile xeProfile;
  bool display12SmallGTDetected=false,adlsDisplaySelected=false;
  bool adlnRequested=false,adlnDetected=false,adlnKernelReady=false,adlnNativeRequested=false;
- bool adlpFramebufferOnly=false,adlpRenderRequested=false,display13FramebufferRequested=false;
+ bool adlpDisplaySelected=false,adlpRenderRequested=false,display13FramebufferRequested=false;
  bool tglRequested=false,tglAcceleratorRequested=false,tglInactivePorts=false,tglPG1Poll=false;
  bool tglClockOrderRequested=false,tglTrainingLeaseRequested=false,tglProgramEnabled=false;
  int *currentFramebuffer=nullptr,*currentGraphics=nullptr;
@@ -37,7 +37,7 @@ int main(){
   assert(XELP::same(x.xeProfile,p));
   assert(x.currentFramebuffer==&kextIntelTGLFb && x.currentGraphics==&kextIntelTGL);
   assert(x.display13FramebufferRequested==(which!=2));
-  assert(x.adlpFramebufferOnly==(which==0));
+  assert(x.adlpDisplaySelected==(which==0));
   assert(x.adlpRenderRequested==(which==0&&!off));
   assert(x.adlnDetected==(which==1 || (which==0&&!off)));
   assert(x.tglAcceleratorRequested==!off);

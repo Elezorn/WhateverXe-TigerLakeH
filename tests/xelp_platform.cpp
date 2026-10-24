@@ -13,7 +13,7 @@ struct IO {
 };
 int main() {
  auto candidate=identify(0x46a68086,12,0x9a498086);
- assert(candidate.framebufferOnlyADLP() && candidate.displayAdmitted() && !candidate.admitted());
+ assert(candidate.mobileDisplay13() && candidate.displayAdmitted() && !candidate.admitted());
  assert(candidate.family==Family::AlderLakeP && candidate.display==Display::XeLPD && candidate.gt==GT::Unknown);
  assert(!identify(0x46a68086,12).displayAdmitted());
  assert(!identify(0x46a38086,12,0x9a498086).displayAdmitted());
