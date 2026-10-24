@@ -45,26 +45,27 @@ struct IO {
 int main() {
     for(unsigned d=3;d<=6;++d) {
         IO io(d);Mode m;assert(m.connect(io,1,2,d).status==Status::Complete);
-        assert(m.phase==Mode::Phase::Active && io.native==4 && m.ownership.active && m.lease.owner==&io.power);
+        assert(m.phase==Mode::Phase::Active && io.native==4 && m.ownership.active && m.auxLease.owner==&io.power);
         assert(io.sequence.back()==0x550 && io.regs[io.port.buffer]&64);
+        assert(!(io.power.owned & Display13Power::ddiDomain(d))); // DDI waits for PLL enable.
         auto count=io.sequence.size();assert(m.connect(io,1,2,d).status==Status::Complete && io.sequence.size()==count);
         assert(m.connect(io,1,3,d).status==Status::InUse && io.sequence.size()==count);
-        io.quiet=false;assert(m.disconnect(io,1,2,d).status==Status::InUse && m.disconnectPending && m.lease.owner);
+        io.quiet=false;assert(m.disconnect(io,1,2,d).status==Status::InUse && m.disconnectPending && m.auxLease.owner);
         assert(m.connect(io,1,2,d).status==Status::Complete && !m.disconnectPending);
         io.quiet=true;io.regs[io.port.buffer]|=1U<<31;
-        assert(m.disconnect(io,1,2,d).status==Status::InUse && m.lease.owner);
+        assert(m.disconnect(io,1,2,d).status==Status::InUse && m.auxLease.owner);
         io.regs[io.port.buffer]&=~(1U<<31);
         assert(m.disconnect(io,1,2,d).status==Status::Complete);
-        assert(m.phase==Mode::Phase::Idle && !m.ownership.owner && !m.lease.owner && !io.native);
+        assert(m.phase==Mode::Phase::Idle && !m.ownership.owner && !m.auxLease.owner && !io.native);
         assert(m.connect(io,1,2,d).status==Status::Complete);assert(m.disconnect(io,1,2,d).status==Status::Complete);
     }
     {IO io(3);Mode m;io.regs[io.port.buffer]=0x80000040;io.adopt=true;
      assert(m.connect(io,1,2,3).status==Status::Complete);assert(io.regs[io.port.buffer]==0x80000040);}
     {IO io(3);Mode m;io.regs[io.port.buffer]=0x80000040;
-     assert(m.connect(io,1,2,3).status==Status::NeedsAdoption && m.phase==Mode::Phase::Cleanup && m.accessLease.owner && !m.lease.owner);
+     assert(m.connect(io,1,2,3).status==Status::NeedsAdoption && m.phase==Mode::Phase::Cleanup && m.accessLease.owner && !m.auxLease.owner);
      assert(!io.native && m.connect(io,1,2,3).status==Status::InUse);}
     {IO io(3);Mode m;io.nativeFail=true;
-     assert(m.connect(io,1,2,3).status==Status::Readback && m.ownership.owner && m.lease.owner);
+     assert(m.connect(io,1,2,3).status==Status::Readback && m.ownership.owner && m.auxLease.owner);
      io.nativeFail=false;assert(m.disconnect(io,1,2,3).status==Status::Complete);}
     {IO io(3);Mode m;io.auxOK=false;
      assert(m.connect(io,1,2,3).status==Status::NoPower && m.ownership.owner && !io.native && !io.power.faulted);
@@ -83,13 +84,13 @@ int main() {
         assert(Port::resolve(second,io.port));io.native=0;
         assert(other.connect(io,1,2,second).status==Status::Complete);
         assert(other.disconnect(io,1,2,second).status==Status::Complete && !other.accessLease.owner);
-        assert(io.regs[0x64300]==neighbor && (io.regs[0x45444]&0xc0)==0xc0 && (io.regs[0x45454]&0xc0)==0xc0);
-        assert(Display13Power::held(io,io.power,Mode::domains(3)));
+        assert(io.regs[0x64300]==neighbor && (io.regs[0x45444]&0xc0)==0xc0 && !(io.regs[0x45454]&0xc0));
+        assert(Display13Power::held(io,io.power,Display13Power::auxDomain(3)));
         io.failedTC=second-3;
         const auto failure=other.connect(io,1,2,second);
         assert(failure.status==Status::NoPower && failure.power.status==Display13Power::Status::StateTimeout);
         assert(failure.power.domain==12+2*(second-3) && failure.power.isolated && !io.power.faulted);
-        assert(Display13Power::held(io,io.power,Mode::domains(3)));
+        assert(Display13Power::held(io,io.power,Display13Power::auxDomain(3)));
         assert(other.disconnect(io,1,2,second).status==Status::Complete);
         io.failedTC=99;assert(other.connect(io,1,2,second).status==Status::Complete);
     }

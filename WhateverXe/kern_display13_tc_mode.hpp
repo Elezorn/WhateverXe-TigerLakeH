@@ -14,10 +14,11 @@ struct Mode {
     uintptr_t controller {},object {};unsigned ddi {};
     Phase phase {Phase::Idle};bool disconnectPending {};
     Ownership ownership;
-    // ADLP: register/lane access -> ownership -> AUX cold block -> DDI IO.
+    // ADLP: register/lane access -> ownership -> AUX cold block.
+    // DDI IO belongs to the clock lifecycle, after the PLL is running.
     // An already-powered firmware link is not evidence that these scopes can
     // be requested together on an unowned, cold PHY.
-    Display13Power::Lease accessLease,auxLease,lease;
+    Display13Power::Lease accessLease,auxLease;
     static uint32_t accessDomains() {return Display13Power::bit(Display13Power::Domain::PW2);}
     Mode()=default;Mode(const Mode&)=delete;Mode& operator=(const Mode&)=delete;
     static uint32_t domains(unsigned d) {
@@ -47,8 +48,6 @@ struct Mode {
         if(r.phy.status!=Status::Complete){r.status=r.phy.status;return r;}
         r.power=io.acquireDomains(auxLease,Display13Power::auxDomain(d));
         if(r.power.status!=Display13Power::Status::Complete){r.status=Status::NoPower;return r;}
-        r.power=io.acquireDomains(lease,Display13Power::ddiDomain(d));
-        if(r.power.status!=Display13Power::Status::Complete){r.status=Status::NoPower;return r;}
         r.native=io.nativeSetMode(4);
         if(r.native || io.nativeMode()!=4){r.status=Status::Readback;return r;}
         phase=Phase::Active;disconnectPending=false;r.status=Status::Complete;return r;
@@ -64,10 +63,6 @@ struct Mode {
         if(io.nativeMode()!=0) {
             r.native=io.nativeSetMode(0);
             if(r.native || io.nativeMode()!=0){r.status=Status::Readback;return r;}
-        }
-        if(lease.owner) {
-            r.power=io.releaseDomains(lease);
-            if(r.power.status!=Display13Power::Status::Complete){r.status=Status::NoPower;return r;}
         }
         if(auxLease.owner) {
             r.power=io.releaseDomains(auxLease);

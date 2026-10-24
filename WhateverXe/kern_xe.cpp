@@ -4722,10 +4722,37 @@ struct Display13FBTCIO : Display13FBTCAuxIO {
     }
     bool powerHeld() {
         if(!accessHeld())return false;auto &c=display13FBPower;const auto &mode=c.tcMode[tc];
-        if(mode.lease.owner!=&c.bridge.state || mode.auxLease.owner!=&c.bridge.state ||
-           mode.lease.domains!=Display13Power::dependencies(Display13Power::ddiDomain(tc+3)) ||
+        if(mode.auxLease.owner!=&c.bridge.state ||
            mode.auxLease.domains!=Display13Power::dependencies(Display13Power::auxDomain(tc+3)))return false;
-        Display13FBPowerIO io{map};return Display13Power::held(io,c.bridge.state,Display13TC::Mode::domains(tc+3));
+        Display13FBPowerIO io{map};return Display13Power::held(io,c.bridge.state,mode.auxLease.domains);
+    }
+    bool linkHeld() {
+        Display13FBPowerIO io{map};return powerHeld() && display13FBPower.bridge.ddiHeld(io,tc+3);
+    }
+    // Native enableClocks/disableClocks also own the DDI reference. Our
+    // replacement must reproduce that contract after/before the PLL change.
+    bool linkPower(bool enable) {
+        auto &c=display13FBPower;Display13FBPowerIO io{map};const auto ddi=tc+3;
+        if(!Display13Power::objectAssociations(c.power,0x80,c.controller,0xC60))return false;
+        Display13Power::Result r;r.status=Display13Power::Status::Complete;
+        if(enable) {
+            if(!c.bridge.retainsDDI(ddi))r=c.bridge.getDDI(io,ddi);
+        } else if(c.bridge.nativeDDIRefs(ddi)) {
+            if(c.bridge.nativeDDIRefs(ddi)!=1)return false;
+            // The protected GOP ref is transferred by adoptBootPath, not us.
+            if(!(c.bridge.bootPort==ddi && c.bridge.bootDDIProtected))r=c.bridge.putDDI(io,ddi);
+        }
+        return r.status==Display13Power::Status::Complete &&
+            Display13Power::publishObject(c.bridge,c.power,0x80,c.controller,0xC60);
+    }
+    bool unstarted() {
+        // A failed mode acquisition never started a PLL. Cleanup must not
+        // demand full output power or turn that known local failure global.
+        auto &c=display13FBPower;Display13TC::Port p;
+        if(!accessHeld() || !Display13TC::Port::resolve(tc+3,p) || c.bridge.nativeDDIRefs(tc+3) ||
+           !quiescent(tc+3))return false;
+        const auto pll=read(p.pll);
+        return pll!=UINT32_MAX && !(pll&0xcc000000U) && !c.tcSignalReady[tc];
     }
     bool owned(unsigned ddi) {
         const auto &m=display13FBPower.tcMode[tc];
@@ -6309,8 +6336,7 @@ void XE::wrapDisplay13TCEnableClocks(void *controller,void *raw,void *other,uint
         const auto plan=Display13TC::TMDSClock::calculate(rate,c.clock.refKHz);
         // Native modeset must first stop the old scanout; this transaction
         // may then retire its PLL before programming a different timing.
-        ok=plan.valid() && Display13TC::Clock::disable(io,p) && Display13TC::Clock::enable(io,p,plan) &&
-            Display13TC::TMDSSignal::program(io,p,self->firmwarePorts.port[ddi].hdmiPreset);
+        ok=Display13TC::Clock::startLink(io,p,plan,self->firmwarePorts.port[ddi].hdmiPreset);
         c.tcSignalReady[tc]=ok;
     }
     if(!ok)adlnFault(c.clockFaulted,__LINE__);
@@ -6324,7 +6350,8 @@ void XE::wrapDisplay13TCDisableClocks(void *controller,void *raw,void *other) {
     if(!c.lock)return;IOLockLock(c.lock);const auto ddi=display13TCTarget(port,true);bool ok=false;
     if(controller==c.controller && (!other || other==raw) && ddi<7 && !c.tcBusy[ddi-3]) {
         Display13FBTCIO io{port,ddi-3};Display13TC::Port p;Display13TC::Port::resolve(ddi,p);
-        ok=Display13TC::Clock::disable(io,p);if(ok)c.tcSignalReady[ddi-3]=false;
+        ok=Display13TC::Clock::stopLink(io,p);
+        if(ok)c.tcSignalReady[ddi-3]=false;
     }
     if(!ok)adlnFault(c.clockFaulted,__LINE__);
     uint32_t record[]={1,ddi,ok};IOLockUnlock(c.lock);
@@ -6337,7 +6364,7 @@ uint32_t XE::wrapDisplay13TCSignal(void *raw,uint32_t swing,uint32_t emphasis,vo
     if(!c.lock)return kIOReturnNotReady;IOLockLock(c.lock);const auto ddi=display13TCTarget(port);
     // TMDS signal parameters were programmed while the path was stopped,
     // before native enablePipe. Do not run TGL DP's late voltage sequence.
-    bool ok=false;if(ddi<7){Display13FBTCIO io{port,ddi-3};ok=io.owned(ddi) && c.tcSignalReady[ddi-3];}
+    bool ok=false;if(ddi<7){Display13FBTCIO io{port,ddi-3};ok=io.owned(ddi) && io.linkHeld() && c.tcSignalReady[ddi-3];}
     if(!ok)adlnFault(c.clockFaulted,__LINE__);IOLockUnlock(c.lock);
     return ok ? 0 : kIOReturnNotReady;
 }
@@ -6363,7 +6390,7 @@ uint32_t XE::wrapDisplay13TCLightUp(void *controller,void *rawFB,void *rawPath,c
                 scaler && scaler->getMetaClass()->getClassSize()>=0x58 &&
                 Display13FBMemory::field<void *>(scaler,0x10)==fb && Display13FBMemory::field<void *>(scaler,0x28)==c.access &&
                 !c.memoryFaulted && !c.watermarkFaulted && !c.clockStopped && !c.tcBusy[ddi-3] &&
-                c.bridge.outputHeld(power,ddi,pipeIndex);
+                (clock ? c.bridge.outputHeld(power,ddi,pipeIndex) : c.bridge.pipeHeld(power,pipeIndex));
             if(ok){Display13FBTCIO tc{object,ddi-3};ok=tc.owned(ddi) && (!clock || c.tcSignalReady[ddi-3]);}
             IOLockUnlock(c.lock);return ok;
         }
@@ -6409,6 +6436,8 @@ bool XE::processDisplay13FramebufferTC(KernelPatcher &patcher,size_t index,mach_
     }
     struct Span {uint32_t offset;const uint8_t *bytes;size_t size;};
     const Span spans[]={
+        {ddiEnableTailOffset,ddiEnableTail,sizeof(ddiEnableTail)},
+        {ddiDisableCallOffset,ddiDisableCall,sizeof(ddiDisableCall)},
         {lightBodyOffset,lightBody,sizeof(lightBody)},{innerBeforeOffset,innerBefore,sizeof(innerBefore)},
         {outerBeforeOffset,outerBefore,sizeof(outerBefore)},{modeExitOffset,modeExit,sizeof(modeExit)},
         {innerCallOffset,innerCall,sizeof(innerCall)},{outerCallOffset,outerCall,sizeof(outerCall)},

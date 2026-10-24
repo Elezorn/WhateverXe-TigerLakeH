@@ -9,6 +9,13 @@ struct IO {
     std::vector<std::pair<uint32_t,uint32_t>> writes;
     bool held {},power {true},owner {true},idle {true},stuckPower {},stuckLock {},fault {};
     unsigned time {},locks {},unlocks {};uint32_t reject {},absent {};
+    bool link {},failLink {},coldCleanup {};unsigned linkGets {},linkPuts {};
+    bool linkPower(bool enable) {
+        if(enable){assert((regs[p.pll]&0xcc000000U)==0xcc000000U && !(regs[Clock::Gate]&Clock::gateBit(p.tc)));++linkGets;if(failLink)return false;link=true;}
+        else {if(link){assert(regs[p.pll]&Clock::Enable);++linkPuts;}link=false;}
+        return true;
+    }
+    bool unstarted(){return coldCleanup && !link && !(regs[p.pll]&0xcc000000U);}
     IO(unsigned ddi) {
         assert(Port::resolve(ddi,p));
         regs={{p.pll,0x20000000},{p.clock,0x1234},{p.ready,0xc},{p.buffer,0xc0},
@@ -96,5 +103,18 @@ int main() {
     {IO io(3);io.stuckPower=true;assert(!Clock::enable(io,io.p,full) && io.time==1000 && io.writes.size()==1);}
     {IO io(3);io.stuckLock=true;assert(!Clock::enable(io,io.p,full) && io.time==1000);assert(!(io.regs[io.p.clock]&0xf0000000));}
     {IO io(3);io.reject=io.p.phyRegister(0x2200);auto bank=io.regs[io.p.hip];assert(!Clock::enable(io,io.p,full));assert(io.regs[io.p.hip]==bank && !(io.regs[io.p.pll]&Clock::Enable));}
+    for(unsigned d=3;d<=6;++d) {
+        IO io(d);for(unsigned lane=0;lane<2;++lane)for(unsigned reg:{0xa0U,0xd00U,0x2c0U,0x2c4U,0x2c8U})io.bank[lane*0x1000+reg]=0;
+        // Cold control/AUX is held, but DDI IO is off until the PLL is locked.
+        assert(Clock::startLink(io,io.p,full,7) && io.link && io.linkGets==1);
+        assert(Clock::stopLink(io,io.p) && !io.link && io.linkPuts==1);
+        assert(Clock::startLink(io,io.p,hd,7) && io.linkGets==2);
+        assert(Clock::stopLink(io,io.p) && io.linkPuts==2);
+    }
+    {IO io(4);io.stuckLock=true;assert(!Clock::startLink(io,io.p,full,7) && !io.linkGets);}
+    {IO io(4);io.failLink=true;assert(!Clock::startLink(io,io.p,full,7) && io.linkGets==1 && !io.link);}
+    {IO io(4);io.power=io.owner=false;io.coldCleanup=true;const auto count=io.writes.size();
+     assert(Clock::stopLink(io,io.p) && io.writes.size()==count); // local acquisition failure, PLL never started
+     io.regs[io.p.pll]|=Clock::Enable;assert(!Clock::stopLink(io,io.p));}
     puts("PASS Display13 TC HDMI PLL live fixtures, clock sweep, reserved bits, bounded failures and lifecycle");
 }

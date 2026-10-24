@@ -154,6 +154,18 @@ struct Clock {
         return rmw(io,p.pll,Enable,Enable) && wait(io,p.pll,Locked,Locked) &&
             rmw(io,p.clock,0xf0000000,0x80000000) && rmw(io,Gate,gateBit(p.tc),0);
     }
+    // Both Linux and the exact donor acquire DDI IO after enabling the PLL.
+    // Stop the link in reverse order. A control/AUX lease alone is sufficient
+    // to access the PLL; it must never require the output it is powering up.
+    template<class IO> static bool startLink(IO &io,const Port &p,const TMDSClock &plan,uint32_t preset) {
+        return plan.valid() && preflight(io,p) && io.linkPower(false) &&
+            disable(io,p) && enable(io,p,plan) && io.linkPower(true) &&
+            TMDSSignal::program(io,p,preset);
+    }
+    template<class IO> static bool stopLink(IO &io,const Port &p) {
+        return io.unstarted() || (preflight(io,p) && io.linkPower(false) && disable(io,p));
+    }
+
 };
 }
 #endif
