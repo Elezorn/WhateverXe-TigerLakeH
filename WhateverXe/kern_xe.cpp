@@ -3797,9 +3797,10 @@ Display13OutputWiring XE::display13BoardWiring(IOService *provider) {
     if(!property)property=provider->getProperty("tgl-hdmi-wiring");
     if(adlpFramebufferOnly) {
         // VBT remains the authority for pin/transport. No Combo property is
-        // silently interpreted as a TC policy for this single-TC1 candidate.
+        // silently interpreted as a TC policy. Select every supported fixed HDMI
+        // route from firmware; connection state is checked by the provider.
         if(property)return {};
-        return XELP::VBT::display13HDMI(firmwarePorts,8);
+        return XELP::VBT::display13HDMI(firmwarePorts,Display13OutputWiring::Physical);
     }
     auto wiring=OSDynamicCast(OSData,property);
     return XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,

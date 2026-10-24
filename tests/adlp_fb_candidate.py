@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay production board selection and WEX/provider binding for the first TC1 candidate."""
+"""Replay production board selection and WEX/provider binding for firmware-selected fixed HDMI."""
 from pathlib import Path
 import re,subprocess,tempfile
 r=Path(__file__).resolve().parents[1];s=(r/'WhateverXe/kern_xe.cpp').read_text()
@@ -35,10 +35,10 @@ FUNCTIONS
 int main(){
  XE x;IOService pci;x.firmwarePorts.status=XELP::VBT::Status::Valid;x.firmwarePorts.present=0x38;
  for(unsigned d=3;d<=5;++d){auto &p=x.firmwarePorts.port[d];p.type=d==5?4:0x12;p.ddc=d;p.capabilities=3;p.hdmiPreset=7;}
- auto w=x.display13BoardWiring(&pci);assert(w.described() && w.hdmi==8 && w.ddc[3]==9 && !w.dp);
+ auto w=x.display13BoardWiring(&pci);assert(w.described() && w.hdmi==0x18 && w.ddc[3]==9 && w.ddc[4]==10 && !w.dp);
  assert(!Display13FBTopology::supportedWiring(w) && Display13FBTopology::supportedWiring(w,true));
  x.adlnOutputWiring=w;assert(x.xelpBindProbe((void*)1));
- assert(seen.valid() && !seen.combo && seen.comboBackend==3 && seen.legacy==8 && seen.legacyBackend==0x78);
+ assert(seen.valid() && !seen.combo && seen.comboBackend==3 && seen.legacy==0x18 && seen.legacyBackend==0x78);
  assert(seen.profile.family==XELP::Family::AlderLakeP && !seen.profile.admitted());
  for(unsigned f=0;f<5;++f){XE bad=x;
   if(f==0)bad.display13TCProbeReady=false;if(f==1)bad.display13FBTCHooksReady=false;
@@ -47,8 +47,29 @@ int main(){
   const auto before=calls;assert(!bad.xelpBindProbe((void*)1) && calls==before);
  }
  OSData property;pci.property=&property;assert(!x.display13BoardWiring(&pci).described());pci.property=nullptr;
- x.firmwarePorts.port[3].type=4;assert(!x.display13BoardWiring(&pci).described());
- puts("PASS production ADL-P candidate: VBT TC1/pin9 -> shared board policy -> capability/hook-gated provider binding; GT closed");
+ x.firmwarePorts.port[3].type=4;
+ assert(x.display13BoardWiring(&pci).hdmi==0x10); // Exclude DP without dropping unrelated HDMI.
+ x.firmwarePorts.port[4].type=4;assert(!x.display13BoardWiring(&pci).described());
+ unsigned cases=0;
+ for(unsigned mask=1;mask<128;++mask)if(!(mask&~Display13OutputWiring::Physical)) {
+  XE each;each.firmwarePorts.status=XELP::VBT::Status::Valid;each.firmwarePorts.present=mask;
+  for(unsigned d=0;d<7;++d)if(mask&(1U<<d)) {
+   auto &p=each.firmwarePorts.port[d];p.type=0x12;p.ddc=d<2?d+1:d;p.capabilities=3;
+  }
+  auto w=each.display13BoardWiring(&pci);
+  assert(w.described() && w.hdmi==mask && Display13FBTopology::supportedWiring(w,true));
+  assert(Display13FBTopology::supportedWiring(w)==!(mask&~3U));
+  each.adlnOutputWiring=w;assert(each.xelpBindProbe((void*)1));
+  assert(seen.combo==(mask&3) && seen.legacy==(mask&0x78));
+  for(unsigned d=0;d<7;++d)if(mask&(1U<<d)) {
+   assert(w.ddc[d]==(d<2?d+1:d+6));
+   for(unsigned mode=0;mode<8;++mode)
+    assert(Display13FBTopology::bootDDI(w,0x80000000|((d+1)<<27)|(mode<<24))==(mode<=1?d:~0U));
+  }
+  ++cases;
+ }
+ assert(cases==63);
+ puts("PASS production fixed-HDMI selection: all 63 Combo/TC subsets, firmware pins, boot DDI and capability/hook-gated provider binding");
 }
 '''.replace('FUNCTIONS',f)
 with tempfile.TemporaryDirectory(prefix='adlp-fb-candidate-') as tmp:

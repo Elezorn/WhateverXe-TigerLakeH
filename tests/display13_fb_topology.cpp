@@ -10,7 +10,7 @@ struct Platform {
         data()[0x12]=Ports;data()[0x13]=3;
         const uint32_t panel[] {0,0,0,0,2,0x18};memcpy(config(0),panel,24);
         for(unsigned d=1;d<Ports;++d) {
-            const uint32_t record[] {d,d+1,1,0,0x400,0x201};memcpy(config(d),record,24);
+            const uint32_t record[] {d,d<3?d+1:d+6,1,d<3?0U:1U,0x400,0x201};memcpy(config(d),record,24);
         }
         words[0]=0x123456789A490000ULL;words[0x108/8]=0x123456789ABCDEF0ULL;
     }
@@ -122,6 +122,21 @@ int main() {
         auto corrupted=out;
         for(unsigned d=0;d<2;++d)if(w.dp&(1U<<d)) {
             corrupted.config(d)[2]=2;assert(!boundPorts(corrupted.data(),w).valid());corrupted=out;
+        }
+    }
+    // The production topology must apply every physical fixed-HDMI subset,
+    // including mixed Combo/TC and all four TC slots, preserving native bindings.
+    for(unsigned mask=1;mask<128;++mask)if(!(mask&~Display13OutputWiring::Physical)) {
+        Display13OutputWiring w;w.valid=true;w.hdmi=mask;
+        for(unsigned d=0;d<7;++d)if(mask&(1U<<d))w.ddc[d]=d<2?d+1:d+6;
+        Platform in,out;
+        assert(supportedWiring(w,true) && apply(out.data(),Bytes,in.data(),w));
+        assert(boundPorts(out.data(),w).selected==mask);
+        assert(excludedHotplug(out.data(),Bytes,w)==((0x3f000000&~((mask>>3)<<24))|((7U&~mask)<<16)));
+        for(unsigned d=0;d<9;++d)assert(selected(out.data(),out.config(d),w)==bool(mask&(1U<<d)));
+        for(unsigned d=3;d<7;++d)if(mask&(1U<<d)) {
+            auto bad=w;bad.ddc[d]=8;assert(!supportedWiring(bad,true));
+            bad=w;bad.dp=1U<<d;assert(!supportedWiring(bad,true));
         }
     }
     // A failure on the last selected predecessor must not publish a copy.
