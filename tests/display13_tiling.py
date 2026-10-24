@@ -10,6 +10,7 @@ end=source.index('const auto started=FunctionCast(',start)
 block=source[source.index('\tauto old=OSDynamicCast(OSDictionary,',start):end]
 code=r'''
 #include <cassert>
+#define SYSLOG(...) ((void)0)
 #include <cstdint>
 #include <cstring>
 #include <map>

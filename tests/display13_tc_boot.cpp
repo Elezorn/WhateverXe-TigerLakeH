@@ -47,6 +47,10 @@ int main() {
         auto display=readDisplay(io,true);LinearPlan plan;
         assert(tc.valid() && tc.unchanged(io));
         assert(linearPlan(display,plan,ddi)==LinearStatus::InvalidTCSource);
+        assert(Display13Boot::reservedPrefix(io,display,true,ddi,io.memory,&tc));
+        assert(io.writes.empty());
+        for(auto reg:original)assert(io.regs[reg.first]==reg.second);
+        io.pteReads=0;
         auto result=reinitializeLinear(io,display,true,ddi,GOPProtocol::TMDS,&tc);
         assert(result.status==LinearStatus::Success && result.writes==10 && tc.unchanged(io));
         for(auto w:io.writes)assert(w.offset==0x42084 || w.offset==0x70028 || w.offset==0x70180 ||

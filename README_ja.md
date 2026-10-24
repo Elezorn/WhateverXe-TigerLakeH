@@ -170,6 +170,7 @@ Safariのインストール先や更新による配置変更に依存せずData�
 
 開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
 `-wex-adlp-load-only` は既存バックエンドを明示選択したADL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。
+`-wex-display13-offline` はDisplay 13のnative controller初期化を有効に保ち、選択した出力を未接続として扱います。FB診断でHPD/EDIDとmode設定を切り離すための設定で、表示成立を意味しません。
 46A6 ADL-Pで9A49をdonor選択に使う実験構成は、物理Display13の識別を維持し、現時点では中央TC1のFramebuffer経路のみを選択します。Acceleratorはprobe/startの両方を拒否します。実機成立済みの対応構成ではなく、立上げ候補です。
 
 

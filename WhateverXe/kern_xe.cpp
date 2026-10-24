@@ -223,6 +223,7 @@ static bool xelpDisplay13Device(IOPCIDevice *pci) {
 // Detailed read-only display evidence is opt-in; control and first-fault
 // receipts remain active in the ordinary AlderLakeN profile.
 static bool display13TraceEnabled;
+static bool display13Offline;
 static XELPMemory::Layout xelpMemory;
 static uint16_t xelpMemoryGGC;
 static XELPMemory::Layout xelpPhysicalMemory(IOPCIDevice *pci) {
@@ -3755,6 +3756,7 @@ void XE::selectProfile(const XELP::Profile &profile) {
     display13FramebufferRequested=profile.displayAdmitted() && profile.display==XELP::Display::XeLPD &&
         (XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLN || adlpFramebufferOnly) && nativeOS;
     display13TraceEnabled=display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
+    display13Offline=display13FramebufferRequested && checkKernelArgument("-wex-display13-offline");
     if(display13FramebufferRequested)currentFramebuffer=&kextIntelTGLFb;
     if(adlpFramebufferOnly) {
         tglRequested=tglAcceleratorRequested=false;currentGraphics=&kextIntelTGL;return;
@@ -3879,7 +3881,9 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97DisplayReadoutStatus", static_cast<uint32_t>(result.status), 32);
 	SYSLOG("igfx", "AlderLakeN Display13 readout status=%u powered=%x active=%x hdmiB=%x; donor blocked",
 		static_cast<uint32_t>(result.status), result.poweredPipes, result.activePipes, result.hdmiBPipes);
-	if (linearTest) {
+	// ADL-P adopts a validated firmware surface below. A destructive plane
+	// exercise before native controller start is not a startup prerequisite.
+	if (linearTest && !adlpFramebufferOnly) {
         auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0);
         if(bootDDI>=3)pci->setProperty("WEXDisplay13TCBoot",&tc,sizeof(tc));
 		auto linear=AlderLakeN::reinitializeLinear(io,result,barReady && xelpMemoryMatches(pci),bootDDI,
@@ -4220,6 +4224,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
         if(map)map->release();
     }
     if(!xeProfile.displayAdmitted())return;
+    SYSLOG("igfx","Xe display bootstrap physical=%x FB-only=%u",xeProfile.identity,adlpFramebufferOnly);
     xelpSelectedGPU=physicalGPU;xelpSelectedProfile=xeProfile;
 	if (adlnDetected || display13FramebufferRequested) {
         xelpReadFirmware(physicalGPU);
@@ -4227,6 +4232,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
         modDVMTCalcFix.processKernel(patcher,info);
         xelpLoadDisplayPool(physicalGPU);
 		adlnBootstrap(physicalGPU);
+        SYSLOG("igfx","Display13 bootstrap ready=%u",display13BootReady);
 		if (display13BootReady) {
 			tglVMPrepare(patcher,physicalGPU);
 			tglPrepareMMIOUC(patcher,physicalGPU);
@@ -6158,6 +6164,13 @@ uint32_t XE::wrapAlderLakeNPortState(OSObject *port) {
 	if(!s->display13FBTopologyHooksReady || !s->adlnTopologyController || !port || port->getMetaClass()->getClassSize()<0x580)return 0;
 	auto config=Display13FBMemory::field<uint32_t *>(port,0x548);
 	if(Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring)) {
+        // Keep controller/memory/IRQ initialization reachable while isolating
+        // HPD, EDID and mode programming during framebuffer bring-up.
+        if(display13Offline) {
+            *reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(port)+0x554)=0;
+            IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13OfflineProbe",true);
+            return 0;
+        }
         // CPU binding only. TC bits are added when mode/AUX/PLL/GOP become
         // qualified together; a board description alone is insufficient.
         if(!s->xelpBindProbe(s->adlnTopologyController)) {
@@ -7315,7 +7328,9 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 		(provider->getProperty("AAPL,GfxYTile") || provider->setProperty("AAPL,GfxYTile",&enabled,sizeof(enabled)));
 	OSSafeReleaseNULL(yTiling);OSSafeReleaseNULL(mode);OSSafeReleaseNULL(features);
 	if(!featuresSelected)return false;
+	SYSLOG("igfx","Display13 native controller start enter offline=%u",display13Offline);
 	const auto started=FunctionCast(wrapDisplay13FramebufferStart,s->orgDisplay13FramebufferStart)(that,provider);
+	SYSLOG("igfx","Display13 native controller start return=%u",started);
 	that->setProperty("N97FramebufferOriginalStart",started);
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FramebufferOriginalStart",started);
 	bool irqEnabled=false;

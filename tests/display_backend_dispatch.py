@@ -15,6 +15,7 @@ def expression(name):
  return re.findall(r'\b'+name+r'\s*=\s*(.*?);',bootstrap,re.S)[-1]
 code=r'''
 #include <cassert>
+#define SYSLOG(...) ((void)0)
 #include <cstdint>
 #include <cstddef>
 #include <cstring>

@@ -59,6 +59,7 @@ static std::set<std::string> args;
 bool checkKernelArgument(const char *name) { return args.count(name); }
 #define SYSLOG(...) ((void)0)
 #define IOLog(...) ((void)0)
+static bool display13Offline;
 static int kextIntelTGLFb, kextAppleIntelTGLCompat, kextIntelTGL;
 static struct { void onKextLoadForce(int *) {} } lilu;
 struct XE {
@@ -105,6 +106,10 @@ int main() {
   assert(adlnNativeRCSProfileRequested && xe.tglAcceleratorRequested);
   assert(xe.currentGraphics==&kextIntelTGL && xe.currentFramebuffer==&kextIntelTGLFb);
  }
+ xe=boot({"-wex-display13-offline"},0x46A68086U,0x9A498086U);
+ assert(display13Offline && xe.adlpFramebufferOnly && !xe.tglAcceleratorRequested);
+ xe=boot({"-wex-display13-offline"},0x9A498086U);
+ assert(!display13Offline);
  xe=boot({"-wex-display13-trace"});
  assert(xe.display13TraceEnabled && xe.adlnNativeRequested && adlnNativeRCSProfileRequested);
  xe=boot({"-wex-adln-kernel-ctx"});
