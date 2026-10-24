@@ -26,12 +26,17 @@ int main() {
         if(d!=1)assert(output.config(d)[4]==1 && !output.config(d)[5]);
     }
     assert(output.config(1)[1]==2 && output.config(1)[2]==2 && output.config(1)[4]==0x800 && output.config(1)[5]==0x202);
-    assert(excludedTypeC(output.data(),Bytes,wiring)==0x3F000000);
+    assert(excludedHotplug(output.data(),Bytes,wiring)==0x3F050000);
     auto activeTC=output;activeTC.config(3)[4]=0x400;
-    assert(!excludedTypeC(activeTC.data(),Bytes,wiring));
+    assert(!excludedHotplug(activeTC.data(),Bytes,wiring));
     activeTC=output;activeTC.config(8)[5]=0x201;
-    assert(!excludedTypeC(activeTC.data(),Bytes,wiring));
-    assert(!excludedTypeC(output.data(),Bytes-1,wiring));
+    assert(!excludedHotplug(activeTC.data(),Bytes,wiring));
+    assert(!excludedHotplug(output.data(),Bytes-1,wiring));
+    // Unselected Combo records must be disabled just like TC records.
+    for(unsigned d=0;d<3;d+=2)for(unsigned field=4;field<=5;++field) {
+        auto bad=output;bad.config(d)[field]=0x400;
+        assert(!excludedHotplug(bad.data(),Bytes,wiring));
+    }
     // The selected record is the only changed route; keep counts/pool/config.
     assert(!memcmp(output.data(),input.data(),0x20));
     assert(!memcmp(output.data()+0xF8,input.data()+0xF8,Bytes-0xF8));
@@ -84,12 +89,12 @@ int main() {
             if(active)assert(out.config(d)[1]==d+1 && out.config(d)[2]==2 && out.config(d)[4]==0x800 && out.config(d)[5]==0x202);
             else assert(out.config(d)[4]==1 && !out.config(d)[5]);
         }
-        assert(excludedTypeC(out.data(),Bytes,w)==0x3F000000);
+        assert(excludedHotplug(out.data(),Bytes,w)==(0x3F000000|((7U&~mask)<<16)));
         assert(!selected(out.data(),reinterpret_cast<void *>(1),w));
         assert(!memcmp(out.data(),in.data(),0x20) && !memcmp(out.data()+0xF8,in.data()+0xF8,Bytes-0xF8));
         auto malformed=w;malformed.ddc[0]=4;auto keep=out;
         assert(!apply(out.data(),Bytes,in.data(),malformed) && !memcmp(out.data(),keep.data(),Bytes));
-        if(mask==3){auto broken=out;broken.config(0)[5]=0x18;assert(!excludedTypeC(broken.data(),Bytes,w));}
+        if(mask==3){auto broken=out;broken.config(0)[5]=0x18;assert(!excludedHotplug(broken.data(),Bytes,w));}
     }
     // All fixed Combo HDMI/DP assignments compose CPU topology/resources.
     // DP runtime/boot admission stays closed until the hardware hooks exist.
@@ -108,7 +113,7 @@ int main() {
             for(unsigned mode=0;mode<8;++mode)
                 assert(bootDDI(w,0x80000000|((d+1)<<27)|(mode<<24))==(hdmi&&mode<=1?d:~0U));
         }
-        assert(excludedTypeC(out.data(),Bytes,w)==0x3f000000);
+        assert(excludedHotplug(out.data(),Bytes,w)==(0x3f000000|((7U&~w.selected())<<16)));
         auto reloaded=w;reloaded=wiring;assert(!reloaded.dp && reloaded.hdmi==2);
         auto bad=w;bad.dp|=bad.hdmi; // Empty HDMI in DP-only: inject explicit overlap.
         if(!bad.hdmi){bad.hdmi=bad.dp;for(unsigned d=0;d<2;++d)if(bad.hdmi&(1U<<d))bad.ddc[d]=d+1;}

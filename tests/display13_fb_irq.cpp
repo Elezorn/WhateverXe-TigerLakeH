@@ -48,6 +48,22 @@ struct IO {
     }
 };
 int main() {
+    // Actual TC1-only firmware enable masks: north TC3/TBT3 and PCH DDI B.
+    {IO io;State state;io.r[HPDBank+4]=0x40004;io.r[HPDBank-4]=0;
+     io.r[0xC400C]=0x07020000;io.r[0xC4004]=0x38853f07;io.r[0xC4008]=0x20000;
+     assert(enable(io,state,0x3e070000,NativeGT,1,8)==Status::Complete);
+     assert(!(io.r[0xC400C]&0x3e070000) && (io.r[0xC4004]&0x3e070000)==0x3e070000);
+     assert(io.r[0xC4008]==0x20000 && !(io.r[HPDBank+4]&0x40004));}
+    // DDI D and other PCH events must still refuse admission, not be hidden.
+    for(uint32_t bit:{1U<<19,1U<<23,1U<<30}) {
+        IO io;State state;io.r[0xC400C]=bit;io.r[0xC4004]=0;
+        assert(enable(io,state,0x3e070000,NativeGT,1,8)==Status::ForeignIRQ);
+        assert(state.failureRegister==0xC400C && state.failureBits==bit);
+    }
+    for(uint32_t excluded:{1U<<19,1U<<24,1U<<30}) {
+        IO io;State state;assert(enable(io,state,excluded,NativeGT,1,8)==Status::Topology);
+    }
+    {IO io;State state;assert(enable(io,state,1U<<17,NativeGT,1,2)==Status::Topology);}
     // Firmware may leave north TC/TBT enables for excluded connectors.
     // Cover all exclusion subsets and each selected TC1..4 independently.
     for(unsigned selected=0;selected<4;++selected)for(unsigned mask=0;mask<64;++mask) {

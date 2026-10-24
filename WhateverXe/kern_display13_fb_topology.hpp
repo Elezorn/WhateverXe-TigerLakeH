@@ -101,18 +101,20 @@ inline bool skipDPLanes(const void *platform,const void *config,const Display13O
     return XELPDonor::skipHDMIDPLanes(selected(platform,config,w) && w.matchesHDMI(static_cast<const uint32_t *>(config)),exactCaller,native,available,lanes);
 }
 // ICP/TGP SDE bits24..29 are TC1..6 hotplug, not legacy GMBUS bit24.
-// Authorize masking only from the stable native connector policy: no TC
-// record can be enabled or have panel/connection flags on a Combo route.
-inline uint32_t excludedTypeC(const void *platform,uint32_t bytes,const Display13OutputWiring &w) {
+// Combo A..C hotplug uses bits16..18. Authorize exclusions only after
+// every unselected native record is disabled and has no connection flags.
+// Other PCH sources (including DDI D) remain outside this policy.
+inline uint32_t excludedHotplug(const void *platform,uint32_t bytes,const Display13OutputWiring &w) {
     if(!platform || bytes<Bytes || !selectedWiring(w))return 0;
     const auto p=static_cast<const uint8_t *>(platform);
     if(p[0x12]!=Ports)return 0;
     for(unsigned d=0;d<Ports;++d)if((w.selected()&(1U<<d)) && !selected(platform,p+0x20+24*d,w))return 0;
     for(unsigned d=0;d<Ports;++d) {
         const auto config=reinterpret_cast<const uint32_t *>(p+0x20+24*d);
-        if(config[0]!=d || (d>=3 && !(w.selected()&(1U<<d)) && (config[4]!=1 || config[5])))return 0;
+        if(config[0]!=d || (!(w.selected()&(1U<<d)) && (config[4]!=1 || config[5])))return 0;
     }
-    return 0x3F000000 & ~((w.selected()>>3)<<24);
+    return (0x3F000000 & ~((w.selected()>>3)<<24)) |
+        ((7U & ~w.selected())<<16);
 }
 }
 #endif

@@ -47,7 +47,7 @@ int main() {
         const auto c=reinterpret_cast<uint32_t *>(out+0x20+24*d);
         assert(v.matchesHDMI(c) && c[3]==1 && c[1]==d+6);
         assert(Display13FBTopology::boundPorts(out,v).selected==(1U<<d));
-        assert(Display13FBTopology::excludedTypeC(out,sizeof(out),v)==(0x3f000000&~(1U<<(21+d))));
+        assert(Display13FBTopology::excludedHotplug(out,sizeof(out),v)==((0x3f000000&~(1U<<(21+d)))|0x70000));
         assert(Display13FBTopology::bootDDI(v,0x80030100|((d+1)<<27))==d);
         for(unsigned flag:{1U,2U,4U,0x10U}) {p.port[d].flags|=flag;assert(!VBT::display13HDMI(p,0x7b).hdmi);p.port[d].flags=0xc0;}
         p.port[d].type|=4;assert(!VBT::display13HDMI(p,0x7b).hdmi);

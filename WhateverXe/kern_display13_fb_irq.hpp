@@ -36,7 +36,7 @@ struct HandlerScopes {
 };
 constexpr uint32_t Driver=0x45404, Master=0x44200, GfxMaster=0x190010;
 constexpr uint32_t Enable=1U<<31, PipeOwned=0x8060E00D, PCHOwned=3U<<16;
-constexpr uint32_t PCHTypeC=0x3F000000;
+constexpr uint32_t PCHTypeC=0x3F000000, PCHCombo=7U<<16;
 constexpr uint32_t TCControl=0xC4034;
 constexpr uint32_t DDIControl=0xC4030, DDIStatus=0x33, DDIEnable=0x88;
 constexpr uint32_t PipeIIR(unsigned pipe) {return 0x44408+16*pipe;}
@@ -128,7 +128,7 @@ template<class IO> Status enable(IO &io,State &s,uint32_t excludedPCH=0,uint32_t
     if(s.faulted)return Status::Faulted;
     if(!ports || (ports&~0x7FU) || (s.begun && ports!=s.ports))return fail(io,s,Status::Topology);
     s.ports=ports;
-    if((excludedPCH&pchOwned(s)) || (excludedPCH&~PCHTypeC) || (sharedGT && sharedGT!=NativeGT) || !expectedPipes || (expectedPipes&~7U))return fail(io,s,Status::Topology);
+    if((excludedPCH&pchOwned(s)) || (excludedPCH&~(PCHTypeC|PCHCombo)) || (sharedGT && sharedGT!=NativeGT) || !expectedPipes || (expectedPipes&~7U))return fail(io,s,Status::Topology);
     if(!available(io) || ((ports&0x78) && !io.readable(TCControl)))return Status::Unavailable;
     // Native repeated enable is idempotent. Do not drop a pending flip/DSB
     // completion or undo hwSetInterruptForTransaction's VBL mask.
