@@ -3354,6 +3354,7 @@ void tglDPCDRecord(void *port, uint32_t address, void *data, uint32_t length,
 		w[6] = length < 16 ? length : 16;
 		memcpy(w + 8, data, w[6]);
 	}
+	tglTransitionRecord(98,done,port,address,(uint64_t(write)<<32)|length,result,w+8,16);
 	IOSimpleLockLock(tglAUXLock);
 	w[0] = ++tglDPCDCount;
 	if (w[0] <= arrsize(tglDPCDFirst)) tglDPCDFirst[w[0]-1] = record;
@@ -11135,6 +11136,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			tglAUXLock = IOSimpleLockAlloc();
 			tglDisplayTraceEnabled=checkKernelArgument("-wex-display-trace");
    tglInitTransitionTrace(tglDisplayTraceEnabled);
+
 			if (tglConnectionLock) {
 				KernelPatcher::RouteRequest link("__ZN14AppleIntelPort15checkLinkStatusEv",
 					wrapTGLCheckLinkStatus, orgTGLCheckLinkStatus);
@@ -11382,6 +11384,20 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayStartupContract",contractRecord,sizeof(contractRecord));
     IORegistryEntry::getRegistryRoot()->setProperty("ADLSDisplayHooksReady",adlsDisplayHooksReady);
    }
+			if (tglDisplayTraceEnabled) {
+				// Install after native entry-byte qualification. Software
+				// boundaries around the empty-dongle path add no extra
+				// register accesses or changes to the donor's return contracts.
+				KernelPatcher::RouteRequest traceRoutes[] {
+					{"__ZN31AppleIntelFramebufferController20invokeHotplugHandlerEjN14AppleIntelPort8PortModeE", wrapTGLTraceHotplug, orgTGLTraceHotplug},
+					{"__ZN14AppleIntelPort17clearACPIHPDCountEv", wrapTGLTraceClearHPD, orgTGLTraceClearHPD},
+					{"__ZN19AppleIntelPowerWell17enablePowerWellPGEj", wrapTGLTraceEnablePG, orgTGLTraceEnablePG},
+					{"__ZN19AppleIntelPowerWell18disablePowerWellPGEj", wrapTGLTraceDisablePG, orgTGLTraceDisablePG}
+				};
+				const bool traced=patcher.routeMultiple(index,traceRoutes,arrsize(traceRoutes),address,size);
+				IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeHotplugBoundaryTrace",traced);
+				patcher.clearError();
+			}
    tglRecordStartOrder(1,nullptr);
 			return true;
 		}
@@ -14407,8 +14423,10 @@ uint32_t XE::wrapTGLDPPower(void *port, uint8_t state) {
 
 uint32_t XE::wrapTGLSinkCount(void *port, uint8_t *count) {
 	auto caller = __builtin_return_address(0);
+	tglTransitionRecord(95,false,port,0,0,0);
 	tglConnectionRecord(port, 5, false, 0, 0, caller);
 	const auto result = FunctionCast(wrapTGLSinkCount, callbackXE->orgTGLSinkCount)(port, count);
+	tglTransitionRecord(95,true,port,0,0,result==0 && count ? *count : 0xFFFFFFFFU);
 	tglConnectionRecord(port, 5, true, result, !result && count ? *count : 0xFFFFFFFFU, caller);
 	auto config = *reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port) + 0x548);
 	if (config && config[0] < 9) {
@@ -14418,6 +14436,27 @@ uint32_t XE::wrapTGLSinkCount(void *port, uint8_t *count) {
 		IORegistryEntry::getRegistryRoot()->setProperty(key, values, sizeof(values));
 	}
 	return result;
+}
+
+void XE::wrapTGLTraceHotplug(void *controller, uint32_t ddi, uint32_t mode) {
+	tglTransitionRecord(90,false,controller,ddi,mode,0);
+	FunctionCast(wrapTGLTraceHotplug,callbackXE->orgTGLTraceHotplug)(controller,ddi,mode);
+	tglTransitionRecord(90,true,controller,ddi,mode,0);
+}
+void XE::wrapTGLTraceClearHPD(void *port) {
+	tglTransitionRecord(91,false,port,0,0,0);
+	FunctionCast(wrapTGLTraceClearHPD,callbackXE->orgTGLTraceClearHPD)(port);
+	tglTransitionRecord(91,true,port,0,0,0);
+}
+void XE::wrapTGLTraceEnablePG(void *power, uint32_t pg) {
+	tglTransitionRecord(92,false,power,pg,0,0);
+	FunctionCast(wrapTGLTraceEnablePG,callbackXE->orgTGLTraceEnablePG)(power,pg);
+	tglTransitionRecord(92,true,power,pg,0,0);
+}
+void XE::wrapTGLTraceDisablePG(void *power, uint32_t pg) {
+	tglTransitionRecord(93,false,power,pg,0,0);
+	FunctionCast(wrapTGLTraceDisablePG,callbackXE->orgTGLTraceDisablePG)(power,pg);
+	tglTransitionRecord(93,true,power,pg,0,0);
 }
 
 uint32_t XE::wrapTGLCheckLinkStatus(void *port) {
@@ -16951,6 +16990,7 @@ uint32_t XE::wrapTGLI2CAUX(void *port, uint32_t command, uint32_t *packet, uint3
 }
 
 uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
+	tglTransitionRecord(96,false,path,pattern,0,0);
 	auto port = *reinterpret_cast<void **>(static_cast<uint8_t *>(path) + 0x3648);
 	tglObserveActivation(callbackXE->tglObservationController, port, path, 1, false, pattern);
 	// TGL needs the transcoder clock and DDI route before enabling DP_TP_CTL.
@@ -17010,6 +17050,7 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 		}
 	}
 	const auto result = FunctionCast(wrapTGLTrainingPattern, callbackXE->orgTGLTrainingPattern)(path, pattern);
+	tglTransitionRecord(97,true,path,pattern,0,result);
 	// The donor constructs DP_TP_CTL from enable/MST/pattern only, losing bit18
 	// and eDP Alternate SR bit6 (TGL PRM Vol2c Part1, DP_TP_CTL).
 	// Its own normal and fast training write port+11a to DPCD101 bit7. Use that
@@ -17038,6 +17079,7 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 				if (mainPower == 0xFFFFFFFFU || ioPower == 0xFFFFFFFFU ||
 					(mainPower & mainMask) != mainMask || (ioPower & ioMask) != ioMask) {
 					tglObserveActivation(callbackXE->tglObservationController, port, path, 1, true, result);
+					tglTransitionRecord(96,true,path,pattern,0,result);
 					return result;
 				}
 				const auto read=[&](uint32_t off){return *reinterpret_cast<volatile uint32_t *>(base+off);};
@@ -17059,6 +17101,7 @@ uint32_t XE::wrapTGLTrainingPattern(void *path, uint32_t pattern) {
 		}
 	}
 	tglObserveActivation(callbackXE->tglObservationController, port, path, 1, true, result);
+	tglTransitionRecord(96,true,path,pattern,0,result);
 	return result;
 }
 

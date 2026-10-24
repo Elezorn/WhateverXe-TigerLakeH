@@ -6,6 +6,12 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'WhateverXe/kern_xe.cpp').read_text()
+# Tracing rewrites PG entry bytes. Qualify the native ABI before routing those
+# entries, or enabling diagnostics alone blocks framebuffer startup.
+trace_install = source.index('KernelPatcher::RouteRequest traceRoutes[]')
+assert source.index('!memcmp(reinterpret_cast<void *>(tglDisablePG),tcPGPutEntry') < trace_install
+assert source.index('tglNativeLegacyHPDCaller=hotplug+0x185') < trace_install
+assert source.rfind('if (tglDisplayTraceEnabled)', 0, trace_install) >= 0
 body = source[source.index('struct TGLTransitionRecord {'):
               source.index('// Independent and nested training calls')]
 fixture = r'''

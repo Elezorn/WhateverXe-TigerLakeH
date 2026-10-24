@@ -24,6 +24,9 @@ struct IORegistryEntry {
 void clock_get_uptime(uint64_t *p){*p=1;}
 void absolutetime_to_nanoseconds(uint64_t t,uint64_t *p){*p=t;}
 unsigned observations,nativeCalls;
+void tglTransitionRecord(uint32_t stage,bool,void*,uint64_t,uint64_t,uint64_t) {
+ assert(stage==96 || stage==97);
+}
 struct XE {
  bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;
  // FIELDS
