@@ -214,6 +214,9 @@ installation or update location.
 - USB-C and internal-display support on Display 13 GPUs.
 - Improve display reconnection reliability and investigate full system sleep/wake.
 
+
+Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
+
 ## Build and test
 
 Use macOS with Xcode command-line tools, Python 3.9 or newer, MacKernelSDK and

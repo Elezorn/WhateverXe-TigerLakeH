@@ -135,5 +135,6 @@
     "-wxebeta"
   ],
   "-wex-noaccel": [],
-  "-wex-display-trace": []
+  "-wex-display-trace": [],
+  "-wex-adlp-readout": []
 }

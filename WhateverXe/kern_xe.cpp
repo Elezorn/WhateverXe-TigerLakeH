@@ -4095,6 +4095,44 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	// This must precede tglLoadHDMIWiring, tglPrepareMMIOUC and TGL FIA reads.
 	auto physicalGPU = OSDynamicCast(IOPCIDevice, info->videoBuiltin);
 	selectProfile(XELP::deviceProfile(physicalGPU));
+    // Temporary opt-in bring-up evidence. ADL-P remains unadmitted; only
+    // the existing bounded Gen12 forcewake transaction writes registers.
+    if(!xeProfile.admitted() && xeProfile.family==XELP::Family::AlderLakeP &&
+       !xeProfile.overridden() && physicalGPU && checkKernelArgument("-wex-adlp-readout") &&
+       XELP::hostOS(XELP::kernelOS(version)) && (physicalGPU->configRead16(4)&2)) {
+        auto map=physicalGPU->mapDeviceMemoryWithRegister(0x10,kIOMapInhibitCache);
+        if(map && map->getVirtualAddress() && map->getLength()==0x1000000) {
+            struct IO {
+                volatile uint8_t *base;
+                bool readable(uint32_t o) const {return o<=0xFFFFFC;}
+                uint32_t read(uint32_t o) {return *reinterpret_cast<volatile uint32_t *>(base+o);}
+                void write(uint32_t o,uint32_t v) {*reinterpret_cast<volatile uint32_t *>(base+o)=v;}
+                void delay() {IODelay(100);}
+            } io {reinterpret_cast<volatile uint8_t *>(map->getVirtualAddress())};
+            uint32_t edram=UINT32_MAX;
+            auto gt=AlderLakeN::readGT(io,true,&edram);
+            physicalGPU->setProperty("ADLPGTBoot",&gt,sizeof(gt));
+            physicalGPU->setProperty("ADLPEDRAM",edram,32);
+            uint32_t registers[][2] {
+                {0x42000,0},{0x45404,0},{0x45450,0},{0x45454,0},
+                {0x46000,0},{0x46004,0},{0x46070,0},{0x46078,0},
+                {0x46038,0},{0x46040,0},{0x46048,0},{0x46050,0},
+                {0x4610C,0},{0x46110,0},{0x46114,0},{0x46118,0},
+                {0xC4000,0},{0xC4030,0},{0xC5014,0},{0x44470,0},
+                {0x64000,0},{0x64100,0},{0x64300,0},{0x64400,0},{0x64500,0},{0x64600,0},
+                {0x161500,0},{0x161504,0},{0x161508,0},{0x16150C,0},
+                {0x1010A0,0},{0x1082C0,0},{0x1082C4,0}
+            };
+            for(auto &reg:registers)reg[1]=io.read(reg[0]);
+            physicalGPU->setProperty("ADLPDisplayBoot",registers,sizeof(registers));
+            auto display=AlderLakeN::readDisplay(io,true);
+            physicalGPU->setProperty("ADLPScanoutBoot",&display,sizeof(display));
+            SYSLOG("igfx","ADL-P readout status=%u fuses=%x/%x/%x/%x/%x release=%x/%x; donor blocked",
+                static_cast<unsigned>(gt.status),gt.fuses[0],gt.fuses[1],gt.fuses[2],gt.fuses[3],gt.fuses[4],
+                gt.releasedMask,gt.releaseFailedMask);
+        }
+        if(map)map->release();
+    }
     if(display12SmallGTDetected && XELP::display12SmallGTDevice(xeProfile.identity) &&
        !xeProfile.overridden() && physicalGPU &&
        XELP::hostOS(XELP::kernelOS(version)) && (physicalGPU->configRead16(4)&2)) {

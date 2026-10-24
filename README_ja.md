@@ -163,6 +163,9 @@ Safariのインストール先や更新による配置変更に依存せずData�
 - Display 13 GPUでのUSB-C・内蔵画面対応。
 - 画面再接続の安定性改善とシステム全体のスリープ／復帰の調査。
 
+
+開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
+
 ## ビルドとテスト
 
 macOS、Xcode command-line tools、Python 3.9以降、MacKernelSDK、Liluの開発用ヘッダ／ライブラリを使用します。CIではTahoeのkernel定義を含むLiluの[1.7.2リリースタグ](https://github.com/acidanthera/Lilu/tree/1.7.2)を使用します。`MacKernelSDK/`と`Lilu.kext/`をリポジトリ直下に配置するか、`--sdk`と`--lilu`でパスを指定してください。
