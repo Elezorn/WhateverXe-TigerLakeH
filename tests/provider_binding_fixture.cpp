@@ -38,7 +38,7 @@ int main(int argc,char **argv) {
  assert(argc==2);const bool adln=!strncmp(argv[1],"adln",4);
  const bool rpls=!strncmp(argv[1],"rpls",4);
  const bool adls=!strncmp(argv[1],"adls",4) || rpls;
- const bool adlp=!strcmp(argv[1],"adlp-fb");
+ const bool adlp=!strncmp(argv[1],"adlp",4) || !strncmp(argv[1],"rplp",4);
  const bool legacy=!strncmp(argv[1],"adln-abi1",9);
  const bool fake=strstr(argv[1],"fake")!=nullptr;
  const bool rejected=!strcmp(argv[1],"unknown");
@@ -51,11 +51,12 @@ int main(int argc,char **argv) {
  if(!strcmp(argv[1],"tgl-g4"))pci.identity=0x9A788086;
  if(!strcmp(argv[1],"tgl-9a40"))pci.identity=0x9A408086;
  if(!strcmp(argv[1],"adln-16eu"))pci.identity=0x46D28086;
- if(!strcmp(argv[1],"unknown"))pci.identity=0x46A68086;
+ if(!strcmp(argv[1],"unknown"))pci.identity=0x4C8A8086;
  if(!strcmp(argv[1],"adln-revision"))pci.revision=1;
  OSData fakeID;
  if(fake){pci.identity=0x12348086;fakeID.value=adln?0x46D2:0x9A49;pci.property=&fakeID;}
- if(adlp){pci.identity=0x46A68086;pci.revision=12;fakeID.value=0x9A49;pci.property=&fakeID;}
+ if(adlp){pci.identity=!strncmp(argv[1],"rplp",4)?0xA7A88086:0x46A68086;pci.revision=12;
+  if(!strcmp(argv[1],"adlp-fb")){fakeID.value=0x9A49;pci.property=&fakeID;}}
  controller.provider=&pci;platform[0x12]=9;
  map.address=reinterpret_cast<uintptr_t>(mmio.data());map.bytes=mmio.size();
  field<void *>(&controller,0xC40)=&access;field<void *>(&controller,0xD40)=platform;

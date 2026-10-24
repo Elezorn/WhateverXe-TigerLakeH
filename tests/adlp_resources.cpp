@@ -32,7 +32,7 @@ int main() {
     assert(!ports.hdmi(3).hdmi); // Existing Combo policy is unchanged.
     assert(Display13FBTopology::xeLPDWiring(w));
     assert(!Display13FBTopology::supportedWiring(w)); // Runtime stays closed until hooks are installed.
-    assert(!identify(0x46a68086,12).admitted());
+    assert(identify(0x46a68086,12).admitted());
     for(unsigned d=3;d<7;++d) {
         assert(VBT::ddi(Family::AlderLakeP,13+2*(d-3))==d);
         auto p=ports;p.present=1U<<d;p.port[d]={0x60d2,13+2*(d-3),d,0,0xc0,3};
@@ -53,5 +53,5 @@ int main() {
         p.port[d].type|=4;assert(!VBT::display13HDMI(p,0x7b).hdmi);
     }
     auto duplicate=ports;duplicate.port[4].ddc=3;assert(!VBT::display13HDMI(duplicate,0x7b).valid);
-    puts("PASS ADLP fuse resources, TC HDMI firmware wiring and native topology; admission unchanged");
+    puts("PASS ADLP fuse resources, TC HDMI firmware wiring and native topology; physical family selection");
 }

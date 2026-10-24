@@ -13,10 +13,10 @@ struct IO {
 };
 int main() {
  auto candidate=identify(0x46a68086,12,0x9a498086);
- assert(candidate.mobileDisplay13() && candidate.displayAdmitted() && !candidate.admitted());
- assert(candidate.family==Family::AlderLakeP && candidate.display==Display::XeLPD && candidate.gt==GT::Unknown);
- assert(!identify(0x46a68086,12).displayAdmitted());
- assert(!identify(0x46a38086,12,0x9a498086).displayAdmitted());
+ assert(candidate.mobileDisplay13() && candidate.displayAdmitted() && candidate.admitted());
+ assert(candidate.family==Family::AlderLakeP && candidate.display==Display::XeLPD && candidate.gt==GT::ADLPMobile);
+ assert(identify(0x46a68086,12).displayAdmitted());
+ assert(identify(0x46a38086,12,0x9a498086).displayAdmitted());
 
  // ABI3 explicitly describes fixed TC HDMI; capability query prevents an
  // old provider from accepting a configuration whose implementation it lacks.
@@ -49,7 +49,9 @@ int main() {
   const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78 || id==0x9A60 || id==0x9A68 || id==0x9A70,adln=id>=0x46D0 && id<=0x46D4;
   const bool adls=id==0x4680 || id==0x4682 || id==0x4688 || id==0x468A || id==0x468B || id==0x4690 || id==0x4692 || id==0x4693;
   const bool rpls=id==0xA780 || id==0xA781 || id==0xA782 || id==0xA783 || id==0xA788 || id==0xA789 || id==0xA78A || id==0xA78B;
-  assert(p.admitted()==(tgl || adln || adls || rpls));
+  const bool mobile=id==0x46a3 || id==0x46a6 || id==0x46a8 || id==0x46aa || id==0x46b3 || id==0x46c3 || id==0xa7a0 || id==0xa7a1 || (id>=0xa7a8 && id<=0xa7ad);
+  assert(p.admitted()==(tgl || adln || adls || rpls || mobile));
+  if(mobile){assert(p.mobileDisplay13());assert(!identify((id<<16)|0x8086,rev,0x46d18086).admitted());}
   if(adls||rpls)assert(!identify((id<<16)|0x8086,rev,0x9A498086).admitted());
   assert(!adln || p.display==Display::XeLPD);
   assert(!identify((id<<16)|0x1234,rev).admitted());

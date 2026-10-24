@@ -29,23 +29,25 @@ struct XE {
 };
 FUNCTION
 int main(){
- for(unsigned which=0;which<3;++which)for(unsigned rev=0;rev<256;++rev)for(unsigned off=0;off<2;++off) {
-  noaccel=off;XE x;
-  const auto p=which==0?XELP::identify(0x46A68086,rev,0x9A498086):
-      which==1?XELP::identify(0x46D18086,rev):XELP::identify(0x9A498086,rev);
-  x.selectProfile(p);
-  assert(XELP::same(x.xeProfile,p));
+ const uint32_t mobile[]={0x46a3,0x46a6,0x46a8,0x46aa,0x46b3,0x46c3,0xa7a0,0xa7a1,0xa7a8,0xa7a9,0xa7aa,0xa7ab,0xa7ac,0xa7ad};
+ unsigned cases=0;
+ for(unsigned which=0;which<30;++which)for(unsigned rev=0;rev<256;++rev)for(unsigned off=0;off<2;++off) {
+  noaccel=off;XE x;const bool isMobile=which<28,isN=which==28;
+  const auto pci=(isMobile?mobile[which/2]:isN?0x46d1:0x9a49)<<16|0x8086;
+  const auto effective=isMobile && (which&1)?0x9a498086:pci;
+  const auto p=XELP::identify(pci,rev,effective);x.selectProfile(p);
+  assert(XELP::same(x.xeProfile,p) && p.admitted());
   assert(x.currentFramebuffer==&kextIntelTGLFb && x.currentGraphics==&kextIntelTGL);
-  assert(x.display13FramebufferRequested==(which!=2));
-  assert(x.adlpDisplaySelected==(which==0));
-  assert(x.adlpRenderRequested==(which==0&&!off));
-  assert(x.adlnDetected==(which==1 || (which==0&&!off)));
+  assert(x.display13FramebufferRequested==(isMobile || isN));
+  assert(x.adlpDisplaySelected==isMobile);
+  assert(x.adlpRenderRequested==(isMobile&&!off));
+  assert(x.adlnDetected==(isN || (isMobile&&!off)));
   assert(x.tglAcceleratorRequested==!off);
-  assert(adlnNativeRCSProfileRequested==(which==1 || (which==0&&!off)));
+  assert(adlnNativeRCSProfileRequested==(isN || (isMobile&&!off)));++cases;
  }
- noaccel=false;XE unknown;unknown.selectProfile(XELP::identify(0x46A68086,12));
+ noaccel=false;XE unknown;unknown.selectProfile(XELP::identify(0x4c8a8086,12));
  assert(!unknown.adlpRenderRequested && !unknown.adlnDetected && !unknown.tglAcceleratorRequested);
- puts("PASS 1536 production profile selections: ADL-P Render/noaccel, ADL-N and TGL; physical/display identities preserved");
+ assert(cases==15360);puts("PASS 15360 production profile selections: all mobile Display13 IDs/revisions, physical and legacy donor selectors, noaccel, ADL-N and TGL");
 }
 '''.replace('FUNCTION',f)
 with tempfile.TemporaryDirectory(prefix='wex-adlp-render-') as d:

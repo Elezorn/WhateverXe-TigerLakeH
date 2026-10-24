@@ -153,13 +153,15 @@ int main() {
   const bool desktop=id==0x4690 || id==0x4680 || id==0xA780 || id==0x4688 || id==0x468B || id==0xA788 || id==0xA78B;
   const bool gt1=id==0x9A60 || id==0x9A68 || id==0x9A70;
   const bool mobile=id==0x9A49 || id==0x9A78 || gt1;
+  const bool mobile13=id==0x46A6 || id==0xA7A0;
   const bool small13=id==0x46D2;
+  const bool render13=small13 || (mobile13 && !(option&2));
   assert(selected.display12SmallGTDetected==(desktop || gt1) && selected.adlsDisplaySelected==desktop);
-  assert(selected.adlnDetected==small13 && selected.display13FramebufferRequested==small13);
+  assert(selected.adlnDetected==render13 && selected.display13FramebufferRequested==(small13 || mobile13));
   const bool d12=(desktop || mobile) && !(option&1);
-  assert(selected.tglRequested==(small13 || d12));
-  assert(selected.tglAcceleratorRequested==((small13 || d12) && !(option&2)));
-  assert((selected.currentFramebuffer==&kextIntelTGLFb)==(small13 || d12));
+  assert(selected.tglRequested==(render13 || d12));
+  assert(selected.tglAcceleratorRequested==((render13 || d12) && !(option&2)));
+  assert((selected.currentFramebuffer==&kextIntelTGLFb)==(small13 || mobile13 || d12));
  }
  version="Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64";
  xe=boot({},0x9A498086);assert(xe.tglRequested && xe.tglAcceleratorRequested);
@@ -176,9 +178,9 @@ int main() {
  xe=boot({},0x12348086,0x9A498086);assert(xe.tglRequested);
  xe=XE{};xe.selectProfile(XELP::identify(0x46A68086,12,0x9A498086));
  assert(xe.adlpDisplaySelected && xe.adlpRenderRequested && xe.display13FramebufferRequested && xe.tglAcceleratorRequested && xe.adlnRequested && xe.tglRequested);
- assert(xe.xeProfile.family==XELP::Family::AlderLakeP && xe.xeProfile.gt==XELP::GT::Unknown);
- xe=boot({},0x46A68086);assert(!xe.tglRequested && !xe.adlnRequested);
- for(uint32_t pci:{0x46A68086U,0x46808086U,0xA7A08086U}) {
+ assert(xe.xeProfile.family==XELP::Family::AlderLakeP && xe.xeProfile.gt==XELP::GT::ADLPMobile);
+ xe=boot({},0x46A68086);assert(xe.tglRequested && xe.adlnRequested);
+ for(uint32_t pci:{0x4C8A8086U,0x46808086U}) {
   xe=boot({},pci);assert(!xe.adlnNativeRequested && !xe.display13FramebufferRequested && !adlnNativeRCSProfileRequested);
  }
  xe=XE{};xe.selectProfile(XELP::identify(0x46D28086,1));

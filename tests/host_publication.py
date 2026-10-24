@@ -88,20 +88,20 @@ for(unsigned rev:{0U,12U,255U})for(bool apple:{false,true}) {
 }
 for(unsigned rev:{0U,12U,255U}) {
  DeviceInfo::value.videoBuiltin=&gpu;DeviceInfo::value.managementEngine=nullptr;
- publish=true;published=false;deviceProperty=nullptr;identity=0x46A68086;revision=rev;events.clear();graphics.off=false;
+ publish=true;published=false;deviceProperty=nullptr;identity=0x4C8A8086;revision=rev;events.clear();graphics.off=false;
  XeHost host;host.processKernel(patcher);assert(!host.active && graphics.off && !host.backlightEnabled);
- assert(events[events.size()-2]==8); // Diagnostic dispatch does not admit driver hooks.
+ for(auto e:events)assert(e!=8); // Unsupported family never dispatches the GPU.
 }
-for(unsigned rev:{0U,12U,255U}) {
+for(unsigned rev:{0U,12U,255U})for(bool override:{false,true}) {
  DeviceInfo::value.videoBuiltin=&gpu;DeviceInfo::value.managementEngine=nullptr;
- publish=true;published=false;deviceProperty=&fake;fake.value=0x9A49;identity=0x46A68086;revision=rev;events.clear();graphics.off=false;
+ publish=true;published=false;deviceProperty=override?&fake:nullptr;fake.value=0x9A49;identity=0x46A68086;revision=rev;events.clear();graphics.off=false;
  XeHost host;host.processKernel(patcher);
  assert(host.active && !graphics.off && !host.backlightEnabled);
  assert(events[events.size()-2]==8);
  const auto profile=XELP::identify(identity,revision,0x9A498086);
- assert(profile.displayAdmitted() && !profile.admitted());
+ assert(profile.displayAdmitted() && profile.admitted());
  // Execute the real outer dispatcher; neither FB hooks nor Accelerator
- // rejection may disappear merely because Render admission is closed.
+ // dispatch must remain connected to the selected mobile Display13 backend.
  host.processKext(patcher,1,0,0);assert(events.back()==101);
  host.processKext(patcher,2,0,0);assert(events.back()==102);
 }

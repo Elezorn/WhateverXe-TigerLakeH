@@ -42,6 +42,7 @@ Graphics; GPU generation and connector routing are handled by WEX.
 | --- | --- |
 | Tiger Lake-U | 48- and 80-EU graphics; desktop-style and laptop display layouts |
 | Alder Lake-N | 16- and 24-EU graphics; two HDMI displays |
+| Alder Lake-H | 96-EU graphics (`46A6`); fixed TC HDMI on Big Sur |
 | Alder Lake-S | UHD Graphics 770 (`4690`); HDMI, DisplayPort and a USB-C port wired as fixed DisplayPort |
 
 These are tested configurations within each family, not a guarantee for every
@@ -53,6 +54,7 @@ for OS coverage and remaining problems.
 - Other supported Tiger Lake-U/H35 configurations, including 96-EU graphics.
 - Tiger Lake-H45 (GT1): `9A60`, `9A68`, `9A70`.
 - Other supported Alder Lake-N configurations and Twin Lake.
+- Alder Lake-H/P/U and Raptor Lake-H/P/U with supported fixed HDMI wiring.
 - Other supported Alder Lake-S configurations, Alder Lake-HX, Raptor Lake-S and Raptor Lake-HX.
 
 These devices use implemented support shared with the tested families. Their
@@ -62,8 +64,8 @@ limits are listed in [device selection](docs/device-selection.md).
 
 ### Further implementation required
 
-- Alder Lake-H/P/U and Raptor Lake-H/P/U: additional graphics and display support
-  is needed. These are distinct from the HX products listed above.
+- Display13 eDP, fixed DP and Type-C-managed output need complete transport
+  integration. Mobile-family ID admission does not enable those output paths.
 - Rocket Lake-S: its display power and clock handling differ from Tiger Lake.
   It is not supported by this release, and no hardware validation is scheduled.
 
@@ -221,9 +223,9 @@ installation or update location.
 
 
 Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
-`-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on an ADL-P device using an explicit backend override, for load-only diagnostics without GPU initialization.
+`-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on a selected ADL-P/RPL-P device, for load-only diagnostics without GPU initialization.
 `-wex-display13-offline` keeps Display 13 native controller initialization enabled but reports selected outputs as disconnected, isolating HPD/EDID and mode programming for framebuffer diagnostics. It does not establish display operation.
-The experimental 46A6 ADL-P configuration with a 9A49 donor selector retains its physical Display13 identity and currently enables only the central TC1 framebuffer path; both accelerator probe and start remain blocked. This is a bring-up candidate, not a validated hardware configuration.
+ADL-P/RPL-P uses its physical ID and fuse-derived resources with the shared Display13 backend. Fixed HDMI routes come from VBT; `-wex-noaccel` retains framebuffer-only operation. A legacy 9A49 donor selector is accepted but unnecessary. Use matching Graphics payloads containing the mobile IDs and provider; Graphics 0.2.0 does not include them. AGDP policies that unload the integrated GPU still require configuration before display registration.
 
 
 ## Build and test

@@ -14,7 +14,8 @@ constexpr DisplayAdapter displayAdapter(Family family) {
         case Family::TigerLake:return DisplayAdapter::TGL;
         case Family::AlderLakeS:
         case Family::RaptorLakeS:return DisplayAdapter::ADLS;
-        case Family::AlderLakeP:return DisplayAdapter::ADLP;
+        case Family::AlderLakeP:
+        case Family::RaptorLakeP:return DisplayAdapter::ADLP;
         case Family::AlderLakeN:return DisplayAdapter::ADLN;
         default:return DisplayAdapter::Unknown;
     }

@@ -17,15 +17,18 @@ struct Profile {
     // Mobile Display13 selection is distinct from whether Render is requested.
     // The donor selector never changes the physical Display13 identity.
     bool mobileDisplay13() const {
-        return identity==0x46A68086 && effectiveIdentity==0x9A498086 && revision<=255 &&
-            family==Family::AlderLakeP && display==Display::XeLPD && gt==GT::Unknown && donor==Donor::C004FC1A;
+        return mobileDisplay13Device(identity) && revision<=255 &&
+            (effectiveIdentity==identity || effectiveIdentity==0x9A498086) &&
+            display==Display::XeLPD && gt==GT::ADLPMobile && donor==Donor::C004FC1A &&
+            family==deviceEntry(identity)->family;
     }
-    bool displayAdmitted() const {return admitted() || mobileDisplay13();}
+    bool displayAdmitted() const {return admitted();}
     bool overridden() const {return identity!=effectiveIdentity;}
     // Select the implemented family backend for every PCI revision. Hardware
     // validation is independent; a stepping split needs a concrete behavior delta.
     bool admitted() const {return (identity&0xFFFF)==0x8086 && revision<=255 &&
         donor==Donor::C004FC1A && gt!=GT::Unknown &&
+        ((gt!=GT::ADLPMobile && !mobileDisplay13Device(identity)) || mobileDisplay13()) &&
         ((!display12SmallGT(gt) && !display12SmallGTDevice(identity)) ||
          (display12SmallGT(gt) && display12SmallGTDevice(identity) && !overridden()));}
 };
@@ -34,9 +37,9 @@ inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) 
     if((physical&0xFFFF)!=0x8086 || revision>255)return p;
     const auto entry=deviceEntry(effective);if(!entry)return p;
     const auto physicalEntry=deviceEntry(physical);
-    if(physicalEntry && physicalEntry->family==Family::AlderLakeP) {
-        p.family=physicalEntry->family;p.display=physicalEntry->display;
-        if(entry->backend!=GT::Unknown)p.donor=Donor::C004FC1A;
+    if(physicalEntry && physicalEntry->backend==GT::ADLPMobile) {
+        p.family=physicalEntry->family;p.display=physicalEntry->display;p.gt=physicalEntry->backend;
+        if(effective==physical || effective==0x9A498086)p.donor=Donor::C004FC1A;
         return p;
     }
     p.family=entry->family;p.display=entry->display;p.gt=entry->backend;

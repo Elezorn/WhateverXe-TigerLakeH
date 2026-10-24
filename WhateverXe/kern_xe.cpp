@@ -4138,8 +4138,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	selectProfile(XELP::deviceProfile(physicalGPU));
     // ADLP_LOAD_ONLY_KERNEL: do not enter TGL MMIO/FIA, bootstrap or VM setup.
     const auto physicalEntry=XELP::deviceEntry(xeProfile.identity);
-    adlpLoadOnly=physicalEntry && physicalEntry->family==XELP::Family::AlderLakeP &&
-        xeProfile.donor==XELP::Donor::C004FC1A && xeProfile.overridden() &&
+    adlpLoadOnly=physicalEntry && xeProfile.mobileDisplay13() &&
         XELP::hostOS(XELP::kernelOS(version)) && checkKernelArgument("-wex-adlp-load-only");
     if(adlpLoadOnly) {
         IORegistryEntry::getRegistryRoot()->setProperty("ADLPLoadOnlyKernel",true);
@@ -4147,11 +4146,12 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
         return;
     }
     // ADLP_LOAD_ONLY_KERNEL_END
-    // Temporary opt-in bring-up evidence. ADL-P remains unadmitted; only
-    // the existing bounded Gen12 forcewake transaction writes registers.
-    if(!xeProfile.admitted() && xeProfile.family==XELP::Family::AlderLakeP &&
-       !xeProfile.overridden() && physicalGPU && checkKernelArgument("-wex-adlp-readout") &&
-       XELP::hostOS(XELP::kernelOS(version)) && (physicalGPU->configRead16(4)&2)) {
+    // Explicit diagnostic keeps both native drivers blocked even after the
+    // mobile family is admitted automatically. Only the bounded readout runs.
+    if(xeProfile.mobileDisplay13() && physicalGPU && checkKernelArgument("-wex-adlp-readout") &&
+       XELP::hostOS(XELP::kernelOS(version))) {
+        adlpLoadOnly=true;
+        if(!(physicalGPU->configRead16(4)&2))return;
         auto map=physicalGPU->mapDeviceMemoryWithRegister(0x10,kIOMapInhibitCache);
         if(map && map->getVirtualAddress() && map->getLength()==0x1000000) {
             struct IO {
@@ -4162,7 +4162,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
                 void delay() {IODelay(100);}
             } io {reinterpret_cast<volatile uint8_t *>(map->getVirtualAddress())};
             uint32_t edram=UINT32_MAX;
-            auto gt=AlderLakeN::readGT(io,true,&edram);
+            auto gt=AlderLakeN::readGT(io,true,&edram,XELP::decodeADLPGT);
             physicalGPU->setProperty("ADLPGTBoot",&gt,sizeof(gt));
             physicalGPU->setProperty("ADLPEDRAM",edram,32);
             uint32_t registers[][2] {
@@ -4184,6 +4184,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
                 gt.releasedMask,gt.releaseFailedMask);
         }
         if(map)map->release();
+        return;
     }
     if(display12SmallGTDetected && XELP::display12SmallGTDevice(xeProfile.identity) &&
        !xeProfile.overridden() && physicalGPU &&

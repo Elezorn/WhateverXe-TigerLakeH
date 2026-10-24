@@ -31,6 +31,7 @@ WEXはOSのABIとGPUバックエンドを独立して選択します。OS別の�
 | --- | --- |
 | Tiger Lake-U | 48 EU・80 EU。外部画面を使う構成とノートPCの画面構成 |
 | Alder Lake-N | 16 EU・24 EU。HDMI 2画面 |
+| Alder Lake-H | 96 EU（`46A6`）。Big Surの固定TC HDMI |
 | Alder Lake-S | UHD Graphics 770（`4690`）。HDMI、DisplayPort、固定DisplayPortとして配線されたUSB-C端子 |
 
 各ファミリーの一部構成で確認した結果であり、全モデル・全端子の動作保証ではありません。
@@ -41,6 +42,7 @@ OS別の検証範囲と残る問題は[動作確認済みの機能と既知の�
 - 96 EUを含む、対応IDの他のTiger Lake-U/H35構成。
 - Tiger Lake-H45（GT1）：`9A60`、`9A68`、`9A70`。
 - 対応IDの他のAlder Lake-N構成とTwin Lake。
+- 対応する固定HDMI配線のAlder Lake-H/P/U、Raptor Lake-H/P/U。
 - 対応IDの他のAlder Lake-S構成、Alder Lake-HX、Raptor Lake-S、Raptor Lake-HX。
 
 確認済みのファミリーと処理を共有する実装があり、IDは自動で受け付けます。
@@ -49,8 +51,8 @@ CPUモデル名や機種固有の設定は不要ですが、実機での動作�
 
 ### 対応に追加改修が必要
 
-- Alder Lake-H/P/U、Raptor Lake-H/P/U：描画・表示処理の追加対応が必要です。
-  上記のHX製品とは別の系統です。
+- Display13のeDP・固定DP・Type-C管理下の出力は、transportの接続に追加改修が必要です。
+  モバイル系IDの受付だけでこれらの出力経路が有効になるわけではありません。
 - Rocket Lake-S：Tiger Lakeとは表示の電源・クロック制御が異なります。
   このリリースでは未対応で、実機検証の予定もありません。
 
@@ -169,9 +171,9 @@ Safariのインストール先や更新による配置変更に依存せずData�
 
 
 開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
-`-wex-adlp-load-only` は既存バックエンドを明示選択したADL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。
+`-wex-adlp-load-only` は選択済みADL-P/RPL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。
 `-wex-display13-offline` はDisplay 13のnative controller初期化を有効に保ち、選択した出力を未接続として扱います。FB診断でHPD/EDIDとmode設定を切り離すための設定で、表示成立を意味しません。
-46A6 ADL-Pで9A49をdonor選択に使う実験構成は、物理Display13の識別を維持し、現時点では中央TC1のFramebuffer経路のみを選択します。Acceleratorはprobe/startの両方を拒否します。実機成立済みの対応構成ではなく、立上げ候補です。
+ADL-P/RPL-Pは物理IDとfuseから求めた資源で共有Display13バックエンドを選択します。固定HDMI配線はVBTから取得し、`-wex-noaccel`でFramebufferのみの動作を維持します。旧9A49 donor選択も受け付けますが不要です。モバイル系IDと対応providerを含むGraphics資材が必要で、Graphics 0.2.0には含まれていません。IGPUをunloadするAGDP policyでは、表示登録前の設定が引き続き必要です。
 
 
 ## ビルドとテスト

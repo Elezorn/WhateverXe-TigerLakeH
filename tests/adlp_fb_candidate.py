@@ -39,7 +39,7 @@ int main(){
  assert(!Display13FBTopology::supportedWiring(w) && Display13FBTopology::supportedWiring(w,true));
  x.adlnOutputWiring=w;assert(x.xelpBindProbe((void*)1));
  assert(seen.valid() && !seen.combo && seen.comboBackend==3 && seen.legacy==0x18 && seen.legacyBackend==0x78);
- assert(seen.profile.family==XELP::Family::AlderLakeP && !seen.profile.admitted());
+ assert(seen.profile.family==XELP::Family::AlderLakeP && seen.profile.admitted());
  for(unsigned f=0;f<5;++f){XE bad=x;
   if(f==0)bad.display13TCProbeReady=false;if(f==1)bad.display13FBTCHooksReady=false;
   if(f==2)bad.display13FBTopologyHooksReady=false;if(f==3)bad.xelpProviderConfigureProbe=0;
