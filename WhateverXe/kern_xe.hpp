@@ -215,6 +215,10 @@ private:
     mach_vm_address_t orgDisplay13GMBus {},orgDisplay13GMBusRead {},orgDisplay13GMBusWrite {},adlnGMBusFunction {};
     mach_vm_address_t orgDisplay13FBEnable {},orgAlderLakeNConnectionAttr {},orgAlderLakeNPortDDC {},orgDisplay13FBDDC {},orgAlderLakeNComputeLanes {},adlnHDMILaneCaller {};
     static uint32_t wrapDisplay13FBEnable(IOService *fb);
+    bool processDisplay13FramebufferAGDC(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+    mach_vm_address_t orgDisplay13FBUserClient {},orgDisplay13AGDCCallback {};
+    static uint32_t wrapDisplay13FBUserClient(IOService *,void *,void *,uint32_t,void **);
+    static uint32_t wrapDisplay13AGDCCallback(IOService *,uint32_t,unsigned long,uint32_t);
     static uint32_t wrapAlderLakeNConnectionAttr(IOService *fb,int connection,uint32_t attribute,unsigned long *value);
     static uint32_t wrapDisplay13FBDDC(IOService *fb,int connection,uint32_t block,uint32_t segment,uint32_t type,uint8_t *data,uint64_t *length);
     static uint32_t wrapAlderLakeNPortDDC(OSObject *port,uint32_t block,uint8_t *data,bool force);

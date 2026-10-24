@@ -6484,6 +6484,7 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
 		memcmp(reinterpret_cast<void *>(bus+0x335),busBefore,sizeof(busBefore)) ||
 		memcmp(reinterpret_cast<void *>(bus+0xEA),pinLimit,sizeof(pinLimit)) ||
 		memcmp(reinterpret_cast<void *>(bus+0x2E0),resetBefore,sizeof(resetBefore)))return false;
+    if(!processDisplay13FramebufferAGDC(patcher,index,address,size))return false;
 	struct Change {uintptr_t offset;const uint8_t *find,*replace;size_t length;};
 	const Change changes[] {
 		{0x9A0E8,reinterpret_cast<const uint8_t *>(before),reinterpret_cast<const uint8_t *>(after),sizeof(before)},
@@ -7172,6 +7173,66 @@ static void adlnPublishFrontend(const char *name,const char *phase,uint64_t (&r)
     char key[64];snprintf(key,sizeof(key),"N97FB%s%u%s",name,static_cast<uint32_t>(r[2]),phase);
     IORegistryEntry::getRegistryRoot()->setProperty(key,r,sizeof(r));
 }
+bool XE::processDisplay13FramebufferAGDC(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+    // Both short trampolines end before the donor's RIP-relative counters.
+    const char *client="__ZN21AppleIntelFramebuffer13newUserClientEP4taskPvjPP12IOUserClient";
+    const char *callback="__ZN31AppleIntelFramebufferController12CallBackAGDCE31kAGDCRegisterLinkControlEvent_tmj";
+    const uint8_t clientEntry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56};
+    const uint8_t callbackEntry[]={0x55,0x48,0x89,0xe5,0x89,0xf0};
+    const uint8_t dispatch[]={0x4c,0x8b,0x87,0xf8,0x1b,0,0,0x48,0x8b,0xbf,0,0x1c,0,0,
+        0x48,0x89,0xd6,0x89,0xca,0x89,0xc1,0x5d,0x41,0xff,0xe0};
+    if(!display13FramebufferRequested || !display13FBABIReady || size<0x69E60)return false;
+    const auto c=patcher.solveSymbol<mach_vm_address_t>(index,client,address,size);patcher.clearError();
+    const auto a=patcher.solveSymbol<mach_vm_address_t>(index,callback,address,size);patcher.clearError();
+    if(c!=address+0x273B4 || a!=address+0x69DF2 ||
+       memcmp(reinterpret_cast<void *>(c),clientEntry,sizeof(clientEntry)) ||
+       memcmp(reinterpret_cast<void *>(a),callbackEntry,sizeof(callbackEntry)) ||
+       memcmp(reinterpret_cast<void *>(address+0x69E1E),dispatch,sizeof(dispatch)))return false;
+    KernelPatcher::RouteRequest routes[] {
+        {client,wrapDisplay13FBUserClient,orgDisplay13FBUserClient},
+        {callback,wrapDisplay13AGDCCallback,orgDisplay13AGDCCallback}
+    };
+    const bool ready=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
+    IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13AGDCGuardReady",ready);
+    return ready;
+}
+
+uint32_t XE::wrapDisplay13FBUserClient(IOService *fb,void *task,void *security,uint32_t type,void **client) {
+    // Only type0 enters IOFramebuffer::open. Refuse before entering IOG: an
+    // error from enableController permanently sets IOG's dead flag instead.
+    // Native controller start publishes FB children before its AGDC nub.
+    // A later open can retry after both the controller and callback are ready.
+    if(type==0) {
+        auto s=callbackXE;
+        const bool framebuffer=fb && fb->getMetaClass()->getClassSize()>=0x4B90;
+        auto controller=framebuffer ?
+            Display13FBMemory::field<IOService *>(fb,0x1D0) : nullptr;
+        const bool bound=controller && controller==s->adlnTopologyController &&
+            controller->getMetaClass()->getClassSize()>=0x1C20;
+        const bool started=bound && controller==s->tglObservationController;
+        const bool registered=bound && Display13FBMemory::field<uintptr_t>(controller,0x1BF8);
+        uint64_t record[]={1,bound,started,registered,
+            bound && Display13FBMemory::field<uintptr_t>(controller,0x1C00),
+            framebuffer ? Display13FBMemory::field<uint32_t>(fb,0x1DC) : UINT32_MAX};
+        IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13ClientReadiness",record,sizeof(record));
+        if(!started || !registered) {
+            if(client)*client=nullptr;
+            return kIOReturnNotReady;
+        }
+    }
+    return FunctionCast(wrapDisplay13FBUserClient,callbackXE->orgDisplay13FBUserClient)(fb,task,security,type,client);
+}
+
+uint32_t XE::wrapDisplay13AGDCCallback(IOService *controller,uint32_t event,unsigned long argument,uint32_t value) {
+    // Other native notifications can also precede policy registration. Return
+    // failure for a real notification with no receiver; never synthesize ACK.
+    // Keep the native event filter, argument conversion and registered path.
+    const bool notification=event==4 || event==0x80 || (event<=11 && (0x90FU&(1U<<event)));
+    if(notification && (!controller || controller->getMetaClass()->getClassSize()<0x1C20 ||
+       !Display13FBMemory::field<uintptr_t>(controller,0x1BF8)))return kIOReturnNotReady;
+    return FunctionCast(wrapDisplay13AGDCCallback,callbackXE->orgDisplay13AGDCCallback)(controller,event,argument,value);
+}
+
 uint32_t XE::wrapDisplay13FBEnable(IOService *fb) {
     uint64_t r[16] {1,1};adlnFrontendSnapshot(fb,r);adlnPublishFrontend("Enable","Entry",r);
     const auto result=FunctionCast(wrapDisplay13FBEnable,callbackXE->orgDisplay13FBEnable)(fb);
@@ -7316,6 +7377,7 @@ bool XE::prepareDisplay13BootScanout(IOPCIDevice *pci) {
 
 bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	auto s=callbackXE;auto pci=OSDynamicCast(IOPCIDevice,provider);
+	if(s->tglObservationController==that)s->tglObservationController=nullptr;
 	if(!pci)return false;
     const auto board=s->display13BoardWiring(provider);
     if(!Display13FBTopology::supportedWiring(board,s->adlpFramebufferOnly) ||
