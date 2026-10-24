@@ -12,6 +12,23 @@ struct IO {
  uint32_t read(uint32_t r){reads.push_back(r);return regs.at(r);}
 };
 int main() {
+ // ABI3 explicitly describes fixed TC HDMI; capability query prevents an
+ // old provider from accepting a configuration whose implementation it lacks.
+ for(unsigned d=3;d<=6;++d)for(unsigned ready=0;ready<16;++ready)for(unsigned h=0;h<2;++h) {
+  alignas(8) uint8_t platform[0x1c0] {};
+  ProbeConfig c;c.profile=identify(0x46d18086,0);c.comboBackend=3;c.legacy=1U<<d;c.legacyBackend=0x78;
+  ProbeBinding b{1,2,reinterpret_cast<uintptr_t>(platform),c};assert(b.valid());
+  auto rec=reinterpret_cast<uint32_t *>(platform+0x20+24*d);
+  const uint32_t native[]={d,d+6,2,1,0x800,0x202};memcpy(rec,native,sizeof(native));
+  IO io;io.regs={{0xc4000,h<<(21+d)},{0x161500+4*(d-3),ready}};
+  assert(probeMode(io,b,2,reinterpret_cast<uintptr_t>(rec),rec)==(h && (ready&7)==4?4U:0U));
+  assert(io.reads[0]==0x161500+4*(d-3));
+  for(unsigned f:{0U,1U,2U,3U,4U,5U}) {
+   auto old=rec[f];rec[f]=~0U;io.reads.clear();
+   assert(!probeMode(io,b,2,reinterpret_cast<uintptr_t>(rec),rec) && io.reads.empty());rec[f]=old;
+  }
+  auto bad=c;bad.legacyBackend=0;assert(!bad.valid());bad=c;bad.typeC=c.legacy;assert(!bad.valid());
+ }
  static_assert(sizeof(Profile)==28 && sizeof(ProbeConfig)==60,"Keep existing provider ABI3 layout");
  for(auto id:{0xA7808086U,0xA7828086U,0xA7888086U,0xA78B8086U}) {
   auto p=identify(id,12);

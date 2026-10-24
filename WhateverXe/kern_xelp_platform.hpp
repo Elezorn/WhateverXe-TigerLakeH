@@ -65,14 +65,17 @@ struct NativePorts {
 };
 // ABI3 includes physical/effective identity and binds a profile and immutable probe policy, not mutable connection state.
 // legacy permits probing for mode4; it does not force mode4 or classify a
-// USB-C-capable connector as physically fixed DP. The provider still checks FIA.
+// USB-C-capable connector as physically fixed DP. The provider checks generation-specific live state.
 // Type-C intent is represented but not admitted by either current backend.
-constexpr uint32_t ProbeABI=3,ProbeCapabilityABI=1,ProbeDisplay13ComboDP=1U;
+constexpr uint32_t ProbeABI=3,ProbeCapabilityABI=1,ProbeDisplay13ComboDP=1U,ProbeDisplay13FixedTC=2U;
 using QueryProbeCapabilities=uint32_t (*)(uint32_t,uint32_t);
 // Optional export: old ABI3 providers remain valid for their existing routes,
 // but their lack of a capability reply cannot authorize a new DP route.
 inline bool display13ProbeCapable(QueryProbeCapabilities query) {
     return query && (query(ProbeCapabilityABI,ProbeABI)&ProbeDisplay13ComboDP);
+}
+inline bool display13TCProbeCapable(QueryProbeCapabilities query) {
+    return query && (query(ProbeCapabilityABI,ProbeABI)&ProbeDisplay13FixedTC);
 }
 struct ProbeConfig {
     uint32_t abi {ProbeABI},bytes {sizeof(ProbeConfig)};
@@ -91,8 +94,9 @@ struct ProbeConfig {
         if((combo&~7U) || ((legacy|typeC|excluded|legacyBackend)&~0x1F8U) ||
            (comboBackend&~7U) || (legacy&typeC) || (legacy&excluded) || (typeC&excluded))return false;
         if(profile.display==Display::XeD)return comboBackend==7;
-        return profile.display==Display::XeLPD && combo && !(combo&~3U) &&
-            comboBackend && !(comboBackend&~3U) && !legacy && !typeC && !legacyBackend;
+        return profile.display==Display::XeLPD && (combo|legacy) && !(combo&~3U) &&
+            comboBackend && !(comboBackend&~3U) && !typeC &&
+            !(legacy&~0x78U) && !(legacyBackend&~0x78U) && !(legacy&~legacyBackend);
     }
 };
 inline bool same(const ProbeConfig &a,const ProbeConfig &b) {

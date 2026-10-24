@@ -194,6 +194,18 @@ private:
 	mach_vm_address_t orgDisplay13FramebufferInit {};
 	__attribute__((noinline)) bool processDisplay13FramebufferABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size);
 	__attribute__((noinline)) bool processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size);
+    bool display13FBTCHooksReady {};
+    mach_vm_address_t orgDisplay13TCMode {},display13TCBaseMode {},orgDisplay13TCEnableClocks {},orgDisplay13TCDisableClocks {};
+    mach_vm_address_t orgDisplay13TCLightUp {},orgDisplay13TCSetMode {},display13TCNotify {};
+    mach_vm_address_t display13TCFullClocks {},display13TCPlane {},display13TCScaler {},display13TCPipe {},display13TCPackets {};
+    static uint32_t wrapDisplay13TCLightUp(void *,void *,void *,const void *);
+    static uint32_t wrapDisplay13TCSetMode(void *,void *,const void *);
+    bool processDisplay13FramebufferTC(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+    static unsigned display13TCTarget(OSObject *,bool cleanup=false);
+    static uint32_t wrapDisplay13TCMode(OSObject *,uint32_t);
+    static void wrapDisplay13TCEnableClocks(void *,void *,void *,uint32_t *);
+    static void wrapDisplay13TCDisableClocks(void *,void *,void *);
+    static uint32_t wrapDisplay13TCSignal(void *,uint32_t,uint32_t,void *);
 	__attribute__((noinline)) bool processDisplay13FramebufferTopology(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size);
 	static bool wrapAlderLakeNGetOSInformation(IOService *controller);
 	static uint32_t wrapAlderLakeNPortState(OSObject *port);

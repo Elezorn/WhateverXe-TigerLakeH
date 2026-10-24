@@ -27,8 +27,12 @@ struct IOMemoryMap:OSObject {uintptr_t address {};uint64_t bytes {};
 int main(int argc,char **argv) {
  assert(XELP::display13ProbeCapable(xelpProbeCapabilities));
  assert(!XELP::display13ProbeCapable(nullptr));
+ assert(XELP::display13TCProbeCapable(xelpProbeCapabilities));
+ assert(!XELP::display13TCProbeCapable(nullptr));
+ assert(!XELP::display13TCProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return XELP::ProbeDisplay13ComboDP;}));
+ assert(XELP::display13TCProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return XELP::ProbeDisplay13FixedTC;}));
  for(unsigned schema=0;schema<5;++schema)for(unsigned abi=0;abi<6;++abi)
-  assert(xelpProbeCapabilities(schema,abi)==(schema==1&&abi==3?XELP::ProbeDisplay13ComboDP:0));
+  assert(xelpProbeCapabilities(schema,abi)==(schema==1&&abi==3?(XELP::ProbeDisplay13ComboDP|XELP::ProbeDisplay13FixedTC):0));
  assert(!XELP::display13ProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 0;}));
  assert(!XELP::display13ProbeCapable(+[](uint32_t,uint32_t)->uint32_t{return 2;}));
  assert(argc==2);const bool adln=!strncmp(argv[1],"adln",4);
