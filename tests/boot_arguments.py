@@ -153,15 +153,17 @@ int main() {
   assert(selected.adlnDetected==small13 && selected.display13FramebufferRequested==small13);
   const bool d12=(desktop || mobile) && !(option&1);
   assert(selected.tglRequested==(small13 || d12));
-  assert(selected.tglAcceleratorRequested==(small13 || (d12 && !(option&2))));
+  assert(selected.tglAcceleratorRequested==((small13 || d12) && !(option&2)));
   assert((selected.currentFramebuffer==&kextIntelTGLFb)==(small13 || d12));
  }
  version="Darwin Kernel Version 21.6.0: Mon Jun 24 00:56:10 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_X86_64";
  xe=boot({},0x9A498086);assert(xe.tglRequested && xe.tglAcceleratorRequested);
  xe=boot({"-wex-noaccel"},0x9A498086);
  assert(xe.tglRequested && !xe.tglAcceleratorRequested && xe.currentFramebuffer==&kextIntelTGLFb);
- // The existing noaccel diagnostic is a Display12 option.
- xe=boot({"-wex-noaccel"},0x46D28086);assert(xe.adlnNativeRequested);
+ // Display13 keeps FB and the graphics-kext rejection route selected,
+ // while noaccel removes permission to execute the accelerator.
+ xe=boot({"-wex-noaccel"},0x46D28086);
+ assert(xe.adlnNativeRequested && xe.display13FramebufferRequested && xe.tglRequested && !xe.tglAcceleratorRequested);
  version=qualified;
 
  xe=boot({},0x12348086,0x46D28086);

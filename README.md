@@ -172,6 +172,11 @@ The supported Display 13 backend selects Y-tiled scanout automatically;
 Do not use the Apple driver's `-yTileDisable` argument with this backend:
 its X-tiled scanout path is unsupported. Display 12 tiling selection is unchanged.
 
+For framebuffer bring-up, the optional `-wex-noaccel` argument disables accelerator
+startup. On Display 13 it also skips GT resource probing while preserving the
+framebuffer's independent boot-memory and MMIO checks. It does not enable an
+otherwise unsupported display backend.
+
 ## Tested features and known issues
 
 | Hardware | Verified features |

@@ -117,8 +117,10 @@ private:
     uint32_t adlnNativeSubslices {}, adlnL3Banks {}, adlnNativeEUs {};
 	bool adlnKernelReady {false};
 	bool adlnNativeRequested {false};
-	// Shared platform preflight: GT fuses, reserved GGTT/GOP, mapper,
-    // aperture and native boot policy. Both Render and Display consume it.
+    // Display handoff needs GOP/GGTT, mapper and aperture qualification,
+    // independently of GT fuses or an accelerator being allowed to start.
+    bool display13BootReady {false};
+    // Render additionally requires the native GT resource certificate.
     bool adlnNativeReady {false};
 	bool display13FramebufferRequested {false};
 	bool display13FBPowerReferencesReady {false};

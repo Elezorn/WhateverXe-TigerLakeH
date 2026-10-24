@@ -3754,7 +3754,8 @@ void XE::selectProfile(const XELP::Profile &profile) {
         adlnNativeRequested=adlnKernelReady;
         adlnNativeRCSProfileRequested=adlnNativeRequested && !checkKernelArgument("-wex-adln-kernel-ctx");
         if(adlnNativeRequested) {
-            tglRequested=tglAcceleratorRequested=true;currentGraphics=&kextIntelTGL;
+            tglRequested=true;tglAcceleratorRequested=!checkKernelArgument("-wex-noaccel");
+            currentGraphics=&kextIntelTGL;
         }
         return;
     }
@@ -3778,7 +3779,8 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97BringupVersion", 1ULL, 32);
 	pci->setProperty("N97NativeStartAllowed", false);
 	const auto revision = pci->configRead8(8);
-	const bool renderRequested = adlnRequested && adlnKernelReady && xelpAlderLakeNDevice(pci);
+	const bool renderRequested = adlnRequested && adlnKernelReady && xelpAlderLakeNDevice(pci) &&
+        !checkKernelArgument("-wex-noaccel");
     const bool displayRequested = display13FramebufferRequested && xelpDisplay13Device(pci);
     const bool admitted = renderRequested || displayRequested;
 	pci->setProperty("N97Admission", admitted);
@@ -3990,9 +3992,11 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
             physicalOptions && (pci->configRead16(4)&6)==6 &&
             checkKernelArgument("-allow3d") && checkKernelArgument("-disablegfxfirmware") &&
             !checkKernelArgument("-wex-adln-scanout") && !checkKernelArgument("-wex-adln-gpu");
-        // This shared admission remains the conjunction of all three
-        // certificates; selecting a Display adapter never admits a GT.
-        adlnNativeReady=renderReady && prefix && memoryReady;
+        // FB can adopt its boot memory without initializing a render engine.
+        // Keep the stricter GT certificate for every accelerator consumer.
+        display13BootReady=prefix && memoryReady;
+        adlnNativeReady=renderReady && display13BootReady;
+        pci->setProperty("WEXDisplay13BootReady",display13BootReady);
         pci->setProperty("N97NativePreflight",adlnNativeReady);
         pci->setProperty("N97NativeReservedGGTT",prefix);
     }
@@ -4196,7 +4200,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
         modDVMTCalcFix.processKernel(patcher,info);
         xelpLoadDisplayPool(physicalGPU);
 		adlnBootstrap(physicalGPU);
-		if (adlnNativeRequested && adlnNativeReady) {
+		if (display13BootReady) {
 			tglVMPrepare(patcher,physicalGPU);
 			tglPrepareMMIOUC(patcher,physicalGPU);
 			auto map=physicalGPU->mapDeviceMemoryWithRegister(0x10);
@@ -6681,7 +6685,7 @@ void XE::wrapDisplay13GMBusWrite(void *access,uint64_t reg,uint32_t value) {
     // trigger queue. Apply Display 13's slot WA only to our proven owner.
     if(reg==0x70080 || reg==0x71080 || reg==0x72080) {
         const auto cursorBase=__atomic_load_n(&display13FBPower.arbitrationWriterBase,__ATOMIC_ACQUIRE);
-        if(callbackXE->xeProfile.display==XELP::Display::XeLPD && callbackXE->adlnNativeReady && access &&
+        if(callbackXE->xeProfile.display==XELP::Display::XeLPD && callbackXE->display13BootReady && access &&
            access==display13FBPower.access && cursorBase && Display13FBMemory::field<uintptr_t>(access,0x50)==cursorBase)
             value=Display13Cursor::controlWrite(reg,value);
     }
@@ -6725,7 +6729,7 @@ void XE::wrapDisplay13GMBusWrite(void *access,uint64_t reg,uint32_t value) {
     const bool arbitrationRegister=reg==0x70008 || reg==0x71008 || reg==0x72008 ||
         reg==0x70180 || reg==0x71180 || reg==0x72180;
     const auto writerBase=__atomic_load_n(&display.arbitrationWriterBase,__ATOMIC_ACQUIRE);
-    if(arbitrationRegister && callbackXE->display13FramebufferRequested && callbackXE->adlnNativeReady && access==display.access &&
+    if(arbitrationRegister && callbackXE->display13FramebufferRequested && callbackXE->display13BootReady && access==display.access &&
        display.engineEnabled && writerBase && Display13FBMemory::field<uintptr_t>(access,0x50)==writerBase) {
         for(unsigned pipe=0;pipe<3;++pipe) {
             const auto bank=0x1000*pipe;
@@ -6928,16 +6932,17 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
         wiring?wiring->getLength():0,s->firmwarePorts,3);
     if(!Display13FBTopology::supportedWiring(s->adlnOutputWiring))return false;
  const auto contract=XELP::DisplayContract::display13(s->display13Available(),s->adlnOutputWiring.dp!=0);
- const bool ready=s->display13FramebufferRequested && contract.ready() && pci && xelpDisplay13Device(pci);
+ const bool ready=s->display13FramebufferRequested && s->display13BootReady && s->tglActive &&
+  contract.ready() && pci && xelpDisplay13Device(pci);
  uint64_t contractRecord[]={1,contract.required,contract.available,contract.missing()};
  that->setProperty("WEXDisplayStartupContract",contractRecord,sizeof(contractRecord));
  if(!contract.ready())for(uint64_t bit=1;bit;bit<<=1)if(contract.missing()&bit)
   SYSLOG("igfx","Display13 missing operation %s",XELP::DisplayContract::name(bit));
 	that->setProperty("N97FramebufferBackendReady",ready);
 	if(!ready)return false;
-	const bool dualReady=s->adlnNativeReady && s->adlnScanoutDisableFB && s->orgAlderLakeNSysMemAllocate && s->orgAlderLakeNSysMemFree &&
+	const bool dualReady=s->display13BootReady && s->adlnScanoutDisableFB && s->orgAlderLakeNSysMemAllocate && s->orgAlderLakeNSysMemFree &&
 		(!adlnFixedSysMemEnabled || display13FBSysMem.lock) && display13FBSysMem.retireLock && s->adlnWorkLoopInGate && s->adlnWorkLoopTryClose && s->adlnWorkLoopOpen;
-	uint64_t dualPolicy[] {1,s->adlnOutputWiring.selected(),dualReady,s->adlnNativeReady,s->adlnScanoutDisableFB!=0,
+	uint64_t dualPolicy[] {1,s->adlnOutputWiring.selected(),dualReady,s->display13BootReady,s->adlnScanoutDisableFB!=0,
 		s->orgAlderLakeNSysMemAllocate!=0,s->orgAlderLakeNSysMemFree!=0,display13FBSysMem.lock!=nullptr,display13FBSysMem.retireLock!=nullptr,adlnFixedSysMemEnabled};
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FramebufferDualPolicy",dualPolicy,sizeof(dualPolicy));
 	if(Display13FBTopology::multiOutputWiring(s->adlnOutputWiring) && !dualReady)return false;

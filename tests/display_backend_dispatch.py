@@ -12,7 +12,7 @@ kernel_end=s.index('\n\tif (tglRequested) {',kernel_start)
 kernel=s[kernel_start:kernel_end]
 bootstrap=s[s.index('void XE::adlnBootstrap('):s.index('bool XE::xelpBindProbe(')]
 def expression(name):
- return re.findall(r'\b'+name+r'=(.*?);',bootstrap,re.S)[-1]
+ return re.findall(r'\b'+name+r'\s*=\s*(.*?);',bootstrap,re.S)[-1]
 code=r'''
 #include <cassert>
 #include <cstdint>
@@ -26,7 +26,7 @@ bool loadOnly=false;
 bool checkKernelArgument(const char *arg) {assert(!strcmp(arg,"-wex-adln-load-only"));return loadOnly;}
 struct XE {
  bool display13FramebufferRequested=false,adlnRequested=false,adlnDetected=false;
- bool adlnNativeRequested=false,adlnNativeReady=false,tglActive=false;
+ bool adlnNativeRequested=false,adlnNativeReady=false,display13BootReady=false,tglActive=false;
  Kext *currentFramebuffer=nullptr,*currentGraphics=nullptr;
  enum Call {None,Display13,Render,Rejected,LoadOnly,Display12};Call call=None;
  bool processDisplay13Framebuffer(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Display13;return true;}
@@ -61,13 +61,16 @@ void certificates() {
   if(!strcmp(name,"-allow3d"))return bool(args&1);
   if(!strcmp(name,"-disablegfxfirmware"))return bool(args&2);
   if(!strcmp(name,"-wex-adln-scanout"))return bool(args&4);
-  assert(!strcmp(name,"-wex-adln-gpu"));return bool(args&8);
+  if(!strcmp(name,"-wex-adln-gpu"))return bool(args&8);
+  assert(!strcmp(name,"-wex-noaccel"));return bool(args&16);
  };
  struct PCI {unsigned command;unsigned configRead16(unsigned r){assert(r==4);return command;}}device;
  auto pci=&device;
  struct Aperture {uint64_t length;uint64_t getLength(){return length;}}bar;
  struct {AlderLakeN::GTStatus status;}gt;
- for(unsigned mask=0;mask<4096;++mask) {
+ bool adlnRequested=true,adlnKernelReady=true;
+ const auto xelpAlderLakeNDevice=[](PCI*){return true;};
+ for(unsigned mask=0;mask<8192;++mask) {
   gt.status=(mask&1)?AlderLakeN::GTStatus::Complete:AlderLakeN::GTStatus::Failed;
   unsigned edram=(mask&2)?0:1;
   bool prefix=mask&4;
@@ -75,13 +78,17 @@ void certificates() {
   unsigned page_size=(mask&32)?4096:16384;
   bool physicalOptions=mask&64;device.command=(mask&128)?6:2;
   args=mask>>8;
-  const bool renderReady=RENDER;
+  const bool renderRequested=RENDER_REQUEST;
+  const bool renderReady=renderRequested && (RENDER);
   const bool memoryReady=MEMORY;
+  const bool display13BootReady=DISPLAY;
   const bool adlnNativeReady=COMBINED;
-  // All eight platform prerequisites + both required arguments, no diagnostics.
+  // Display needs every memory prerequisite, independently of GT or noaccel.
+  assert(display13BootReady==((mask&0xffc)==0x3fc));
+  // Render still needs all prerequisites and must be disabled by noaccel.
   assert(adlnNativeReady==(mask==0x3ff));
  }
- puts("PASS 4096 shared preflight combinations retain every admission prerequisite");
+ puts("PASS 8192 FB/render preflight combinations: noaccel preserves FB memory, never admits render");
 }
 int main() {
  certificates();
@@ -100,11 +107,11 @@ int main() {
   else assert(result && x.call==(render==1?XE::Rejected:render==2?XE::Render:XE::LoadOnly));
   ++cases;
  }
- for(bool render:{false,true})for(bool display:{false,true})for(bool ready:{false,true}) {
+ for(bool render:{false,true})for(bool display:{false,true})for(bool ready:{false,true})for(bool gt:{false,true}) {
   XE x;x.adlnDetected=render;x.display13FramebufferRequested=display;
-  x.adlnNativeRequested=render;x.adlnNativeReady=ready;x.kernel(patcher);
+  x.adlnNativeRequested=render;x.adlnNativeReady=ready&&gt;x.display13BootReady=ready;x.kernel(patcher);
   assert(x.firmware==int(render||display) && x.pool==x.firmware && x.bootstrap==x.firmware);
-  assert(x.vm==int(render&&ready) && x.mmio==x.vm);
+  assert(x.vm==int((render||display)&&ready) && x.mmio==x.vm);
  }
  // Missing graphics object and missing native request never bypass rejection.
  for(bool detected:{false,true}) {
@@ -115,7 +122,7 @@ int main() {
  }
  printf("PASS %u independent Display/Render dispatch cases, native preflight rejection and load-only routing\n",cases);
 }
-'''.replace('BODY',body).replace('KERNEL',kernel).replace('RENDER',expression('renderReady')).replace('MEMORY',expression('memoryReady')).replace('COMBINED',expression('adlnNativeReady')).replace('#include <cstdio>','#include <cstdio>\n#include <initializer_list>')
+'''.replace('BODY',body).replace('KERNEL',kernel).replace('RENDER_REQUEST',expression('renderRequested')).replace('RENDER',expression('renderReady')).replace('DISPLAY',expression('display13BootReady')).replace('MEMORY',expression('memoryReady')).replace('COMBINED',expression('adlnNativeReady')).replace('#include <cstdio>','#include <cstdio>\n#include <initializer_list>')
 with tempfile.TemporaryDirectory(prefix='wex-display-dispatch-') as d:
  p=Path(d);(p/'test.cpp').write_text(code)
  subprocess.run(['clang++','-std=c++17','-O1','-g','-fsanitize=address,undefined',str(p/'test.cpp'),'-o',str(p/'test')],check=True)
