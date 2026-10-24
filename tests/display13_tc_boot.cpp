@@ -1,4 +1,5 @@
 #include "kern_display13_boot.hpp"
+#include "kern_display13_fb_memory.hpp"
 #include <map>
 #include <vector>
 #include <cassert>
@@ -39,6 +40,16 @@ static IO firmware(unsigned ddi) {
         {0x70028,0xA0F},{0x70180,0x84000008},{0x70188,120},{0x70190,0x0437077F}};
     return io;
 }
+template<class T> static void put(void *p,size_t offset,T value) {memcpy(static_cast<uint8_t *>(p)+offset,&value,sizeof(value));}
+static Display13FBMemory::Readout nativeMemory(IO &io,unsigned ddi,const Display13TC::Boot &tc) {
+    uint8_t controller[0x1C20] {},fb[0x4B90] {};
+    put(fb,0x1D0,reinterpret_cast<uintptr_t>(controller));
+    put(controller,0xD5C,uint32_t(1));put(controller,0xD60,reinterpret_cast<uintptr_t>(fb));
+    put(controller,0xDF5,uint8_t(1));put(controller,0xDF4,uint8_t(1));put(controller,0xDF0,uint32_t(1));
+    put(controller,0x1A10,uint32_t(1));put(controller,0x1A28,io.memory.base);
+    put(controller,0x1A30,uint32_t(0x4000000));put(controller,0x1A34,uint32_t(0x4000));
+    return Display13FBMemory::inspect(io,controller,sizeof(controller),fb,sizeof(fb),0x10000000,io.memory,true,0,ddi,&tc);
+}
 int main() {
     unsigned cases=0;
     for(unsigned ddi=3;ddi<=6;++ddi) {
@@ -50,14 +61,24 @@ int main() {
         assert(Display13Boot::reservedPrefix(io,display,true,ddi,io.memory,&tc));
         assert(io.writes.empty());
         for(auto reg:original)assert(io.regs[reg.first]==reg.second);
+        assert(nativeMemory(io,ddi,tc).status==Display13FBMemory::Status::DisplayState);
         io.pteReads=0;
-        auto result=reinitializeLinear(io,display,true,ddi,GOPProtocol::TMDS,&tc);
+        auto result=Display13Boot::prepareLinear(io,display,true,ddi,io.memory,&tc);
+        io.pteReads=0;
         assert(result.status==LinearStatus::Success && result.writes==10 && tc.unchanged(io));
         for(auto w:io.writes)assert(w.offset==0x42084 || w.offset==0x70028 || w.offset==0x70180 ||
             w.offset==0x70188 || w.offset==0x7018C || w.offset==0x70190 || w.offset==0x701A4 || w.offset==0x7019C);
         for(auto r:original)if(r.first!=0x70028 && r.first!=0x70180)assert(io.regs[r.first]==r.second);
         assert(Display13Boot::reservedPrefix(io,readDisplay(io,true),true,ddi,io.memory,&tc));
         assert(io.pteReads==io.memory.bytes/4096);
+        const auto native=nativeMemory(io,ddi,tc);
+        assert(native.status==Display13FBMemory::Status::Complete && native.verifiedPages==0x4000);
+        auto rejected=firmware(ddi);rejected.badPTE=0x800010;
+        auto preparation=Display13Boot::prepareLinear(rejected,readDisplay(rejected,true),true,ddi,rejected.memory,&tc);
+        assert(preparation.status==LinearStatus::StateChanged && rejected.writes.empty());
+        auto denied=firmware(ddi);
+        preparation=Display13Boot::prepareLinear(denied,readDisplay(denied,true),false,ddi,denied.memory,&tc);
+        assert(preparation.status==LinearStatus::NotAdmitted && denied.writes.empty() && !denied.pteReads);
         auto bad=firmware(ddi);bad.badPTE=0x800010;
         assert(!Display13Boot::reservedPrefix(bad,readDisplay(bad,true),true,ddi,bad.memory,&tc) && bad.pteReads==3);
         for(unsigned wrong:{0U,1U,2U,7U,8U,UINT32_MAX})assert(!Display13TC::Boot::capture(io,true,wrong,0).valid());

@@ -156,6 +156,7 @@ private:
  bool display13DPProbeReady {},display13TCProbeReady {};
  bool adlpFramebufferOnly {};
  Display13OutputWiring display13BoardWiring(IOService *);
+ bool prepareDisplay13BootScanout(IOPCIDevice *);
     bool xelpBindProbe(void *controller);
 	bool display13FBTopologyHooksReady {false};
 	Display13OutputWiring adlnOutputWiring;

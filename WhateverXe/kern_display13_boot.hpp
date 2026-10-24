@@ -21,6 +21,17 @@ template<class IO> bool reservedPrefix(IO &io,const AlderLakeN::DisplayReadout &
         if(io.readPTE(0x800000+8*i)!=memory.pte(uint64_t(i)*4096))return false;
     return ddi<3 || tc->unchanged(io);
 }
+// Establish the native linear-GGTT prerequisites only after the controller
+// startup contract is ready.
+// Ownership/power/link drift and the stolen prefix are checked before mutation.
+template<class IO> AlderLakeN::LinearResult prepareLinear(IO &io,const AlderLakeN::DisplayReadout &boot,
+    bool admitted,unsigned ddi,const XELPMemory::Layout &memory,const Display13TC::Boot *tc=nullptr) {
+    using namespace AlderLakeN;
+    LinearResult r;
+    if(!admitted)return r;
+    if(!reservedPrefix(io,boot,true,ddi,memory,tc)){r.status=LinearStatus::StateChanged;return r;}
+    return reinitializeLinear(io,boot,true,ddi,GOPProtocol::TMDS,tc);
+}
 enum class Status : uint32_t {Unavailable,Complete,Topology,Readback,Timeout,PeerChanged};
 struct Result {
     uint32_t version {1};Status status {Status::Unavailable};

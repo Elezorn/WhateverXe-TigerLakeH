@@ -44,7 +44,12 @@ struct IOService {
 };
 #define OSDynamicCast(T,p) dynamic_cast<T *>(p)
 #define OSSafeReleaseNULL(p) do{p=nullptr;}while(0)
+struct Handoff {
+ bool adlpFramebufferOnly=true,ready=true;unsigned calls=0;
+ bool prepareDisplay13BootScanout(IOService *provider){assert(provider);++calls;return ready;}
+} handoff;
 bool prepare(IOService *that,IOService *provider){
+ auto s=&handoff;auto pci=provider;
 PRODUCTION
  return true;
 }
@@ -54,8 +59,9 @@ void check(bool oldFeatures,bool oldKey,uint32_t keyValue,unsigned failure,bool 
  prior.items={{"UnrelatedFeature",&untouched},{"YTiling",&disabled}};
  if(oldFeatures)that.items["FeatureControl"]=&prior;
  if(oldKey)provider.items["AAPL,GfxYTile"]=&key;
- step=0;failAt=failure;bool ok=prepare(&that,&provider);
- if(failure || !workLoop){assert(!ok);return;}
+ step=0;failAt=failure;handoff.calls=0;bool ok=prepare(&that,&provider);
+ if(failure || !workLoop){assert(!ok && !handoff.calls);return;}
+ assert(handoff.calls==1);
  assert(ok);auto f=dynamic_cast<OSDictionary *>(that.getProperty("FeatureControl"));assert(f);
  assert(dynamic_cast<OSNumber *>(f->items.at("YTiling"))->value==1);
  assert(dynamic_cast<OSNumber *>(f->items.at("ThreadingMode"))->value==0);
@@ -64,6 +70,8 @@ void check(bool oldFeatures,bool oldKey,uint32_t keyValue,unsigned failure,bool 
  assert(oldKey ? data==&key && data->value==keyValue : data->value==1);
 }
 int main(){
+ {IOService that,provider;handoff.ready=false;assert(!prepare(&that,&provider));assert(handoff.calls==1);handoff.ready=true;}
+
  for(bool features:{false,true})for(bool key:{false,true})for(uint32_t value:{0U,1U}){
   check(features,key,value,0);unsigned operations=step;
   for(unsigned failure=1;failure<=operations;++failure)check(features,key,value,failure);

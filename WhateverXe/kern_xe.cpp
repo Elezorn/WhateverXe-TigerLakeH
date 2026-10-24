@@ -7287,6 +7287,33 @@ bool XE::wrapDisplay13FramebufferInit(IOService *fb,IOService *controller,uint32
 	return true;
 }
 
+bool XE::prepareDisplay13BootScanout(IOPCIDevice *pci) {
+    if(!display13BootReady || !xelpDisplay13Device(pci) || !xelpMemoryMatches(pci) ||
+       !(pci->configRead16(4)&2))return false;
+    auto map=pci->mapDeviceMemoryWithRegister(0x10,kIOMapInhibitCache);
+    if(!map)return false;
+    struct IO {
+        volatile uint8_t *base;uint64_t bytes;
+        bool readable(uint32_t reg) const {return base && bytes>=4 && reg<=bytes-4;}
+        uint32_t read(uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);}
+        uint64_t readPTE(uint32_t reg){return *reinterpret_cast<volatile uint64_t *>(base+reg);}
+        void write(uint32_t reg,uint32_t value){*reinterpret_cast<volatile uint32_t *>(base+reg)=value;}
+        void delay(){IODelay(100);}
+    } io{reinterpret_cast<volatile uint8_t *>(map->getVirtualAddress()),map->getLength()};
+    const bool mapped=io.base && io.bytes==0x1000000;
+    const auto boot=AlderLakeN::readDisplay(io,mapped);
+    uint32_t trans=UINT32_MAX;AlderLakeN::value(boot,0x60400,trans);
+    const auto ddi=Display13FBTopology::bootstrapDDI(adlnOutputWiring,
+        boot.status==AlderLakeN::ReadoutStatus::Complete,boot.poweredPipes,boot.activePipes,trans);
+    const auto tc=Display13TC::Boot::capture(io,mapped && ddi>=3,ddi,0);
+    auto result=Display13Boot::prepareLinear(io,boot,mapped,ddi,xelpMemory,ddi>=3?&tc:nullptr);
+    map->release();
+    IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13BootHandoff",&result,sizeof(result));
+    SYSLOG("igfx","Display13 native handoff status=%u writes=%u restored=%u",
+        static_cast<unsigned>(result.status),result.writes,result.restored);
+    return result.status==AlderLakeN::LinearStatus::Success;
+}
+
 bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	auto s=callbackXE;auto pci=OSDynamicCast(IOPCIDevice,provider);
 	if(!pci)return false;
@@ -7328,6 +7355,7 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 		(provider->getProperty("AAPL,GfxYTile") || provider->setProperty("AAPL,GfxYTile",&enabled,sizeof(enabled)));
 	OSSafeReleaseNULL(yTiling);OSSafeReleaseNULL(mode);OSSafeReleaseNULL(features);
 	if(!featuresSelected)return false;
+    if(s->adlpFramebufferOnly && !s->prepareDisplay13BootScanout(pci))return false;
 	SYSLOG("igfx","Display13 native controller start enter offline=%u",display13Offline);
 	const auto started=FunctionCast(wrapDisplay13FramebufferStart,s->orgDisplay13FramebufferStart)(that,provider);
 	SYSLOG("igfx","Display13 native controller start return=%u",started);
