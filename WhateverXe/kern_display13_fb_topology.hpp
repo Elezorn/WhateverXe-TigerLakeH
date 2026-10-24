@@ -1,4 +1,4 @@
-// Explicit Combo A/B/C wiring. Board wiring and native backend
+// Explicit Combo/TC wiring. Board wiring and native backend
 // qualification are separate: describing a port does not attach unsupported resources.
 #ifndef KERN_DISPLAY13_FB_TOPOLOGY_HPP
 #define KERN_DISPLAY13_FB_TOPOLOGY_HPP
@@ -24,7 +24,7 @@ inline bool singleOutputWiring(const Display13OutputWiring &w) {
 }
 inline uint32_t singleDDI(const Display13OutputWiring &w) {
     if(!singleOutputWiring(w))return UINT32_MAX;
-    for(unsigned d=0;d<3;++d)if(w.selected()&(1U<<d))return d;
+    for(unsigned d=0;d<Ports;++d)if(w.selected()&(1U<<d))return d;
     return UINT32_MAX;
 }
 // TGL/XE_LPD TRANS_DDI_FUNC_CTL encodes physical DDI as port+1 at bit27.
@@ -33,13 +33,17 @@ inline uint32_t singleDDI(const Display13OutputWiring &w) {
 inline uint32_t bootDDI(const Display13OutputWiring &w,uint32_t trans,bool dpSource=false) {
     if(!selectedWiring(w) || trans==UINT32_MAX || !(trans&(1U<<31)))return UINT32_MAX;
     const auto selector=(trans>>27)&15;
-    if(selector<1 || selector>3)return UINT32_MAX;
+    if(selector<1 || selector>7)return UINT32_MAX;
     const auto port=selector-1;
     const auto mode=(trans>>24)&7;
     // Explicit source inspection only; runtime adoption keeps the TMDS default.
     if(dpSource && mode==2 && port<2 && (w.dp&(1U<<port)))return port;
     if(mode>1)return UINT32_MAX;
     return (w.hdmi&(1U<<port)) ? port : UINT32_MAX;
+}
+// Physical ADLP/ADLN topology, independent of runtime backend admission.
+inline bool xeLPDWiring(const Display13OutputWiring &w) {
+    return selectedWiring(w) && !(w.selected()&~Display13OutputWiring::Physical);
 }
 // Current handoff adopts one real GOP on pipe A. A dual board policy does not
 // authorize ignoring a second firmware scanout or an unknown/unpowered bank.
@@ -74,7 +78,7 @@ inline bool bound(const void *platform,const void *config,uint32_t ddi) {
 }
 inline bool selected(const void *platform,const void *config,const Display13OutputWiring &w) {
     if(!selectedWiring(w))return false;
-    for(unsigned d=0;d<3;++d)if((w.selected()&(1U<<d)) && bound(platform,config,d) &&
+    for(unsigned d=0;d<Ports;++d)if((w.selected()&(1U<<d)) && bound(platform,config,d) &&
         w.matches(static_cast<const uint32_t *>(config)))return true;
     return false;
 }
@@ -82,7 +86,7 @@ inline bool selected(const void *platform,const void *config,const Display13Outp
 // core below consumes only validated port identities, independent of transport.
 inline XELP::NativePorts boundPorts(const void *platform,const Display13OutputWiring &w) {
     if(!platform || !selectedWiring(w))return {};
-    for(unsigned d=0;d<3;++d)if((w.selected()&(1U<<d)) &&
+    for(unsigned d=0;d<Ports;++d)if((w.selected()&(1U<<d)) &&
         !selected(platform,static_cast<const uint8_t *>(platform)+0x20+24*d,w))return {};
     return {platform,w.selected()};
 }
@@ -99,12 +103,12 @@ inline uint32_t excludedTypeC(const void *platform,uint32_t bytes,const Display1
     if(!platform || bytes<Bytes || !selectedWiring(w))return 0;
     const auto p=static_cast<const uint8_t *>(platform);
     if(p[0x12]!=Ports)return 0;
-    for(unsigned d=0;d<3;++d)if((w.selected()&(1U<<d)) && !selected(platform,p+0x20+24*d,w))return 0;
+    for(unsigned d=0;d<Ports;++d)if((w.selected()&(1U<<d)) && !selected(platform,p+0x20+24*d,w))return 0;
     for(unsigned d=0;d<Ports;++d) {
         const auto config=reinterpret_cast<const uint32_t *>(p+0x20+24*d);
-        if(config[0]!=d || (d>=3 && (config[4]!=1 || config[5])))return 0;
+        if(config[0]!=d || (d>=3 && !(w.selected()&(1U<<d)) && (config[4]!=1 || config[5])))return 0;
     }
-    return 0x3F000000;
+    return 0x3F000000 & ~((w.selected()>>3)<<24);
 }
 }
 #endif

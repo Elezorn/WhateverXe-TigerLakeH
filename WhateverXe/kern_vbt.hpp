@@ -15,12 +15,14 @@ inline uint64_t u64(const uint8_t *p) {return uint64_t(u32(p)) | uint64_t(u32(p+
 enum class Status : uint32_t { Missing, Valid, Header, Checksum, Blocks, Version, Children, Conflict, Platform };
 struct Port {
     uint32_t type {},dvo {},ddc {},aux {},flags {},capabilities {};
+    uint32_t hdmiPreset {UINT32_MAX}; // BDB child byte7, table index; absent firmware uses default.
     // flags preserves byte23 (lane reversal, LSPCON, HPD polarity, lane count).
     // capabilities preserves byte33 (USB-C/TBT capabilities, NOT current mode).
     bool dp() const {return type&4;}
     bool internal() const {return type&0x1000;}
-    bool fixedTMDS() const {return (type&0x12)==0x12 && !(type&(4|0x1000|0x400|0x20|1)) &&
-        !(flags&0x17) && !(capabilities&3);}
+    bool tmdsOnly() const {return (type&0x12)==0x12 && !(type&(4|0x1000|0x400|0x20|1)) &&
+        !(flags&0x17);}
+    bool fixedTMDS() const {return tmdsOnly() && !(capabilities&3);}
 };
 struct Ports {
     Status status {Status::Missing};
@@ -135,7 +137,7 @@ inline uint32_t ddi(Family family,uint32_t dvo) {
     const uint8_t hd[]={0,1,2,3,12,14,16,18,20};
     for(unsigned p=0;p<9;++p)if(dvo==dp[p] || dvo==hd[p]) {
         if(adapter==DisplayAdapter::TGL)return p==2 ? PortCount : p;
-        if(adapter==DisplayAdapter::ADLN)return p<2 ? p : p>=5 ? p-2 : PortCount;
+        if((adapter==DisplayAdapter::ADLN || adapter==DisplayAdapter::ADLP))return p<2 ? p : p>=5 ? p-2 : PortCount;
         if(adapter==DisplayAdapter::ADLS)return p==0 ? 0 : p<5 ? p+2 : PortCount;
     }
     return PortCount;
@@ -184,7 +186,7 @@ inline Ports parse(const void *data,size_t length,Family family) {
         const auto d=ddi(family,c[16]);
         if(d==PortCount){++r.unmapped;continue;}
         if(r.present&(1U<<d)){r.status=Status::Conflict;return r;}
-        auto &q=r.port[d];q.type=type;q.dvo=c[16];q.ddc=c[19];q.aux=c[25];q.flags=c[23];q.capabilities=c[33];
+        auto &q=r.port[d];q.type=type;q.dvo=c[16];q.ddc=c[19];q.aux=c[25];q.flags=c[23];q.capabilities=c[33];q.hdmiPreset=c[7]&31;
         r.present|=1U<<d;
         if(!q.fixedTMDS())r.ambiguous|=1U<<d;
     }

@@ -85,7 +85,7 @@ int main(int argc,char **argv){
  }
  for(unsigned dvo=0;dvo<256;++dvo)
   assert(ddi(Family::RaptorLakeS,dvo)==ddi(Family::AlderLakeS,dvo));
- for(auto family:{Family::Unknown,Family::RocketLake,Family::AlderLakeP,Family::RaptorLakeP})
+ for(auto family:{Family::Unknown,Family::RocketLake,Family::RaptorLakeP})
   assert(parse(desktop.data(),desktop.size(),family).status==Status::Platform);
 
  auto a=parse(adl.data(),adl.size(),Family::AlderLakeN);assert(a.valid()&&a.present==0xB&&a.hdmi(3).hdmi==3);
