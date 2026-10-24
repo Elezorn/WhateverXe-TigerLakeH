@@ -6,7 +6,7 @@ WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィック
 
 本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。
 
-WEX **0.5.0**ではWhateverXe Graphics **0.2.0以上**が必要です。両方を更新してください。
+WEX **0.5.0**で追加したGPUにはWhateverXe Graphics **0.2.0**が必要で、同pkgには最新の描画修正も含まれます。従来対応のTiger Lake／Alder Lake-N構成ではGraphics 0.1.0も利用できますが、新pkgの修正や更新部品を必要とする機能は利用できません。今回の追加機能と修正をすべて利用するには、WEX 0.5.0とGraphics 0.2.0を組み合わせてください。
 
 ## 対応範囲
 
@@ -74,7 +74,7 @@ SIPは`csr-active-config=03080000`（値`0x803`）に設定してください。
 
 Tahoeでは`CoreMedia / AllowOnePassMetalScaling`の無効化が必要です。WhateverXe Graphicsのインストーラーが設定します。
 
-グラフィックスpkgはWEX **0.5.0以上**を読み込んだ対象OSから実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
+グラフィックスpkgはWEX **0.3.0以上**（今回追加したGPUでは0.5.0）を読み込んだ対象OSから実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
 
 リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。upstreamのAMFIPassはMod版の署名チェーンに対応していません。
 

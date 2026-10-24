@@ -9,8 +9,11 @@ This project is experimental and requires the signed graphics package from
 [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics). It installs
 the graphics stack under `/Library` and updates the Auxiliary Kernel Collection
 (AuxKC), without patching System files or snapshots. WEX and the graphics package
-have independent release versions. WEX **0.5.0** requires WhateverXe Graphics
-**0.2.0 or newer**; update both components together.
+have independent release versions. Graphics **0.2.0** is needed for the GPUs
+added in WEX **0.5.0** and supplies the latest rendering fixes. Previously
+supported Tiger Lake/Alder Lake-N configurations can retain Graphics 0.1.0,
+but will not receive the new package fixes or features requiring its updated
+components. Use WEX 0.5.0 with Graphics 0.2.0 for the complete set of current features and fixes.
 
 ## Compatibility
 
@@ -90,7 +93,7 @@ supported. With the signed graphics package and linked Mod AMFIPass,
 Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled; the
 WhateverXe Graphics installer applies this setting.
 
-Boot the target OS with WEX **0.5.0 or newer** before installing the graphics
+Boot the target OS with WEX **0.3.0 or newer** (0.5.0 for newly added GPUs) before installing the graphics
 pkg. If an older Xe System patch is installed, restore it using its original
 recovery procedure first. The pkg does not change EFI, System files, snapshots
 or SIP settings. See [installation and removal](https://github.com/b00t0x/WhateverXe-Graphics#install)

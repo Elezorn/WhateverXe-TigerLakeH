@@ -2,7 +2,7 @@
 
 ## 0.5.0
 
-Requires **WhateverXe Graphics 0.2.0 or newer**. Update both components.
+The newly added GPUs require **WhateverXe Graphics 0.2.0**. Its rendering fixes also benefit previously supported GPUs; updating both components is recommended.
 
 ### Added
 
