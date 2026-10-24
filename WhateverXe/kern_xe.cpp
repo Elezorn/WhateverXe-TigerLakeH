@@ -3302,6 +3302,75 @@ static bool tglTransitionSerialize(void *,void *reference,OSSerialize *serialize
  auto data=OSData::withBytes(copy,size);IOFree(copy,size);if(!data)return false;
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
+
+// Concurrent native calls are retained separately from the ordered transition
+// ring. Never overwrite a pending call when another CPU/IRQ makes progress.
+// Observers copy memory only; the original caller still owns every HW access.
+static uint32_t tglDisplayTraceScopes {};
+static uint64_t tglDisplayActivityCount {}, tglDisplayActivityDropped {};
+static TGLTransitionRecord tglDisplayActivity[64] {};
+struct TGLDisplayTraceScope {
+ bool enabled;
+ TGLDisplayTraceScope():enabled(tglTransitionLock!=nullptr) {
+  if(enabled)__atomic_fetch_add(&tglDisplayTraceScopes,1U,__ATOMIC_RELAXED);
+ }
+ ~TGLDisplayTraceScope() {
+  if(enabled)__atomic_fetch_sub(&tglDisplayTraceScopes,1U,__ATOMIC_RELAXED);
+ }
+};
+static uint64_t tglDisplayActivityBegin(unsigned kind,void *object,uint64_t argument) {
+ if(!tglTransitionLock || !__atomic_load_n(&tglDisplayTraceScopes,__ATOMIC_RELAXED))return 0;
+ TGLTransitionRecord r {};uint64_t ticks;
+ clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,r.q);
+ r.q[2]=reinterpret_cast<uintptr_t>(current_thread());r.q[4]=kind;
+ r.q[5]=reinterpret_cast<uintptr_t>(object);r.q[6]=argument;
+ const auto irq=IOSimpleLockLockDisableInterrupt(tglTransitionLock);
+ unsigned slot=arrsize(tglDisplayActivity);
+ for(unsigned i=0;i<arrsize(tglDisplayActivity);++i) {
+  const auto &q=tglDisplayActivity[i].q;
+  if(q[3] && !q[8])continue;
+  if(slot==arrsize(tglDisplayActivity) || q[3]<tglDisplayActivity[slot].q[3])slot=i;
+ }
+ uint64_t token=0;
+ if(slot==arrsize(tglDisplayActivity))++tglDisplayActivityDropped;
+ else {r.q[3]=++tglDisplayActivityCount;tglDisplayActivity[slot]=r;token=(r.q[3]<<8)|(slot+1);}
+ IOSimpleLockUnlockEnableInterrupt(tglTransitionLock,irq);
+ return token;
+}
+static void tglDisplayActivityEnd(uint64_t token,uint64_t result) {
+ if(!token || !tglTransitionLock)return;
+ const auto slot=(token&255)-1;if(slot>=arrsize(tglDisplayActivity))return;
+ uint64_t ticks,ns;clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,&ns);
+ const auto irq=IOSimpleLockLockDisableInterrupt(tglTransitionLock);
+ auto &q=tglDisplayActivity[slot].q;
+ if(q[3]==(token>>8) && !q[8]){q[1]=ns;q[7]=result;q[8]=1;}
+ IOSimpleLockUnlockEnableInterrupt(tglTransitionLock,irq);
+}
+struct TGLDisplayActivity {
+ uint64_t token;
+ TGLDisplayActivity(unsigned kind,void *object,uint64_t argument=0):token(tglDisplayActivityBegin(kind,object,argument)) {}
+ void finish(uint64_t result) {tglDisplayActivityEnd(token,result);token=0;}
+ ~TGLDisplayActivity() {finish(0);}
+};
+static bool tglDisplayLiveSerialize(void *,void *,OSSerialize *serializer) {
+ if(!tglTransitionLock)return false;
+ constexpr unsigned slots=256;
+ const size_t size=64+slots*sizeof(TGLTransitionRecord)+sizeof(tglDisplayActivity);
+ auto copy=static_cast<uint8_t *>(IOMalloc(size));if(!copy)return false;
+ auto h=reinterpret_cast<uint64_t *>(copy);bzero(copy,size);uint64_t ticks;
+ clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,h+1);
+ h[0]=1;h[3]=slots;h[5]=arrsize(tglDisplayActivity);
+ const auto irq=IOSimpleLockLockDisableInterrupt(tglTransitionLock);
+ h[2]=tglTransitionCount;h[4]=tglDisplayActivityCount;h[6]=tglDisplayActivityDropped;
+ h[7]=__atomic_load_n(&tglDisplayTraceScopes,__ATOMIC_RELAXED);
+ auto out=reinterpret_cast<TGLTransitionRecord *>(copy+64);
+ const unsigned count=tglTransitionCount<slots?tglTransitionCount:slots;
+ for(unsigned i=0;i<count;++i)out[i]=tglTransitions[(tglTransitionCount-count+i)%tglTransitionSlots];
+ memcpy(out+slots,tglDisplayActivity,sizeof(tglDisplayActivity));
+ IOSimpleLockUnlockEnableInterrupt(tglTransitionLock,irq);
+ auto data=OSData::withBytes(copy,size);IOFree(copy,size);if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
+}
 static bool tglTransitionRegister(unsigned long reg) {
  if(!tglDisplayTraceEnabled)return false;
  // Record only accesses already issued by the donor. Combo training can
@@ -11744,6 +11813,9 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  if(tglTransitionLock)if(auto live=OSSerializer::forTarget(nullptr,tglTransitionSerialize,reinterpret_cast<void *>(1))) {
   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeTransitionFirst",live);live->release();
  }
+ if(tglTransitionLock)if(auto live=OSSerializer::forTarget(nullptr,tglDisplayLiveSerialize)) {
+  IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDisplayLive",live);live->release();
+ }
  if(auto live=OSSerializer::forTarget(nullptr,tglDPCDSerialize)) {
   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDPCDLive",live);live->release();
  }
@@ -12550,16 +12622,19 @@ void XE::wrapTGLHostIRQEnable(void *bridge) {
 }
 
 void XE::wrapTGLHostIRQProcess(void *bridge) {
+ TGLDisplayActivity activity(0,bridge);
  auto r=tglHostIRQBegin(0,bridge,0,0,reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
  FunctionCast(wrapTGLHostIRQProcess,callbackXE->orgTGLHostIRQProcess)(bridge);
  tglHostIRQEnd(r);
 }
 void XE::wrapTGLHostIRQService(void *bridge,const uint64_t *bits) {
+ TGLDisplayActivity activity(1,bridge,bits?*bits:0);
  auto r=tglHostIRQBegin(1,bridge,bits ? *bits : 0,0,reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
  FunctionCast(wrapTGLHostIRQService,callbackXE->orgTGLHostIRQService)(bridge,bits);
  tglHostIRQEnd(r);
 }
 void XE::wrapTGLHostSWInterrupt(void *streamer,void *source,int count) {
+ TGLDisplayActivity activity(2,streamer,static_cast<uint32_t>(count));
  auto r=tglHostIRQBegin(2,streamer,reinterpret_cast<uintptr_t>(source),count,reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
  FunctionCast(wrapTGLHostSWInterrupt,callbackXE->orgTGLHostSWInterrupt)(streamer,source,count);
  tglHostIRQEnd(r);
@@ -12580,6 +12655,7 @@ mach_vm_address_t xelpRegularForceWakeOriginal {};
 // >=100us, >=1ms, bypass, total native ns, >=10ms. No MMIO from readers.
 static uint64_t xelpForceWakeIRQ[9] {};
 void xelpRegularForceWakeProtected(void *owner,bool enable,unsigned domains) {
+ TGLDisplayActivity activity(3,owner,(uint64_t(enable)<<32)|domains);
  uint64_t flags=0;
  if(owner)memcpy(&flags,static_cast<uint8_t *>(owner)+0x1190,sizeof(flags));
  if(!owner || !XELPForceWakeIRQ::required(flags,domains)) {
@@ -14444,6 +14520,8 @@ uint32_t XE::wrapTGLSinkCount(void *port, uint8_t *count) {
 }
 
 void XE::wrapTGLTraceHotplug(void *controller, uint32_t ddi, uint32_t mode) {
+ TGLDisplayTraceScope scope;
+ TGLDisplayActivity activity(7,controller,(uint64_t(ddi)<<32)|mode);
 	tglTransitionRecord(90,false,controller,ddi,mode,0);
 	FunctionCast(wrapTGLTraceHotplug,callbackXE->orgTGLTraceHotplug)(controller,ddi,mode);
 	tglTransitionRecord(90,true,controller,ddi,mode,0);
@@ -14454,11 +14532,13 @@ void XE::wrapTGLTraceClearHPD(void *port) {
 	tglTransitionRecord(91,true,port,0,0,0);
 }
 void XE::wrapTGLTraceEnablePG(void *power, uint32_t pg) {
+ TGLDisplayActivity activity(5,power,pg);
 	tglTransitionRecord(92,false,power,pg,0,0);
 	FunctionCast(wrapTGLTraceEnablePG,callbackXE->orgTGLTraceEnablePG)(power,pg);
 	tglTransitionRecord(92,true,power,pg,0,0);
 }
 void XE::wrapTGLTraceDisablePG(void *power, uint32_t pg) {
+ TGLDisplayActivity activity(6,power,pg);
 	tglTransitionRecord(93,false,power,pg,0,0);
 	FunctionCast(wrapTGLTraceDisablePG,callbackXE->orgTGLTraceDisablePG)(power,pg);
 	tglTransitionRecord(93,true,power,pg,0,0);
@@ -14900,6 +14980,7 @@ void XE::wrapTGLMEIInit(void *driver) {
 }
 
 void XE::wrapTGLMEIInterrupt(void *driver, void *source, int count) {
+ TGLDisplayActivity activity(4,driver,static_cast<uint32_t>(count));
 	if (!tglMEIMapping[2]) {
 		auto map = *reinterpret_cast<IOMemoryMap **>(static_cast<uint8_t *>(driver) + 0x138);
 		if (map) {
@@ -16294,11 +16375,14 @@ uint32_t XE::wrapTGLPortTraining(void *port, void *request) {
 		}
 	}
  tglAUXRecord(port,10,false,0,0,0);
+ TGLDisplayTraceScope scope;
+ TGLDisplayActivity activity(8,port,reinterpret_cast<uintptr_t>(request));
 	SYSLOG("igfx", "TGL330 port-training enter");
 	auto caller = __builtin_return_address(0);
 	tglObservePath(port, nullptr, 0, false, 0, request != nullptr, caller);
 	const auto token = tglTrainingScopes.enter(reinterpret_cast<uintptr_t>(current_thread()));
 	const auto r = FunctionCast(wrapTGLPortTraining, callbackXE->orgTGLPortTraining)(port, request);
+ activity.finish(r);
 	tglTrainingScopes.leave(token);
  tglAUXRecord(port,10,true,r,0,0);
 	SYSLOG("igfx", "TGL330 port-training return result=%x", r);
@@ -16328,11 +16412,14 @@ void XE::wrapTGLFreePath(void *path) {
 }
 
 uint32_t XE::wrapTGLLightUpDP(void *controller, void *fb, void *path, const void *timing) {
+ TGLDisplayTraceScope scope;
+ TGLDisplayActivity activity(9,path,reinterpret_cast<uintptr_t>(fb));
  auto port=path?*reinterpret_cast<void **>(static_cast<uint8_t *>(path)+0x3648):nullptr;
  tglAUXRecord(port,11,false,0,0,0);
 	auto caller = __builtin_return_address(0);
 	tglObservePath(nullptr, path, 3, false, 0, 0, caller);
 	const auto r = FunctionCast(wrapTGLLightUpDP, callbackXE->orgTGLLightUpDP)(controller, fb, path, timing);
+ activity.finish(r);
  tglAUXRecord(port,11,true,r,0,0);
 	tglObservePath(nullptr, path, 3, true, r, 0, caller);
 	tglDPCDPublish();

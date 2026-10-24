@@ -123,11 +123,57 @@ int main(){
  }
  tglDisplayTraceEnabled=false;
  for(auto reg:{0x62400ul,0x62540ul,0x64500ul,0x46148ul})assert(!tglTransitionRegister(reg));
+ // Concurrent progress is independent of transition ring wrap. An inactive
+ // scope costs no record and opaque objects must never be dereferenced.
+ assert(!tglDisplayActivityBegin(0,inaccessible,1));
+ assert(!tglDisplayActivityCount && !tglDisplayTraceScopes);
+ {
+  TGLDisplayTraceScope scope;assert(tglDisplayTraceScopes==1);
+  {TGLDisplayTraceScope nested;assert(tglDisplayTraceScopes==2);}
+  assert(tglDisplayTraceScopes==1);
+  uint64_t pending[64];
+  for(unsigned i=0;i<64;++i)pending[i]=tglDisplayActivityBegin(i,inaccessible,i+1);
+  assert(tglDisplayActivityCount==64);
+  assert(!tglDisplayActivityBegin(64,inaccessible,0));assert(tglDisplayActivityDropped==1);
+  assert(tglDisplayLiveSerialize(nullptr,nullptr,&snapshot));
+  uint64_t h[8];memcpy(h,snapshot.data.data(),sizeof(h));
+  assert(h[0]==1 && h[2]==10051 && h[3]==256 && h[4]==64 && h[5]==64 && h[6]==1 && h[7]==1);
+  assert(snapshot.data.size()==64+(256+64)*128);
+  for(unsigned i=0;i<256;++i){
+   TGLTransitionRecord q;memcpy(&q,snapshot.data.data()+64+i*128,128);
+   assert(q.q[2]==10051-255+i);
+  }
+  tglDisplayActivityEnd(pending[63],7);
+  auto reused=tglDisplayActivityBegin(99,inaccessible,4);assert(reused && reused!=pending[63]);
+  tglDisplayActivityEnd(pending[63],123); // stale completion cannot close a reused slot
+  assert(!tglDisplayActivity[63].q[8]);
+  tglDisplayActivityEnd(reused,9);assert(tglDisplayActivity[63].q[7]==9);
+  for(unsigned i=0;i<63;++i)assert(!tglDisplayActivity[i].q[8]);
+  for(unsigned i=0;i<63;++i)tglDisplayActivityEnd(pending[i],0);
+  for(bool prior:{false,true}){
+   irqEnabled=prior;
+   {TGLDisplayActivity call(3,inaccessible,1);}
+   assert(irqEnabled==prior&&!held);
+   assert(tglDisplayLiveSerialize(nullptr,nullptr,&snapshot));assert(irqEnabled==prior);
+  }
+  irqEnabled=true;
+  auto activityWrite=[&]{for(unsigned i=0;i<2000;++i){TGLDisplayActivity call(3,inaccessible,i);call.finish(i);}};
+  std::thread c(activityWrite),d(activityWrite);
+  for(unsigned i=0;i<100;++i){
+   assert(tglDisplayLiveSerialize(nullptr,nullptr,&snapshot));
+   for(unsigned j=0;j<64;++j){
+    TGLTransitionRecord q;memcpy(&q,snapshot.data.data()+64+(256+j)*128,128);
+    if(q.q[8])assert(q.q[1]>=q.q[0]);else assert(!q.q[1]);
+   }
+  }
+  c.join();d.join();assert(tglDisplayActivityDropped==1);
+ }
+ assert(!tglDisplayTraceScopes && !tglDisplayActivityBegin(0,inaccessible,0));
  munmap(inaccessible,4096);
  IOFree(tglTransitions,tglTransitionSlots*sizeof(TGLTransitionRecord));
  IOFree(tglTransitionFirst,tglTransitionFirstSlots*sizeof(TGLTransitionRecord));
  IOSimpleLockFree(tglTransitionLock);
- puts("PASS: 10051 events, concurrent coherent snapshots, ring wrap, allocation failure, IRQ restore, no object/MMIO access");
+ puts("PASS: 10051 events; compact chronological snapshots; concurrent/pending activity, overflow and stale tokens; IRQ restore; no object/MMIO access");
 }
 '''.replace('// BODY', body)
 with tempfile.TemporaryDirectory(prefix='tgl-transition-') as tmp:
