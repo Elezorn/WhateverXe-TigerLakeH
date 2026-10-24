@@ -3860,7 +3860,10 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	SYSLOG("igfx", "AlderLakeN Display13 readout status=%u powered=%x active=%x hdmiB=%x; donor blocked",
 		static_cast<uint32_t>(result.status), result.poweredPipes, result.activePipes, result.hdmiBPipes);
 	if (linearTest) {
-		auto linear=AlderLakeN::reinitializeLinear(io,result,barReady && xelpMemoryMatches(pci),bootDDI);
+        auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0);
+        if(bootDDI>=3)pci->setProperty("WEXDisplay13TCBoot",&tc,sizeof(tc));
+		auto linear=AlderLakeN::reinitializeLinear(io,result,barReady && xelpMemoryMatches(pci),bootDDI,
+            AlderLakeN::GOPProtocol::TMDS,bootDDI>=3 ? &tc : nullptr);
 		pci->setProperty("N97Display13Linear",&linear,sizeof(linear));
 		auto after=AlderLakeN::readDisplay(io,barReady);
 		pci->setProperty("N97Display13After",&after,sizeof(after));
@@ -3985,7 +3988,9 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
             ((!optionProperty || opts) && !mapperOptions && !systemMapper);
         uint64_t mapperAdmission[] {1,mapperOptions,systemMapper,physicalOptions};
         IORegistryEntry::getRegistryRoot()->setProperty("N97NativeMapperAdmission",mapperAdmission,sizeof(mapperAdmission));
-        const bool prefix=Display13Boot::reservedPrefix(io,display,bootstrapReady,bootDDI,xelpMemory);
+        const auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0);
+        const bool prefix=Display13Boot::reservedPrefix(io,display,bootstrapReady,bootDDI,xelpMemory,
+            bootDDI>=3 ? &tc : nullptr);
         auto aperture=pci->getDeviceMemoryWithRegister(0x18);
         const bool memoryReady=
             aperture && aperture->getLength()==0x10000000 && page_size==4096 &&
@@ -4831,8 +4836,10 @@ static Display13FBMemory::Readout display13FBInspectMemory(IOService *fb,bool bo
 		uint32_t read(uint32_t reg) const {return *reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+reg);}
 		uint64_t readPTE(uint32_t reg) const {return *reinterpret_cast<volatile uint64_t *>(map->getVirtualAddress()+reg);}
 	} io {c.map};
+    const auto tc=Display13TC::Boot::capture(io,bootScanout && c.bridge.bootPort>=3,c.bridge.bootPort,0);
 	return Display13FBMemory::inspect(io,controller,controller->getMetaClass()->getClassSize(),
-		fb,fb->getMetaClass()->getClassSize(),aperture->getLength(),xelpMemory,bootScanout,display13FBExpectedOwner(controller),c.bridge.bootPort);
+		fb,fb->getMetaClass()->getClassSize(),aperture->getLength(),xelpMemory,bootScanout,display13FBExpectedOwner(controller),c.bridge.bootPort,
+        c.bridge.bootPort>=3 ? &tc : nullptr);
 }
 }
 
@@ -6087,6 +6094,8 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
 		0x49,0x8B,0x7D,0x00,0x48,0x8B,0x07,0xFF,0x90,0x30,0x01,0x00,0x00,
 		0x90,0x90,0x90,0x90,0x90,0x90,0x90};
     const uint8_t busEntry[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56};
+    const uint8_t pinLimit[] {0x83,0x7D,0xCC,0x08,0x72,0x2A};
+    const uint8_t tcPinLimit[] {0x83,0x7D,0xCC,0x0D,0x72,0x2A};
     // Same nominal CFGCR0 write as the Display12 adapter. ADL-P/N also
     // requires WA 22010492432 when the physical reference is 38.4 MHz.
     const uint8_t fractionWrite[] {0x89,0xfa,0x49,0x8b,0xbd,0x40,0x0c,0x00,0x00,0x48,0x8b,0x07,
@@ -6129,12 +6138,14 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
         memcmp(reinterpret_cast<void *>(write),busEntry,sizeof(busEntry)) ||
 		memcmp(reinterpret_cast<void *>(address+0x9A0E8),before,sizeof(before)) ||
 		memcmp(reinterpret_cast<void *>(bus+0x335),busBefore,sizeof(busBefore)) ||
+		memcmp(reinterpret_cast<void *>(bus+0xEA),pinLimit,sizeof(pinLimit)) ||
 		memcmp(reinterpret_cast<void *>(bus+0x2E0),resetBefore,sizeof(resetBefore)))return false;
 	struct Change {uintptr_t offset;const uint8_t *find,*replace;size_t length;};
 	const Change changes[] {
 		{0x9A0E8,reinterpret_cast<const uint8_t *>(before),reinterpret_cast<const uint8_t *>(after),sizeof(before)},
 		{0x53DB1,busBefore,busAfter,sizeof(busBefore)},
-		{0x53D5C,resetBefore,resetAfter,sizeof(resetBefore)}
+		{0x53D5C,resetBefore,resetAfter,sizeof(resetBefore)},
+		{0x53B66,pinLimit,tcPinLimit,sizeof(pinLimit)}
 	};
 	for(auto &change:changes) {
 		KernelPatcher::LookupPatch patch {currentFramebuffer,change.find,change.replace,change.length,1};
@@ -6415,6 +6426,11 @@ uint32_t XE::wrapDisplay13TrainingPattern(void *path,uint32_t pattern) {
  return program(false)?0:kIOReturnNotReady;
 }
 uint32_t XE::wrapDisplay13GMBus(IOService *controller,uint32_t bus,uint32_t speed,void *request) {
+    // Extending the donor's pin bound is not permission to use an arbitrary
+    // Type-C DDC bus. Only the retained controller's selected TMDS wiring
+    // may issue requests to pins9..12; pin8 remains excluded.
+    if(bus>=8 && (controller!=callbackXE->adlnTopologyController ||
+       !callbackXE->adlnOutputWiring.usesDDC(bus)))return kIOReturnBadArgument;
     static uint32_t count {}; const auto call=__sync_add_and_fetch(&count,1);
     uint64_t r[21] {3,call,bus,speed};auto req=static_cast<uint8_t *>(request);
     if(req) {memcpy(r+4,req,16);r[6]=*reinterpret_cast<uint32_t *>(req+0x28);r[7]=*reinterpret_cast<uint32_t *>(req+0x38);}
@@ -8907,16 +8923,19 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 			const auto wells=io.read(Display13Power::Driver),a=io.read(0x60400),pipeA=io.read(0x70008);
 			const auto bootPort=Display13FBTopology::bootDDI(callbackXE->adlnOutputWiring,a,true);
 			const bool dpBoot=bootPort<2 && (callbackXE->adlnOutputWiring.dp&(1U<<bootPort));
-			const auto ddi=bootPort<3 ? io.read(0x64000+0x100*bootPort) : UINT32_MAX;
+			const auto ddi=bootPort<7 ? io.read(0x64000+0x100*bootPort) : UINT32_MAX;
 			// The initial protected references belong to the measured pipe A /
-			// selected Combo boot display. Validate that live topology before acquiring
+			// selected boot display. Validate that live topology before acquiring
 			// them. Resource/surface/IRQ adoption remains a separate operation.
-			bool boot=bootPort<3 && wells!=UINT32_MAX && (wells&(1U<<10)) &&
+			bool boot=bootPort<7 && wells!=UINT32_MAX && (wells&(1U<<10)) &&
 				pipeA!=UINT32_MAX && ddi!=UINT32_MAX && (pipeA&(1U<<31)) && (ddi&(1U<<31));
 			for(unsigned pipe=1;pipe<3;++pipe) if(wells&(1U<<(2*(5+pipe)))) {
 				const auto trans=io.read(0x60400+pipe*0x1000);
 				boot=boot && trans!=UINT32_MAX && !(trans&(1U<<31));
 			}
+            if(boot && bootPort>=3) {
+                Display13FBBootIO bootIO{map};boot=Display13TC::Boot::capture(bootIO,true,bootPort,0).valid();
+            }
             if(boot && dpBoot) {
                 Display13FBBootIO bootIO{map};const auto source=AlderLakeN::readDisplay(bootIO,true);uint32_t aux=0;
                 boot=AlderLakeN::dpSource(source,0,bootPort) && AlderLakeN::dpSourceUnchanged(bootIO,source,0,bootPort) &&

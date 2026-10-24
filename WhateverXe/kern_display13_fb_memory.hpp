@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include "kern_xelp_memory_layout.hpp"
 #include "kern_xelp_geometry.hpp"
+#include "kern_display13_tc.hpp"
 #include <stddef.h>
 #include <string.h>
 
@@ -326,12 +327,15 @@ template<class IO> SurfaceReadout inspectSurface(IO &io,const void *controller,s
 template<class IO> Readout inspect(IO &io,const void *controller,size_t controllerBytes,
                                   const void *framebuffer,size_t framebufferBytes,
                                   uint64_t apertureBytes,const XELPMemory::Layout &memory,bool bootScanout=true,uintptr_t expectedOwner=0,
-                                  unsigned expectedDDI=1) {
+                                  unsigned expectedDDI=1,const Display13TC::Boot *tc=nullptr) {
     Readout r;
     if (!associations(controller,controllerBytes,framebuffer,framebufferBytes,expectedOwner)) {
         r.status=Status::Association;return r;
     }
-    if(bootScanout && expectedDDI>=3) {r.status=Status::DisplayState;return r;}
+    if(bootScanout && (expectedDDI>=7 || (expectedDDI>=3 &&
+       (!tc || !tc->valid() || tc->port.ddi!=expectedDDI || tc->pipe!=0 || !tc->unchanged(io))))) {
+        r.status=Status::DisplayState;return r;
+    }
     r.pool=pool(controller);const auto &p=r.pool;
     if (field<uint8_t>(framebuffer,0x4288)!=0 || !field<uint8_t>(controller,0xDF5) ||
         field<uint8_t>(controller,0xDF5)>3 || !field<uint8_t>(controller,0xDF4) ||
@@ -388,7 +392,8 @@ template<class IO> Readout inspect(IO &io,const void *controller,size_t controll
         (bootScanout && (io.read(0x42084)!=dpt || io.read(0x60400)!=trans || io.read(0x70008)!=conf ||
         io.read(0x7018C)!=position || io.read(0x701A4)!=offset ||
         io.read(0x7019C)!=r.surface || io.read(0x701AC)!=r.surface ||
-        io.read(0x70180)!=r.control || io.read(0x70188)!=r.stride || io.read(0x70190)!=r.size))) {
+        io.read(0x70180)!=r.control || io.read(0x70188)!=r.stride || io.read(0x70190)!=r.size ||
+        (expectedDDI>=3 && !tc->unchanged(io))))) {
         r.status=Status::StateChanged;return r;
     }
     r.status=Status::Complete;return r;

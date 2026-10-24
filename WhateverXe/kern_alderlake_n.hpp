@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include "kern_display13_power_bridge.hpp"
 #include "kern_display13_clock.hpp"
+#include "kern_display13_tc.hpp"
 
 namespace AlderLakeN {
 constexpr uint32_t Identity = 0x46D18086;
@@ -269,7 +270,7 @@ template<class IO> Display13Power::Result adoptDPBootAUX(IO &io,const DisplayRea
 }
 enum class LinearStatus : uint32_t {
     NotAdmitted, Ready, Success, NotSingleHDMI, NotLinearFHD, OtherPlaneActive,
-    StateChanged, NoVblank, DisableTimeout, EnableTimeout, RollbackFailed, InvalidDPSource
+    StateChanged, NoVblank, DisableTimeout, EnableTimeout, RollbackFailed, InvalidDPSource, InvalidTCSource
 };
 struct LinearPlan {
     uint32_t pipe {}, chicken {}, arb {}, control {}, stride {}, position {}, size {}, offset {}, surface {};
@@ -282,18 +283,22 @@ struct LinearResult {
 };
 
 // First Display 13 operation: reinitialize an existing linear RGB primary
-// plane on the explicitly selected Combo A/B/C. The default remains B for
+// plane on the explicitly selected Combo, or fixed TC with a live link
+// certificate. The default remains B for
 // the original standalone diagnostics. No new PLL/PHY/power-well cold
 // initialization, a new GGTT mapping, full modeset or accelerated scanout.
-inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned ddi=1,GOPProtocol protocol=GOPProtocol::TMDS) {
+inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned ddi=1,GOPProtocol protocol=GOPProtocol::TMDS,
+                               const Display13TC::Boot *tc=nullptr) {
     p={};
-    if (ddi>=3 || r.status!=ReadoutStatus::Complete || !r.activePipes || (r.activePipes&~7U) ||
+    if (ddi>=7 || r.status!=ReadoutStatus::Complete || !r.activePipes || (r.activePipes&~7U) ||
         (r.activePipes & (r.activePipes-1)) || (r.activePipes&~r.poweredPipes) ||
         (protocol!=GOPProtocol::TMDS && protocol!=GOPProtocol::DP) ||
         (protocol==GOPProtocol::TMDS && ddi==1 && r.activePipes!=r.hdmiBPipes))
         return LinearStatus::NotSingleHDMI;
     while (!(r.activePipes & (1U<<p.pipe))) ++p.pipe;
     if (p.pipe>=3) return LinearStatus::NotSingleHDMI;
+    if(ddi>=3 && (protocol!=GOPProtocol::TMDS || !tc || !tc->valid() || tc->port.ddi!=ddi || tc->pipe!=p.pipe))
+        return LinearStatus::InvalidTCSource;
     const uint32_t delta=0x1000*p.pipe;
     uint32_t trans {}, cursor {}, surfLive {}, plane {}, pipeConf {}, htotal {}, vtotal {};
     if (!value(r,0x42084,p.chicken) || !value(r,0x70028+delta,p.arb) ||
@@ -328,11 +333,11 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
 }
 
 template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout &r, bool admitted,unsigned ddi=1,
-                                                  GOPProtocol protocol=GOPProtocol::TMDS) {
+                                                  GOPProtocol protocol=GOPProtocol::TMDS,const Display13TC::Boot *tc=nullptr) {
     LinearResult out;
     if (!admitted) return out;
     LinearPlan p;
-    out.status=linearPlan(r,p,ddi,protocol);
+    out.status=linearPlan(r,p,ddi,protocol,tc);
     if(out.status!=LinearStatus::Ready)return out;
     out.pipe=p.pipe;
     const auto d=0x1000*p.pipe;
@@ -341,6 +346,7 @@ template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout 
     bool linkChanged=false;
     const auto linkStable=[&] {
         if(protocol==GOPProtocol::DP && !dpSourceUnchanged(io,r,p.pipe,ddi))linkChanged=true;
+        if(ddi>=3 && (!tc || !tc->unchanged(io)))linkChanged=true;
         return !linkChanged;
     };
     // Check all captured words used by the transaction before the first write.

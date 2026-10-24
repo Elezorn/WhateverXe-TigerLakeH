@@ -34,9 +34,10 @@ constexpr uint32_t fuse(unsigned d) { return 1U << (26 - index(d)); }
 // PW2 is not a prerequisite of PW_A in the XE_LPD power-domain map.
 inline uint32_t dependencies(uint32_t domains) {
     if (domains & ~All) return 0;
-    // XE_LPD TC legacy AUX uses PW2 even while its scanout is pipe A.
-    constexpr uint32_t tcAuxMask=bit(Domain::AUXTC1)|bit(Domain::AUXTC2)|bit(Domain::AUXTC3)|bit(Domain::AUXTC4);
-    if (domains & (bit(Domain::PipeB) | bit(Domain::PipeC) | tcAuxMask)) domains |= bit(Domain::PW2);
+    // XE_LPD PW2 includes both TC DDI lanes and AUX, even on pipe A.
+    // Releasing an AUX transaction must not gate an active TMDS main link.
+    constexpr uint32_t tcMask=All&~((1U<<11)-1);
+    if (domains & (bit(Domain::PipeB) | bit(Domain::PipeC) | tcMask)) domains |= bit(Domain::PW2);
     if (domains) domains |= bit(Domain::PW1);
     return domains;
 }

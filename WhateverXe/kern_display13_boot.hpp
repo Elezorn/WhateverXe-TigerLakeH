@@ -11,13 +11,15 @@ namespace Display13Boot {
 // separate; callers must also qualify the physical owner, BAR and memory layout.
 // DP/other-pipe adoption requires a separate boot contract, not a wider default.
 template<class IO> bool reservedPrefix(IO &io,const AlderLakeN::DisplayReadout &display,
-                                      bool bootstrapReady,unsigned ddi,const XELPMemory::Layout &memory) {
+                                      bool bootstrapReady,unsigned ddi,const XELPMemory::Layout &memory,
+                                      const Display13TC::Boot *tc=nullptr) {
     AlderLakeN::LinearPlan plan;
-    if(!bootstrapReady || AlderLakeN::linearPlan(display,plan,ddi)!=AlderLakeN::LinearStatus::Ready ||
+    if(!bootstrapReady || AlderLakeN::linearPlan(display,plan,ddi,AlderLakeN::GOPProtocol::TMDS,tc)!=AlderLakeN::LinearStatus::Ready ||
        plan.pipe!=0 || !memory.range(plan.surface,AlderLakeN::ScanoutBytes,true))return false;
+    if(ddi>=3 && (!tc || !tc->unchanged(io)))return false;
     for(unsigned i=0;i<memory.bytes/4096;++i)
         if(io.readPTE(0x800000+8*i)!=memory.pte(uint64_t(i)*4096))return false;
-    return true;
+    return ddi<3 || tc->unchanged(io);
 }
 enum class Status : uint32_t {Unavailable,Complete,Topology,Readback,Timeout,PeerChanged};
 struct Result {

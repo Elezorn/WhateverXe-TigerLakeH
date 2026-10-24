@@ -1,4 +1,4 @@
-// ADL-N/Twin Lake fixed TC HDMI/DP coordinates and PHY ownership.
+// ADL-P/N fixed TC HDMI/DP coordinates and PHY ownership.
 // Linux v6.12 intel_tc.c/i915_reg.h; T8 Pro TC1 Linux values are an
 // independent live fixture. These are not TGL FIA ownership registers.
 #ifndef KERN_DISPLAY13_TC_HPP
@@ -24,6 +24,46 @@ struct Port {
 };
 enum class Status : uint32_t {Invalid,NoPower,NeedsAdoption,InUse,Unavailable,UnsupportedMode,NotReady,Readback,Complete};
 struct Result {Status status {Status::Invalid};uint32_t before {},after {},writes {},elapsedUs {};};
+// Read-only certificate for an inherited fixed-TMDS link. This never takes
+// ownership or programs the PLL. Callers must select the physical Display13
+// backend before reading TCSS; TGL uses a different ownership mechanism.
+struct Boot {
+    Port port;unsigned pipe {3};
+    uint32_t power {},ddiPower {},ready {},buffer {},clock {},pll {},transClock {};
+    bool valid() const {
+        const auto powered=pipe<3 ? 5U|(1U<<(10+2*pipe)) : 0U;
+        return port.ddi>=3 && port.ddi<=6 && pipe<3 &&
+            power!=UINT32_MAX && (power&powered)==powered && ddiPower!=UINT32_MAX &&
+            (ddiPower&(1U<<(2*port.ddi))) && ready!=UINT32_MAX && (ready&7)==4 &&
+            buffer!=UINT32_MAX && (buffer&0x800000C0U)==0x80000040U &&
+            clock!=UINT32_MAX && (clock>>28)==8 && pll!=UINT32_MAX &&
+            (pll&0xCC000000U)==0xCC000000U && transClock!=UINT32_MAX && (transClock>>28)==port.ddi+3;
+    }
+    template<class IO> static Boot capture(IO &io,bool admitted,unsigned ddi,unsigned pipe) {
+        Boot b;
+        if(!admitted || pipe>=3 || !Port::resolve(ddi,b.port))return b;
+        b.pipe=pipe;
+        if(!io.readable(0x45404) || !io.readable(0x45454))return {};
+        b.power=io.read(0x45404);b.ddiPower=io.read(0x45454);
+        const auto powered=5U|(1U<<(10+2*pipe));
+        if(b.power==UINT32_MAX || (b.power&powered)!=powered || b.ddiPower==UINT32_MAX ||
+           !(b.ddiPower&(1U<<(2*ddi))))return {};
+        const uint32_t regs[]={b.port.ready,b.port.buffer,b.port.clock,b.port.pll,0x46140+4*pipe};
+        uint32_t *values[]={&b.ready,&b.buffer,&b.clock,&b.pll,&b.transClock};
+        for(unsigned i=0;i<5;++i) {
+            if(!io.readable(regs[i]))return {};
+            *values[i]=io.read(regs[i]);
+        }
+        if(io.read(0x45404)!=b.power || io.read(0x45454)!=b.ddiPower || !b.valid())return {};
+        return b;
+    }
+    template<class IO> bool unchanged(IO &io) const {
+        if(!valid())return false;
+        const auto now=capture(io,true,port.ddi,pipe);
+        return now.valid() && now.power==power && now.ddiPower==ddiPower && now.ready==ready &&
+            now.buffer==buffer && now.clock==clock && now.pll==pll && now.transClock==transClock;
+    }
+};
 // Caller keeps lifecycle/port exclusion, live mapping, and separate DDI,
 // lane/PW2 and qualified legacy AUX leases for the entire transaction.
 // A matching owner identity is insufficient without that power witness.
