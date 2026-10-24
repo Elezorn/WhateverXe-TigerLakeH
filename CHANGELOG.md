@@ -2,7 +2,7 @@
 
 ## 0.5.0
 
-The newly added GPUs require **WhateverXe Graphics 0.2.0**. Its rendering fixes also benefit previously supported GPUs; updating both components is recommended.
+The newly added GPUs require [WhateverXe Graphics 0.2.0](https://github.com/b00t0x/WhateverXe-Graphics/releases). Its rendering fixes also benefit previously supported GPUs; updating both components is recommended.
 
 ### Added
 
@@ -14,7 +14,7 @@ The newly added GPUs require **WhateverXe Graphics 0.2.0**. Its rendering fixes 
 
 - Avoid some startup panics caused by display hardware not being ready.
 - Restore Safari graphics-driver access regardless of where macOS installs Safari updates.
-- With the updated graphics package, fix observed Chrome drawing failures and rendering errors on smaller integrated GPUs.
+- [WhateverXe Graphics 0.2.0](https://github.com/b00t0x/WhateverXe-Graphics/releases) fixes observed Chrome drawing failures and rendering errors on smaller integrated GPUs.
 
 DisplayPort/USB-C reconnection can still freeze the computer. See the [README](https://github.com/b00t0x/WhateverXe#tested-features-and-known-issues) for tested configurations and other known issues.
 
