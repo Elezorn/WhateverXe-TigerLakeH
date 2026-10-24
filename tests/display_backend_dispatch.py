@@ -21,15 +21,17 @@ code=r'''
 #include <cstdio>
 using mach_vm_address_t=uintptr_t;
 struct KernelPatcher {};
-struct Kext {size_t loadIndex;};
+struct Kext {size_t loadIndex;};Kext kextIntelTGL{2};
 bool loadOnly=false;
 bool checkKernelArgument(const char *arg) {assert(!strcmp(arg,"-wex-adln-load-only"));return loadOnly;}
 struct XE {
+ bool adlpFramebufferOnly=false;
  bool display13FramebufferRequested=false,adlnRequested=false,adlnDetected=false;
  bool adlnNativeRequested=false,adlnNativeReady=false,display13BootReady=false,tglActive=false;
  Kext *currentFramebuffer=nullptr,*currentGraphics=nullptr;
  enum Call {None,Display13,Render,Rejected,LoadOnly,Display12};Call call=None;
  bool processDisplay13Framebuffer(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Display13;return true;}
+ bool processADLPLoadOnly(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Rejected;return true;}
  bool processTGLAccelerator(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Render;return true;}
  bool processAlderLakeNRejectedAccelerator(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Rejected;return true;}
  bool processAlderLakeNLoadOnly(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=LoadOnly;return true;}
@@ -91,6 +93,12 @@ void certificates() {
  puts("PASS 8192 FB/render preflight combinations: noaccel preserves FB memory, never admits render");
 }
 int main() {
+ for(unsigned module=1;module<=3;++module){
+  XE x;KernelPatcher p;Kext fb{1};x.adlpFramebufferOnly=true;x.display13FramebufferRequested=true;x.currentFramebuffer=&fb;
+  const bool result=x.dispatch(p,module,0,0);
+  assert(x.call==(module==1?XE::Display13:module==2?XE::Rejected:XE::None));assert(result==(module!=3));
+ }
+
  certificates();
  Kext fb{1},graphics{2};KernelPatcher patcher;unsigned cases=0;
  // Removing/rejecting Render must not redirect a selected Display13 kext

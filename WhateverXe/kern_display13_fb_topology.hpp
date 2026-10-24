@@ -15,7 +15,11 @@ inline bool selectedWiring(const Display13OutputWiring &w) {
 inline bool adlnWiring(const Display13OutputWiring &w) {return selectedWiring(w) && !(w.selected()&~3U);}
 // DP topology is composable, but runtime admission stays closed until its
 // complete signal/training/bootstrap operation contract is installed.
-inline bool supportedWiring(const Display13OutputWiring &w) {return adlnWiring(w) && !w.dp;}
+inline bool supportedWiring(const Display13OutputWiring &w,bool fixedTC=false) {
+    // First ADL-P candidate selects the measured central TC1 only. Extend
+    // this board policy after native FB handoff is observed on hardware.
+    return !w.dp && (adlnWiring(w) || (fixedTC && w.described() && w.hdmi==8 && w.ddc[3]==9));
+}
 inline bool multiOutputWiring(const Display13OutputWiring &w) {
     return selectedWiring(w) && (w.selected()&(w.selected()-1));
 }

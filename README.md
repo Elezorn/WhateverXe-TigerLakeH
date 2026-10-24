@@ -222,6 +222,8 @@ installation or update location.
 
 Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
 `-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on an ADL-P device using an explicit backend override, for load-only diagnostics without GPU initialization.
+The experimental 46A6 ADL-P configuration with a 9A49 donor selector retains its physical Display13 identity and currently enables only the central TC1 framebuffer path; both accelerator probe and start remain blocked. This is a bring-up candidate, not a validated hardware configuration.
+
 
 ## Build and test
 

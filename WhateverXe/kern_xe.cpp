@@ -210,14 +210,14 @@ XE *XE::callbackXE;
 static IOPCIDevice *xelpSelectedGPU;
 static XELP::Profile xelpSelectedProfile;
 static bool xelpSelectedDevice(IOPCIDevice *pci) {
-    return pci && pci==xelpSelectedGPU && xelpSelectedProfile.admitted() &&
+    return pci && pci==xelpSelectedGPU && xelpSelectedProfile.displayAdmitted() &&
         XELP::same(xelpSelectedProfile,XELP::deviceProfile(pci));
 }
 static bool xelpAlderLakeNDevice(IOPCIDevice *pci) {
     return xelpSelectedProfile.family==XELP::Family::AlderLakeN && xelpSelectedDevice(pci);
 }
 static bool xelpDisplay13Device(IOPCIDevice *pci) {
-    return XELP::displayAdapter(xelpSelectedProfile.family)==XELP::DisplayAdapter::ADLN &&
+    return (XELP::displayAdapter(xelpSelectedProfile.family)==XELP::DisplayAdapter::ADLN || xelpSelectedProfile.framebufferOnlyADLP()) &&
         xelpSelectedProfile.display==XELP::Display::XeLPD && xelpSelectedDevice(pci);
 }
 // Detailed read-only display evidence is opt-in; control and first-fault
@@ -3749,12 +3749,16 @@ void XE::selectProfile(const XELP::Profile &profile) {
     adlnRequested=profile.admitted() && profile.family==XELP::Family::AlderLakeN &&
         profile.display==XELP::Display::XeLPD && profile.gt==XELP::GT::ADLNSmall;
     adlnDetected=adlnRequested;
-    modDVMTCalcFix.available=profile.admitted();
+    modDVMTCalcFix.available=profile.displayAdmitted();
     const bool nativeOS=XELP::kernelOS(version)!=XELP::OS::Unknown && XELP::kernelOS(version)!=XELP::OS::Donor;
-    display13FramebufferRequested=profile.admitted() && profile.display==XELP::Display::XeLPD &&
-        XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLN && nativeOS;
+    adlpFramebufferOnly=profile.framebufferOnlyADLP() && nativeOS;
+    display13FramebufferRequested=profile.displayAdmitted() && profile.display==XELP::Display::XeLPD &&
+        (XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLN || adlpFramebufferOnly) && nativeOS;
     display13TraceEnabled=display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
     if(display13FramebufferRequested)currentFramebuffer=&kextIntelTGLFb;
+    if(adlpFramebufferOnly) {
+        tglRequested=tglAcceleratorRequested=false;currentGraphics=&kextIntelTGL;return;
+    }
     if(adlnRequested) {
         adlnKernelReady=nativeOS;
         adlnNativeRequested=adlnKernelReady;
@@ -3781,6 +3785,20 @@ void XE::selectProfile(const XELP::Profile &profile) {
 
 void XE::deinit() {}
 
+Display13OutputWiring XE::display13BoardWiring(IOService *provider) {
+    auto property=provider->getProperty("xelp-hdmi-wiring");
+    if(!property)property=provider->getProperty("tgl-hdmi-wiring");
+    if(adlpFramebufferOnly) {
+        // VBT remains the authority for pin/transport. No Combo property is
+        // silently interpreted as a TC policy for this single-TC1 candidate.
+        if(property)return {};
+        return XELP::VBT::display13HDMI(firmwarePorts,8);
+    }
+    auto wiring=OSDynamicCast(OSData,property);
+    return XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
+        wiring?wiring->getLength():0,firmwarePorts,3);
+}
+
 void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97BringupVersion", 1ULL, 32);
 	pci->setProperty("N97NativeStartAllowed", false);
@@ -3798,16 +3816,12 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
     pci->setProperty("N97PhysicalMemoryLayout",memory,sizeof(memory));
 	// Bootstrap runs before framebuffer start loads its board policy. Native
 	// GOP qualification must already use that physical port, not assume B.
-	auto property=pci->getProperty("xelp-hdmi-wiring");
-    if(!property)property=pci->getProperty("tgl-hdmi-wiring");
-    auto wiring=OSDynamicCast(OSData,property);
-    const auto board=XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
-        wiring?wiring->getLength():0,firmwarePorts,3);
-    if(displayRequested && !Display13FBTopology::supportedWiring(board)) {
+    const auto board=display13BoardWiring(pci);adlnOutputWiring=board;
+    if(displayRequested && !Display13FBTopology::supportedWiring(board,adlpFramebufferOnly)) {
         pci->setProperty("N97NativeRoutingUnavailable",true);return;
     }
 	auto bootDDI=displayRequested ? UINT32_MAX : 1U;
-	uint64_t connector[] {1,displayRequested,wiring!=nullptr,board.valid,board.hdmi,bootDDI};
+	uint64_t connector[] {1,displayRequested,pci->getProperty("xelp-hdmi-wiring")!=nullptr,board.valid,board.hdmi,bootDDI};
 	pci->setProperty("N97NativeBootConnector",connector,sizeof(connector));
 	pci->setProperty("N97DisplayVersion", AlderLakeN::DisplayVersion, 32);
 	pci->setProperty("N97GTStep", revision==0 ? "A0" : "unknown");
@@ -4062,7 +4076,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 }
 
 bool XE::xelpBindProbe(void *controller) {
-    if(!xelpProviderProbe || !xelpProviderConfigureProbe || !xeProfile.admitted())return false;
+    if(!xelpProviderProbe || !xelpProviderConfigureProbe || !xeProfile.displayAdmitted())return false;
     XELP::ProbeConfig config;config.profile=xeProfile;
     if(adlsDisplaySelected) {
         if(!tglHDMIWiringApplied || !adlsWiring.valid || !adlsWiring.selected())return false;
@@ -4075,9 +4089,11 @@ bool XE::xelpBindProbe(void *controller) {
         config.legacyBackend=tglAUXParentMask;
     } else {
         if(!display13FBTopologyHooksReady || controller!=adlnTopologyController ||
-            !Display13FBTopology::adlnWiring(adlnOutputWiring) ||
+            !Display13FBTopology::supportedWiring(adlnOutputWiring,adlpFramebufferOnly) ||
+            ((adlnOutputWiring.hdmi&0x78) && (!display13TCProbeReady || !display13FBTCHooksReady)) ||
             (adlnOutputWiring.dp && (!display13DPProbeReady || !display13FBSSTHooksReady || !display13FBAUXHooksReady)))return false;
-        config.combo=adlnOutputWiring.selected();config.comboBackend=3;
+        config.combo=adlnOutputWiring.selected()&3;config.comboBackend=3;
+        config.legacy=adlnOutputWiring.hdmi&0x78;config.legacyBackend=config.legacy?0x78:0;
     }
     const bool bound=config.valid() && reinterpret_cast<XELP::ConfigureProbe>(xelpProviderConfigureProbe)(controller,&config);
     IORegistryEntry::getRegistryRoot()->setProperty("XELPSharedProbeBound",bound);
@@ -4113,7 +4129,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
     // ADLP_LOAD_ONLY_KERNEL: do not enter TGL MMIO/FIA, bootstrap or VM setup.
     const auto physicalEntry=XELP::deviceEntry(xeProfile.identity);
     adlpLoadOnly=physicalEntry && physicalEntry->family==XELP::Family::AlderLakeP &&
-        xeProfile.admitted() && xeProfile.overridden() &&
+        xeProfile.donor==XELP::Donor::C004FC1A && xeProfile.overridden() &&
         XELP::hostOS(XELP::kernelOS(version)) && checkKernelArgument("-wex-adlp-load-only");
     if(adlpLoadOnly) {
         IORegistryEntry::getRegistryRoot()->setProperty("ADLPLoadOnlyKernel",true);
@@ -4203,7 +4219,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
         }
         if(map)map->release();
     }
-    if(!xeProfile.admitted())return;
+    if(!xeProfile.displayAdmitted())return;
     xelpSelectedGPU=physicalGPU;xelpSelectedProfile=xeProfile;
 	if (adlnDetected || display13FramebufferRequested) {
         xelpReadFirmware(physicalGPU);
@@ -4286,8 +4302,11 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
             patcher.clearError();
             display13DPProbeReady=query>=address && query-address<size &&
                 XELP::display13ProbeCapable(reinterpret_cast<XELP::QueryProbeCapabilities>(query));
+            display13TCProbeReady=query>=address && query-address<size &&
+                XELP::display13TCProbeCapable(reinterpret_cast<XELP::QueryProbeCapabilities>(query));
         }
         IORegistryEntry::getRegistryRoot()->setProperty("XELPDisplay13DPProbeAvailable",display13DPProbeReady);
+        IORegistryEntry::getRegistryRoot()->setProperty("XELPDisplay13TCProbeAvailable",display13TCProbeReady);
         IORegistryEntry::getRegistryRoot()->setProperty("XELPSharedProbeAvailable",xelpProviderProbe && xelpProviderConfigureProbe);
         if(adlnRequested)IORegistryEntry::getRegistryRoot()->setProperty("N97FBSharedProbeAvailable",xelpProviderProbe && xelpProviderConfigureProbe);
         return true;
@@ -4296,6 +4315,10 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
 	// Keep both adapters outside the large Display12 framebuffer patch frame.
 	if(display13FramebufferRequested && currentFramebuffer && currentFramebuffer->loadIndex==index)
 		return processDisplay13Framebuffer(patcher,index,address,size);
+    if(adlpFramebufferOnly) {
+        if(index==kextIntelTGL.loadIndex)return processADLPLoadOnly(patcher,index,address,size);
+        return false;
+    }
 	if (adlnRequested || adlnDetected) {
 		if (!adlnDetected || !adlnNativeRequested || !currentGraphics || currentGraphics->loadIndex != index) return false;
 		// Matching is persistent. A rejected bootstrap must not leave the
@@ -6104,7 +6127,7 @@ bool XE::processDisplay13FramebufferTopology(KernelPatcher &patcher,size_t index
 bool XE::wrapAlderLakeNGetOSInformation(IOService *controller) {
 	auto s=callbackXE;
 	if(!s->display13FBTopologyHooksReady || !controller || controller->getMetaClass()->getClassSize()<0x1C20 ||
-		!Display13FBTopology::supportedWiring(s->adlnOutputWiring) || !checkKernelArgument("-disablegfxfirmware"))return false;
+		!Display13FBTopology::supportedWiring(s->adlnOutputWiring,s->adlpFramebufferOnly) || !checkKernelArgument("-disablegfxfirmware"))return false;
 	if(!FunctionCast(wrapAlderLakeNGetOSInformation,s->orgAlderLakeNGetOSInformation)(controller))return false;
 	auto platform=Display13FBMemory::field<void *>(controller,0xD40);
 	if(!Display13FBTopology::apply(s->adlnPlatform,sizeof(s->adlnPlatform),platform,s->adlnOutputWiring))return false;
@@ -7254,12 +7277,12 @@ bool XE::wrapDisplay13FramebufferInit(IOService *fb,IOService *controller,uint32
 bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	auto s=callbackXE;auto pci=OSDynamicCast(IOPCIDevice,provider);
 	if(!pci)return false;
-	auto property=provider->getProperty("xelp-hdmi-wiring");
-    if(!property)property=provider->getProperty("tgl-hdmi-wiring");
-    auto wiring=OSDynamicCast(OSData,property);
-    s->adlnOutputWiring=XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
-        wiring?wiring->getLength():0,s->firmwarePorts,3);
-    if(!Display13FBTopology::supportedWiring(s->adlnOutputWiring))return false;
+    const auto board=s->display13BoardWiring(provider);
+    if(!Display13FBTopology::supportedWiring(board,s->adlpFramebufferOnly) ||
+       board.selected()!=s->adlnOutputWiring.selected())return false;
+    if(s->adlpFramebufferOnly && (!s->display13FBTCHooksReady || !s->display13TCProbeReady)) {
+        IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBTCUnavailable",true);return false;
+    }
  const auto contract=XELP::DisplayContract::display13(s->display13Available(),s->adlnOutputWiring.dp!=0);
  const bool ready=s->display13FramebufferRequested && s->display13BootReady && s->tglActive &&
   contract.ready() && pci && xelpDisplay13Device(pci);
@@ -9497,7 +9520,7 @@ bool XE::processADLPLoadOnly(KernelPatcher &patcher,size_t index,mach_vm_address
     const uint8_t startHead[]={0x55,0x48,0x89,0xe5};
     auto p=patcher.solveSymbol<mach_vm_address_t>(index,probe,address,size);
     auto q=patcher.solveSymbol<mach_vm_address_t>(index,start,address,size);patcher.clearError();
-    bool ready=adlpLoadOnly && (fb || index==kextIntelTGL.loadIndex) && size>probeOffset+32 && size>startOffset+32 &&
+    bool ready=(adlpLoadOnly || (adlpFramebufferOnly && !fb)) && (fb || index==kextIntelTGL.loadIndex) && size>probeOffset+32 && size>startOffset+32 &&
         p==address+probeOffset && q==address+startOffset &&
         !memcmp(reinterpret_cast<void *>(p),fb?fbHead:gtHead,sizeof(gtHead)) &&
         !memcmp(reinterpret_cast<void *>(q),startHead,sizeof(startHead));
@@ -9512,6 +9535,7 @@ bool XE::processADLPLoadOnly(KernelPatcher &patcher,size_t index,mach_vm_address
     }
     patcher.clearError();
     IORegistryEntry::getRegistryRoot()->setProperty(fb?"ADLPFramebufferLoadOnlyReady":"ADLPAcceleratorLoadOnlyReady",ready);
+    if(adlpFramebufferOnly && !fb)IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBOnlyAcceleratorBlocked",ready);
     SYSLOG("igfx","ADL-P load-only: %s probe/start barriers ready=%u",fb?"framebuffer":"accelerator",ready);
     return ready;
 }

@@ -12,6 +12,12 @@ struct IO {
  uint32_t read(uint32_t r){reads.push_back(r);return regs.at(r);}
 };
 int main() {
+ auto candidate=identify(0x46a68086,12,0x9a498086);
+ assert(candidate.framebufferOnlyADLP() && candidate.displayAdmitted() && !candidate.admitted());
+ assert(candidate.family==Family::AlderLakeP && candidate.display==Display::XeLPD && candidate.gt==GT::Unknown);
+ assert(!identify(0x46a68086,12).displayAdmitted());
+ assert(!identify(0x46a38086,12,0x9a498086).displayAdmitted());
+
  // ABI3 explicitly describes fixed TC HDMI; capability query prevents an
  // old provider from accepting a configuration whose implementation it lacks.
  for(unsigned d=3;d<=6;++d)for(unsigned ready=0;ready<16;++ready)for(unsigned h=0;h<2;++h) {

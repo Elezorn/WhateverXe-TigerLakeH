@@ -14,6 +14,13 @@ struct Profile {
     GT gt {GT::Unknown};
     Donor donor {Donor::Unknown};
     uint32_t effectiveIdentity {}; // Table selector; may come from device-id.
+    // Initial ADL-P FB candidate: donor selector does not change physical
+    // Display13 identity and grants no Render/Accelerator qualification.
+    bool framebufferOnlyADLP() const {
+        return identity==0x46A68086 && effectiveIdentity==0x9A498086 && revision<=255 &&
+            family==Family::AlderLakeP && display==Display::XeLPD && gt==GT::Unknown && donor==Donor::C004FC1A;
+    }
+    bool displayAdmitted() const {return admitted() || framebufferOnlyADLP();}
     bool overridden() const {return identity!=effectiveIdentity;}
     // Select the implemented family backend for every PCI revision. Hardware
     // validation is independent; a stepping split needs a concrete behavior delta.
@@ -26,6 +33,12 @@ inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) 
     Profile p;p.identity=physical;p.revision=revision;p.effectiveIdentity=effective;
     if((physical&0xFFFF)!=0x8086 || revision>255)return p;
     const auto entry=deviceEntry(effective);if(!entry)return p;
+    const auto physicalEntry=deviceEntry(physical);
+    if(physicalEntry && physicalEntry->family==Family::AlderLakeP) {
+        p.family=physicalEntry->family;p.display=physicalEntry->display;
+        if(entry->backend!=GT::Unknown)p.donor=Donor::C004FC1A;
+        return p;
+    }
     p.family=entry->family;p.display=entry->display;p.gt=entry->backend;
     if(p.gt!=GT::Unknown)p.donor=Donor::C004FC1A;
     return p;
@@ -82,7 +95,7 @@ struct ProbeConfig {
     Profile profile;
     uint32_t combo {},legacy {},typeC {},excluded {},comboBackend {},legacyBackend {};
     bool valid() const {
-        if(abi!=ProbeABI || bytes!=sizeof(ProbeConfig) || !profile.admitted() ||
+        if(abi!=ProbeABI || bytes!=sizeof(ProbeConfig) || !profile.displayAdmitted() ||
            !same(profile,identify(profile.identity,profile.revision,profile.effectiveIdentity)))return false;
         // ADL-S firmware routes use the donor's three Combo PHY slots.
         // Its TC label grants neither Type-C nor Dekel register access.
