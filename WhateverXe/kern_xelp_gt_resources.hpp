@@ -23,5 +23,17 @@ inline bool smallGTResources(uint32_t slice, uint32_t dss, uint32_t euDisable,
     return true;
 }
 
+// TGL GT1 and ADL/RPL-S use the same Gen12 fuse fields. VCS2 is optional;
+// both require VCS0 and VECS0. Product admission is the caller's policy.
+inline bool decodeSmallGT(const uint32_t *fuses, SmallGTResources &out) {
+    out={};
+    if(!fuses)return false;
+    for(unsigned i=0;i<5;++i)if(fuses[i]==UINT32_MAX)return false;
+    const auto video=(~fuses[4])&0xFF,enhance=((~fuses[4])>>16)&0xF;
+    if((video!=1 && video!=5) || enhance!=1)return false;
+    return smallGTResources(fuses[0]&0xFF,fuses[1]&0x3F,
+                           fuses[2]&0xFF,fuses[3]&0xFF,out);
+}
+
 }
 #endif

@@ -16,15 +16,7 @@ inline bool identity(uint32_t pci,uint32_t revision) {return revision<=255 && XE
 struct GT : XELP::SmallGTResources {
     static bool decode(uint32_t pci,uint32_t revision,const uint32_t *fuses,GT &out) {
         out={};
-        if(!identity(pci,revision) || !fuses)return false;
-        for(unsigned i=0;i<5;++i)if(fuses[i]==UINT32_MAX)return false;
-        // Gen12 slice/DSS/EU-pair fields. Keep the supported four-bank
-        // capacity; do not derive URB size from EU count or a marketing ID.
-        const auto video=(~fuses[4])&0xFF,enhance=((~fuses[4])>>16)&0xF;
-        // Existing donor paths cover VCS0, optional VCS2, and VECS0.
-        if((video!=1 && video!=5) || enhance!=1)return false;
-        return XELP::smallGTResources(fuses[0]&0xFF,fuses[1]&0x3F,
-                                      fuses[2]&0xFF,fuses[3]&0xFF,out);
+        return identity(pci,revision) && XELP::decodeSmallGT(fuses,out);
     }
 };
 static_assert(sizeof(GT)==6*sizeof(uint32_t),"Preserve GT resource layout");

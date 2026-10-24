@@ -17,15 +17,15 @@ int main() {
   implemented+=p.admitted();
   const uint32_t value=entry.device;
   assert(same(p,select(pci,revision,true,&value,4)));
-  // The new ADL-S qualification requires physical identity; established
+  // Display12 small-GT qualification requires physical identity; established
   // TGL/ADL-N explicit override semantics remain unchanged.
   auto f=select(0x12348086,revision,true,&value,4);
   assert(f.overridden() && f.identity==0x12348086 && f.effectiveIdentity==pci);
-  assert(f.admitted()==(p.admitted() && entry.backend!=GT::ADLSSmall));
+  assert(f.admitted()==(p.admitted() && !display12SmallGT(entry.backend)));
   assert(!strcmp(model(f),entry.model));
   auto nonIntel=select(0x123410DE,0,true,&value,4);assert(!nonIntel.admitted());
  }
- assert(implemented==24); // Recognition of other table rows adds no native backend.
+ assert(implemented==27); // Recognition of other table rows adds no native backend.
  uint32_t id=0x46D2;
  assert(select(0x12348086,0,true,&id,4).admitted());
  assert(select(0x12348086,1,true,&id,4).admitted());

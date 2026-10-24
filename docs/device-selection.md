@@ -6,8 +6,8 @@ machine-name setting is required.
 ## Automatic selection
 
 By default, the physical Intel GPU device ID selects the backend. The implemented
-IDs are Tiger Lake `9A40`, `9A49`, `9A78` and Alder Lake-N / Twin Lake
-`46D0`–`46D4`, plus the development ADL-S/RPL-S IDs listed in the README.
+IDs are Tiger Lake `9A40`, `9A49`, `9A60`, `9A68`, `9A70`, `9A78` and Alder Lake-N / Twin Lake
+`46D0`–`46D4`, plus the development ADL-S/HX and RPL-S/HX IDs listed in the README.
 All PCI revisions use the selected family backend. Hardware test coverage is
 recorded separately and does not gate selection. A stepping-specific branch
 requires a concrete documented difference or an observed failure. OS, driver
@@ -34,7 +34,12 @@ non-Intel physical devices are rejected. An invalid override does not silently
 fall back to the physical ID. Remove an obsolete ICL or other unsupported spoof
 to use automatic selection. A restart is required after changing the selection.
 
-The development ADL-S/RPL-S backend requires its physical ID without an override.
+The Display12 small-GT backends (TGL GT1, ADL-S/HX and RPL-S/HX) require
+their physical ID without an override. Topology comes from the Gen12 slice,
+DSS and EU-pair fuses; the supported four-bank capacity is checked separately.
+HX IDs `4688/468B/A788/A78B` select the S-family backend, independent of CPU
+branding. RKL remains identification-only: its absent PW_2, PLL/PHY mapping
+and HTI resource reservations require a separate Display adapter.
 
 Do not use an override merely to change the displayed GPU name.
 

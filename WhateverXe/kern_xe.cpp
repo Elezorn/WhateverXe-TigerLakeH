@@ -3737,7 +3737,7 @@ void XE::init() {
 
 void XE::selectProfile(const XELP::Profile &profile) {
     xeProfile=profile;
-    adlsDetected=profile.admitted() && profile.gt==XELP::GT::ADLSSmall;
+    display12SmallGTDetected=profile.admitted() && XELP::display12SmallGT(profile.gt);
     adlsDisplaySelected=profile.admitted() && XELP::displayAdapter(profile.family)==XELP::DisplayAdapter::ADLS;
     adlnNativeRCSProfileRequested=false;
     adlnRequested=profile.admitted() && profile.family==XELP::Family::AlderLakeN &&
@@ -4095,11 +4095,11 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	// This must precede tglLoadHDMIWiring, tglPrepareMMIOUC and TGL FIA reads.
 	auto physicalGPU = OSDynamicCast(IOPCIDevice, info->videoBuiltin);
 	selectProfile(XELP::deviceProfile(physicalGPU));
-    if(adlsDetected && AlderLakeS::identity(xeProfile.identity,xeProfile.revision) &&
+    if(display12SmallGTDetected && XELP::display12SmallGTDevice(xeProfile.identity) &&
        !xeProfile.overridden() && physicalGPU &&
        XELP::hostOS(XELP::kernelOS(version)) && (physicalGPU->configRead16(4)&2)) {
         // Gen12 forcewake/fuse coordinates are shared with the existing reader.
-        // Its ADL-N profile verdict is not used to admit ADL-S. No engine,
+        // Its ADL-N profile verdict is not used to admit Display12 GT1. No engine,
         // GGTT, display, PLL or reset programming is performed here.
         auto map=physicalGPU->mapDeviceMemoryWithRegister(0x10,kIOMapInhibitCache);
         if(map && map->getVirtualAddress() && map->getLength()==0x1000000) {
@@ -4112,26 +4112,28 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
             } io {reinterpret_cast<volatile uint8_t *>(map->getVirtualAddress())};
             uint32_t edram=UINT32_MAX;
             auto gt=AlderLakeN::readGT(io,true,&edram);
-            adlsNativeReady=AlderLakeS::GT::decode(xeProfile.identity,xeProfile.revision,gt.fuses,adlsGT) &&
+            display12SmallGTReady=XELP::decodeSmallGT(gt.fuses,display12SmallGT) &&
                 (gt.status==AlderLakeN::GTStatus::Complete || gt.status==AlderLakeN::GTStatus::ProfileMismatch) &&
                 gt.requestedMask==3 && gt.releasedMask==3 && !gt.releaseFailedMask && edram==0;
-            physicalGPU->setProperty("ADLSGTQualified",adlsNativeReady);
-            physicalGPU->setProperty("ADLSGTBoot",&gt,sizeof(gt));
-            physicalGPU->setProperty("ADLSEDRAM",edram,32);
-            uint32_t registers[][2] {
-                {0x42000,0},{0x45404,0},{0x45450,0},{0x45454,0},
-                {0x46010,0},{0x46014,0},{0x46018,0},{0x46030,0},
-                {0x164280,0},{0x164284,0},{0x164288,0},{0x16428C,0},{0x164290,0},{0x1642BC,0},
-                {0xC4000,0},{0xC4030,0},{0xC4034,0},{0xC5014,0},
-                {0x64000,0},{0x64100,0},{0x64300,0},{0x64400,0},
-                {0x70008,0},{0x71008,0},{0x72008,0},
-                {0x60000,0},{0x6000C,0},{0x60400,0},{0x60404,0},
-                {0x70180,0},{0x70188,0},{0x7018C,0},{0x70190,0},{0x7019C,0},{0x701A4,0},
-                {0x1082C0,0},{0x1082C4,0}
-            };
-            for(auto &reg:registers)reg[1]=io.read(reg[0]);
-            physicalGPU->setProperty("ADLSDisplayBoot",registers,sizeof(registers));
-            SYSLOG("igfx","ADL-S boot readout status=%u fuses=%x/%x/%x/%x/%x release=%x/%x",
+            physicalGPU->setProperty(adlsDisplaySelected?"ADLSGTQualified":"XELPSmallGTQualified",display12SmallGTReady);
+            physicalGPU->setProperty(adlsDisplaySelected?"ADLSGTBoot":"XELPSmallGTBoot",&gt,sizeof(gt));
+            physicalGPU->setProperty(adlsDisplaySelected?"ADLSEDRAM":"XELPSmallGTEDRAM",edram,32);
+            if(adlsDisplaySelected) {
+                uint32_t registers[][2] {
+                    {0x42000,0},{0x45404,0},{0x45450,0},{0x45454,0},
+                    {0x46010,0},{0x46014,0},{0x46018,0},{0x46030,0},
+                    {0x164280,0},{0x164284,0},{0x164288,0},{0x16428C,0},{0x164290,0},{0x1642BC,0},
+                    {0xC4000,0},{0xC4030,0},{0xC4034,0},{0xC5014,0},
+                    {0x64000,0},{0x64100,0},{0x64300,0},{0x64400,0},
+                    {0x70008,0},{0x71008,0},{0x72008,0},
+                    {0x60000,0},{0x6000C,0},{0x60400,0},{0x60404,0},
+                    {0x70180,0},{0x70188,0},{0x7018C,0},{0x70190,0},{0x7019C,0},{0x701A4,0},
+                    {0x1082C0,0},{0x1082C4,0}
+                };
+                for(auto &reg:registers)reg[1]=io.read(reg[0]);
+                physicalGPU->setProperty("ADLSDisplayBoot",registers,sizeof(registers));
+            }
+            SYSLOG("igfx","Display12 small-GT boot readout status=%u fuses=%x/%x/%x/%x/%x release=%x/%x",
                 static_cast<unsigned>(gt.status),gt.fuses[0],gt.fuses[1],gt.fuses[2],gt.fuses[3],gt.fuses[4],
                 gt.releasedMask,gt.releaseFailedMask);
         }
@@ -9356,9 +9358,9 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 					patcher.applyLookupPatch(&patch, site, sizeof(find) + 1);
 					skuReady = !memcmp(site, replace, sizeof(replace));
 				}
-				// ADL-N and explicit overrides must reach the real selector2
+				// Small GTs and explicit overrides must reach the real selector2
 				// comparison regardless of the physical ID's signed ordering.
-				if (skuReady && (adlnDetected || adlsDetected || xeProfile.overridden())) {
+				if (skuReady && (adlnDetected || display12SmallGTDetected || xeProfile.overridden())) {
 					static const uint8_t findSplit[] {0x7F,0x15}, replaceSplit[] {0x90,0x90};
 					auto split=reinterpret_cast<uint8_t *>(address+0x23C25);
 					skuReady=!memcmp(split,findSplit,sizeof(findSplit));
@@ -9444,12 +9446,12 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// G4 (9A78) is GT2 with 3 DSS / 6 native subslices and 6 L3 banks
 			// (TGL PRM Vol4 p3/p9). Keep the 80/96-EU patch byte-for-byte.
 			static const uint8_t urbReplaceG4[] {0x83,0xFE,0x01,0x75,0x59,0x83,0xFA,0x06,0x75,0x54,0x41,0xC7,0x87,0x64,0x11,0x00,0x00,0x06,0x00,0x00,0x00};
-			// ADL-N/Twin Lake keep LP silicon selector2. Validate the actual
+			// Small GT families keep LP silicon selector2. Validate the actual
 			// native subslice count and publish the separately admitted L3 capacity.
 			uint8_t urbReplaceAlderLakeN[] {0x83,0xFE,0x01,0x75,0x59,0x83,0xFA,0x04,0x75,0x54,0x41,0xC7,0x87,0x64,0x11,0x00,0x00,0x04,0x00,0x00,0x00};
 			if (adlnDetected) { urbReplaceAlderLakeN[7]=adlnNativeSubslices;urbReplaceAlderLakeN[17]=adlnL3Banks; }
-            if(adlsDetected) {urbReplaceAlderLakeN[7]=adlsGT.nativeSubslices;urbReplaceAlderLakeN[17]=adlsGT.l3Banks;}
-			const auto urbReplacement = (xeProfile.gt==XELP::GT::ADLNSmall || xeProfile.gt==XELP::GT::ADLSSmall) ? urbReplaceAlderLakeN :
+            if(display12SmallGTDetected) {urbReplaceAlderLakeN[7]=display12SmallGT.nativeSubslices;urbReplaceAlderLakeN[17]=display12SmallGT.l3Banks;}
+			const auto urbReplacement = (xeProfile.gt==XELP::GT::ADLNSmall || XELP::display12SmallGT(xeProfile.gt)) ? urbReplaceAlderLakeN :
 				(xeProfile.gt==XELP::GT::TGLG4 ? urbReplaceG4 : urbReplace);
 			auto gpuInfo=patcher.solveSymbol<mach_vm_address_t>(index,
 				"__ZN16IntelAccelerator10getGPUInfoEv",address,size);
@@ -11712,9 +11714,9 @@ XELP::DisplayContract::Mask XE::display13Available() const {
 }
 
 bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
- if((callbackXE->adlsDetected && !callbackXE->adlsNativeReady) ||
+ if((callbackXE->display12SmallGTDetected && !callbackXE->display12SmallGTReady) ||
     (callbackXE->adlsDisplaySelected && !callbackXE->adlsDisplayHooksReady)) {
-  that->setProperty("ADLSFramebufferPrerequisitesMissing",true);return false;
+  that->setProperty(callbackXE->adlsDisplaySelected?"ADLSFramebufferPrerequisitesMissing":"XELPSmallGTPrerequisitesMissing",true);return false;
  }
  tglRecordStartOrder(3,that);
  if(tglTransitionLock)if(auto live=OSSerializer::forTarget(nullptr,tglTransitionSerialize)) {
@@ -11844,7 +11846,7 @@ uint32_t XE::wrapTGLLaneMask(void *port) {
 }
 
 bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
- if((callbackXE->adlsDetected && !callbackXE->adlsNativeReady) ||
+ if((callbackXE->display12SmallGTDetected && !callbackXE->display12SmallGTReady) ||
     (callbackXE->adlsDisplaySelected && !callbackXE->adlsDisplayHooksReady))return false;
  if (callbackXE->adlnDetected && adlnNativeRCSProfileRequested && !adlnNativeRCSProfileReady) {
   SYSLOG("igfx", "AlderLakeN native RCS profile qualification rejected accelerator start");
@@ -12242,7 +12244,7 @@ void XE::tglObserveAccelerator(IOService *that, uint32_t stage, bool done, uint6
 }
 
 IOService *XE::wrapTGLAcceleratorProbe(IOService *that, IOService *provider, SInt32 *score) {
- if((callbackXE->adlsDetected && !callbackXE->adlsNativeReady) ||
+ if((callbackXE->display12SmallGTDetected && !callbackXE->display12SmallGTReady) ||
     (callbackXE->adlsDisplaySelected && !callbackXE->adlsDisplayHooksReady))return nullptr;
  if (!callbackXE->tglAcceleratorRequested) return nullptr;
 	auto pci = OSDynamicCast(IOPCIDevice, provider);

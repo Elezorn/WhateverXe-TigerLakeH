@@ -34,8 +34,14 @@ Graphics; GPU generation and connector routing are handled by WEX.
 
 | GPU family | Device IDs with an implemented backend |
 | --- | --- |
-| Tiger Lake | `9A40`, `9A49`, `9A78` |
+| Tiger Lake GT2 / G4 | `9A40`, `9A49`, `9A78` |
+| Tiger Lake GT1 (H45) | `9A60`, `9A68`, `9A70` |
 | Alder Lake-N / Twin Lake | `46D0`–`46D4` |
+
+TGL GT1 uses the TGL display path and fuse-derived 16/24/32-EU, four-bank
+GT resources. This composition has CPU and exact-donor test coverage, but no
+TGL-H hardware validation. It requires matching updated WEX Graphics payloads;
+the published Graphics 0.1.0 package does not admit these IDs.
 
 Support varies by system and connector layout. The table includes implemented
 backends, not a guarantee for every machine. See [device selection](docs/device-selection.md)
@@ -190,8 +196,8 @@ installation or update location.
   initial display output and reconnection can be delayed. HDMI/fixed-DP routing is derived
   from VBT rather than a board or connector preset, within the current Combo
   PHY A–C backend. Ambiguous routes, cross-routed AUX, Type-C/TBT capability
-  and PHY D/E are excluded. Development GPU admission covers ADL-S IDs `4680/4682/4688/468A/468B/4690/4692/4693`
-  and RPL-S IDs `A780/A781/A782/A783/A788/A789/A78A/A78B`.
+  and PHY D/E are excluded. Development GPU admission covers ADL-S/HX IDs `4680/4682/4688/468A/468B/4690/4692/4693`
+  and RPL-S/HX IDs `A780/A781/A782/A783/A788/A789/A78A/A78B`.
   All PCI revisions select the shared family backend. Physical identity must match, with one slice,
   up to two DSS, 16/24/32 EUs, four L3 banks and the supported media-engine mask.
   Resource layouts outside that implementation remain unsupported. Only `4690` revision `0C` has hardware validation;

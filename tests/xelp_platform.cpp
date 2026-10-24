@@ -23,7 +23,7 @@ int main() {
 
  for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,4U,8U,12U,255U}) {
   const auto p=identify((id<<16)|0x8086,rev);
-  const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4;
+  const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78 || id==0x9A60 || id==0x9A68 || id==0x9A70,adln=id>=0x46D0 && id<=0x46D4;
   const bool adls=id==0x4680 || id==0x4682 || id==0x4688 || id==0x468A || id==0x468B || id==0x4690 || id==0x4692 || id==0x4693;
   const bool rpls=id==0xA780 || id==0xA781 || id==0xA782 || id==0xA783 || id==0xA788 || id==0xA789 || id==0xA78A || id==0xA78B;
   assert(p.admitted()==(tgl || adln || adls || rpls));

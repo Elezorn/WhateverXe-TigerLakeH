@@ -63,9 +63,9 @@ static int kextIntelTGLFb, kextAppleIntelTGLCompat, kextIntelTGL;
 static struct { void onKextLoadForce(int *) {} } lilu;
 struct XE {
  XELP::Profile xeProfile;
- bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false, adlsDisplaySelected=false, adlsDetected=false;
+ bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false, adlsDisplaySelected=false, display12SmallGTDetected=false;
  bool display13FramebufferRequested=false, display13TraceEnabled=false;
- bool adlsNativeReady=false, adlsDisplayHooksReady=false;
+ bool display12SmallGTReady=false, adlsDisplayHooksReady=false;
  bool tglRequested=false, tglAcceleratorRequested=false;
  bool tglInactivePorts=false, tglPG1Poll=false, tglClockOrderRequested=false;
  bool tglProgramEnabled=false, tglTrainingLeaseRequested=false;
@@ -90,8 +90,8 @@ int main() {
  // Rendering and Display prerequisites can fail independently. The Display
  // callbacks themselves are replayed elsewhere without any Render flag.
  for(unsigned bits=0;bits<16;++bits) {
-  XE selected;selected.adlsDetected=bits&1;selected.adlsDisplaySelected=bits&2;
-  selected.adlsNativeReady=bits&4;selected.adlsDisplayHooksReady=bits&8;callbackXE=&selected;
+  XE selected;selected.display12SmallGTDetected=bits&1;selected.adlsDisplaySelected=bits&2;
+  selected.display12SmallGTReady=bits&4;selected.adlsDisplayHooksReady=bits&8;callbackXE=&selected;
   const bool ready=(!(bits&1) || (bits&4)) && (!(bits&2) || (bits&8));
   assert(wrapTGLFramebufferStartGate()==ready);
   assert(wrapTGLAcceleratorStartGate()==ready);
@@ -139,16 +139,17 @@ int main() {
  }
  // Exercise the complete production selection, including the shared Display
  // adapter on registered desktop products and the still-unimplemented ADL-P.
- for(auto kernel:allKernels)for(auto id:{0x9A49U,0x9A78U,0x4690U,0x4680U,0xA780U,0x46A6U,0x46D2U})
+ for(auto kernel:allKernels)for(auto id:{0x9A49U,0x9A78U,0x4690U,0x4680U,0xA780U,0x4688U,0x468BU,0xA788U,0xA78BU,0x9A60U,0x9A68U,0x9A70U,0x46A6U,0x46D2U})
  for(auto rev:{0U,4U,12U,255U})for(unsigned option=0;option<4;++option) {
   version=kernel;args={};
   if(option&1)args.insert("-wex-tgl-off");
   if(option&2)args.insert("-wex-noaccel");
   XE selected;selected.init();selected.selectProfile(XELP::identify((id<<16)|0x8086,rev));
-  const bool desktop=id==0x4690 || id==0x4680 || id==0xA780;
-  const bool mobile=id==0x9A49 || id==0x9A78;
+  const bool desktop=id==0x4690 || id==0x4680 || id==0xA780 || id==0x4688 || id==0x468B || id==0xA788 || id==0xA78B;
+  const bool gt1=id==0x9A60 || id==0x9A68 || id==0x9A70;
+  const bool mobile=id==0x9A49 || id==0x9A78 || gt1;
   const bool small13=id==0x46D2;
-  assert(selected.adlsDetected==desktop && selected.adlsDisplaySelected==desktop);
+  assert(selected.display12SmallGTDetected==(desktop || gt1) && selected.adlsDisplaySelected==desktop);
   assert(selected.adlnDetected==small13 && selected.display13FramebufferRequested==small13);
   const bool d12=(desktop || mobile) && !(option&1);
   assert(selected.tglRequested==(small13 || d12));

@@ -84,7 +84,7 @@ private:
 	bool adlnDetected {false};
     // Render and Display selections are independent; shared PHY/port code
     // must not depend on which GT implementation the product uses.
-    bool adlsDetected {},adlsNativeReady {};
+    bool display12SmallGTDetected {},display12SmallGTReady {};
     bool adlsDisplaySelected {},adlsDisplayHooksReady {};
     bool adlsPortInitReady {},tglHPDHookReady {};
     bool adlsPLLTableReady {},adlsClockReady {},adlsPowerReady {},adlsPanelPWMReady {};
@@ -103,7 +103,7 @@ private:
     static void wrapADLSEnableClocks(void *controller,void *port,void *otherPort,uint32_t *params);
     mach_vm_address_t orgADLSPortInit {};
     static bool wrapADLSPortInit(void *port,uint32_t *config);
-    AlderLakeS::GT adlsGT;
+    XELP::SmallGTResources display12SmallGT;
     XELP::Profile xeProfile;
     XELP::VBT::Ports firmwarePorts;
     void xelpReadFirmware(IOPCIDevice *pci);

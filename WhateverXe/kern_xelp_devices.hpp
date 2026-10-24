@@ -8,7 +8,7 @@
 namespace XELP {
 enum class Family : uint32_t { Unknown, TigerLake, AlderLakeN, RocketLake, AlderLakeS, AlderLakeP, RaptorLakeS, RaptorLakeP };
 enum class Display : uint32_t { Unknown, XeD = 12, XeLPD = 13 };
-enum class GT : uint32_t { Unknown, TGLGT2, TGLG4, ADLNSmall, ADLSSmall };
+enum class GT : uint32_t { Unknown, TGLGT2, TGLG4, ADLNSmall, ADLSSmall, TGLGT1 };
 enum class Donor : uint32_t { Unknown, C004FC1A = 1 };
 struct DeviceEntry {
     uint16_t device; Family family; Display display; GT backend;
@@ -39,7 +39,9 @@ constexpr DeviceEntry DeviceTable[] {
     {0x4C8B, Family::RocketLake, Display::XeD, GT::Unknown, "Intel UHD Graphics 730"},
     {0x9A40, Family::TigerLake, Display::XeD, GT::TGLGT2, "Intel Iris Xe Graphics"},
     {0x9A49, Family::TigerLake, Display::XeD, GT::TGLGT2, "Intel Iris Xe Graphics"},
-    {0x9A60, Family::TigerLake, Display::XeD, GT::Unknown, "Intel UHD Graphics"},
+    {0x9A60, Family::TigerLake, Display::XeD, GT::TGLGT1, "Intel UHD Graphics"},
+    {0x9A68, Family::TigerLake, Display::XeD, GT::TGLGT1, "Intel UHD Graphics"},
+    {0x9A70, Family::TigerLake, Display::XeD, GT::TGLGT1, "Intel UHD Graphics"},
     {0x9A78, Family::TigerLake, Display::XeD, GT::TGLG4, "Intel UHD Graphics"},
     {0xA780, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics 770"},
     {0xA781, Family::RaptorLakeS, Display::XeD, GT::ADLSSmall, "Intel UHD Graphics"},
@@ -66,6 +68,12 @@ inline const DeviceEntry *deviceEntry(uint32_t pci) {
 inline bool desktopGTDevice(uint32_t pci) {
     const auto e=deviceEntry(pci);
     return e && (e->family==Family::AlderLakeS || e->family==Family::RaptorLakeS);
+}
+
+inline bool display12SmallGT(GT gt) {return gt==GT::ADLSSmall || gt==GT::TGLGT1;}
+inline bool display12SmallGTDevice(uint32_t pci) {
+    const auto e=deviceEntry(pci);
+    return e && display12SmallGT(e->backend);
 }
 
 }

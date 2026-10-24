@@ -19,8 +19,8 @@ struct Profile {
     // validation is independent; a stepping split needs a concrete behavior delta.
     bool admitted() const {return (identity&0xFFFF)==0x8086 && revision<=255 &&
         donor==Donor::C004FC1A && gt!=GT::Unknown &&
-        ((gt!=GT::ADLSSmall && !desktopGTDevice(identity)) ||
-         (gt==GT::ADLSSmall && desktopGTDevice(identity) && !overridden()));}
+        ((!display12SmallGT(gt) && !display12SmallGTDevice(identity)) ||
+         (display12SmallGT(gt) && display12SmallGTDevice(identity) && !overridden()));}
 };
 inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) {
     Profile p;p.identity=physical;p.revision=revision;p.effectiveIdentity=effective;
