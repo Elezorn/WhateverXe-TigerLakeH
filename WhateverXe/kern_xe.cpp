@@ -3897,7 +3897,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 		bootstrapReady=parked.status==Display13Boot::Status::Complete;
 	}
     if(displayRequested && linearTest && bootstrapReady && Display13FBTopology::multiOutputWiring(board)) {
-        const auto unused=Display13Boot::releaseUnusedTC(io,result,barReady && xelpMemoryMatches(pci),board);
+        auto unused=Display13Boot::releaseUnusedTC(io,result,barReady && xelpMemoryMatches(pci),board);
         pci->setProperty("WEXDisplay13UnusedTC",&unused,sizeof(unused));
         bootstrapReady=unused.status==Display13Boot::Status::Complete;
     }
