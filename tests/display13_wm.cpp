@@ -357,6 +357,34 @@ int main() {
         assert(controls.status==Status::Conflict && controls.check==LatchCheck::Controls &&
             controls.pipeControl==0xC0000000 && controls.planeControl==0x04000000 &&
             !controls.cursorControl && disabledPlane.reads.back()==0x70080+0x1000*pipe && disabledPlane.writes.empty());
+        // Native scaler flush before the first attached scanout: timing and
+        // WM are programmed, but the primary remains disabled and SURF is 0.
+        // This is pending, not success; a later enabled surface must earn the
+        // ordinary frame/live proof. The same state applies on every pipe.
+        LatchIO preparing(p);preparing.moveToPipe(pipe);const auto bank=0x1000*pipe;
+        preparing.regs[0x70180+bank]=0;preparing.regs[0x7019C+bank]=0;
+        preparing.regs[0x70040+bank]=0;preparing.surface=0;
+        const auto pending=latch(preparing,preparing.snapshot(p));
+        assert(pending.status==Status::Unavailable && pending.check==LatchCheck::AwaitingScanout &&
+            preparing.reads.back()==Display13FBIRQ::DSBControl(pipe,2) && preparing.writes.empty() && !preparing.elapsed);
+        // Pending cannot hide a foreign consumer or a changed shared clock.
+        preparing.regs[0x70280+bank]=Enabled;
+        assert(latch(preparing,preparing.snapshot(p)).status==Status::Conflict);
+        preparing.regs[0x70280+bank]=0;preparing.regs[0x70B08+bank]=1;
+        assert(latch(preparing,preparing.snapshot(p)).status==Status::Conflict);
+        preparing.regs[0x70B08+bank]=0;auto intendedClock=preparing.snapshot(p);
+        preparing.clock=384000000;
+        assert(latch(preparing,intendedClock).status==Status::Conflict);
+        preparing.clock=614400000;
+        preparing.regs[0x70180+bank]=0x84000000;
+        preparing.regs[0x7019C+bank]=preparing.surface=0x100000;
+        assert(latch(preparing,preparing.snapshot(p)).status==Status::Complete && preparing.elapsed==2000);
+        LatchIO badBlank(p);badBlank.moveToPipe(pipe);badBlank.surface=0;
+        badBlank.regs[0x70180+bank]=UINT32_MAX;
+        assert(latch(badBlank,badBlank.snapshot(p)).status==Status::Conflict);
+        LatchIO blankWithCursor(p);blankWithCursor.moveToPipe(pipe);blankWithCursor.surface=0;
+        blankWithCursor.regs[0x70180+bank]=0;blankWithCursor.regs[0x70080+bank]=7;
+        assert(latch(blankWithCursor,blankWithCursor.snapshot(p)).status==Status::Conflict);
         LatchIO peerPlane(p);peerPlane.moveToPipe(pipe);peerPlane.regs[0x70280+0x1000*pipe]=Enabled;
         const auto peer=latch(peerPlane,peerPlane.snapshot(p));
         assert(peer.status==Status::Conflict && peer.check==LatchCheck::OtherPlane &&

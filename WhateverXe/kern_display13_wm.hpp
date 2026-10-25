@@ -289,7 +289,7 @@ inline bool clockFits(const Snapshot &s,uint64_t nativeHz) {
         (!s.cursorActive || (s.cursor && s.cursor->status==Status::Complete &&
             s.cursor->pixelHz && s.cursor->pixelHz<=nativeHz/2));
 }
-enum class LatchCheck : uint32_t {None,Controls,OtherPlane,DSB,Clock,Registers,Live,Frame};
+enum class LatchCheck : uint32_t {None,Controls,OtherPlane,DSB,Clock,Registers,Live,Frame,AwaitingScanout};
 struct Latch {
     Status status {Status::Unavailable};
     uint32_t frameBefore {},frameAfter {},waitUs {},budgetUs {},lastReg {},expected {},observed {};
@@ -345,8 +345,14 @@ template<class IO> Latch latch(IO &io,const Snapshot &s) {
         if(!Display13FBIRQ::powered(power,s.pipeIndex)) {r.status=Status::Power;return r;}
         const auto pipe=io.read(0x70008+bank),plane=io.read(0x70180+bank),cursor=io.read(0x70080+bank);
         r.check=LatchCheck::Controls;r.pipeControl=pipe;r.planeControl=plane;r.cursorControl=cursor;
+        // Native enablePlane may return before any scanout is attached, while
+        // programPipeScaler still flushes a zero SURF trigger via armUpdate.
+        // A disabled primary with no intended surface is not a live latch to
+        // prove yet. Keep WM/DDB pending; never retire storage or certify the
+        // shared clock until a later real plane/surface update passes below.
+        const bool preparing=plane!=UINT32_MAX && !(plane&Enabled) && !s.primarySurface && !cursor && !s.cursorActive;
         if(pipe==UINT32_MAX || plane==UINT32_MAX || cursor==UINT32_MAX || (pipe&0xC0000000)!=0xC0000000 ||
-           !(plane&Enabled) || !supportedRGBControl(plane) || (((plane>>10)&7)==4)!=s.primary->yTiled ||
+           (!preparing && (!(plane&Enabled) || !supportedRGBControl(plane) || (((plane>>10)&7)==4)!=s.primary->yTiled)) ||
            bool(cursor&0x27)!=s.cursorActive || (s.cursorActive && !cursorMatches(cursor,s.cursor->width))) {r.status=Status::Conflict;return r;}
         // No autonomous DSB writer is admitted by this direct-MMIO proof.
         for(unsigned p=1;p<5;++p) {
@@ -365,6 +371,7 @@ template<class IO> Latch latch(IO &io,const Snapshot &s) {
         }
         r.check=LatchCheck::Clock;r.clockHz=io.nativeClockHz();
         if(r.clockHz!=s.nativeClockHz) {r.status=Status::Conflict;return r;}
+        if(preparing) {r.check=LatchCheck::AwaitingScanout;return r;}
         r.check=LatchCheck::Registers;
         if(!compare(io,r,0x60000+bank,ht) || !compare(io,r,0x6000C+bank,vt) || !compare(io,r,0x45270+4*s.pipeIndex,s.pipeLineTime) ||
            !compare(io,r,0x70190+bank,((s.primary->height-1)<<16)|(s.primary->width-1)) ||
