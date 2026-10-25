@@ -7622,10 +7622,11 @@ uint32_t XE::wrapAlderLakeNPortDDC(OSObject *port,uint32_t block,uint8_t *data,b
     }
     return result;
 }
-bool XE::wrapAlderLakeNComputeLanes(OSObject *port,const void *timing,uint32_t bpp,uint32_t available,uint32_t *lanes) {
+bool XE::wrapAlderLakeNComputeLanes(void *port,const void *timing,uint32_t bpp,uint32_t available,uint32_t *lanes) {
     const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
     const auto native=FunctionCast(wrapAlderLakeNComputeLanes,callbackXE->orgAlderLakeNComputeLanes)(port,timing,bpp,available,lanes);
-    auto config=Display13FBMemory::field<uint32_t *>(port,0x548);
+    auto config=XELPDonor::hdmiLaneConfig(port,caller,callbackXE->adlnHDMILaneCaller);
+    if(!config)return native;
     const bool corrected=lanes && Display13FBTopology::skipDPLanes(callbackXE->adlnPlatform,config,callbackXE->adlnOutputWiring,
         caller==callbackXE->adlnHDMILaneCaller,native,available,*lanes);
     static uint32_t count {};uint64_t r[] {1,__sync_add_and_fetch(&count,1),config ? config[0] : 9,config ? config[2] : 0,
@@ -16241,12 +16242,8 @@ uint32_t XE::wrapTGLSetEDID(void *controller, void *request) {
 bool XE::wrapTGLComputeLanes(void *port, const void *timing, uint32_t bpp, uint32_t available, uint32_t *lanes) {
  const auto result = FunctionCast(wrapTGLComputeLanes, callbackXE->orgTGLComputeLanes)(port, timing, bpp, available, lanes);
  const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
- // The donor does not consume its first argument. setupOptimalLaneCount
- // passes port+0x124 there, whereas the guarded validator passes the port.
- // Establish that caller contract before interpreting any object fields.
- if (!callbackXE->tglHDMILaneCaller || caller != callbackXE->tglHDMILaneCaller)
-  return result;
- auto config = *reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port)+0x548);
+ auto config = XELPDonor::hdmiLaneConfig(port,caller,callbackXE->tglHDMILaneCaller);
+ if (!config) return result;
  // r316: this exact validator incorrectly asks a TMDS connector for DP link lanes.
  // Leave lane count zero and continue the remaining native HDMI/scaler checks.
  // Preserve every DP call, other caller, positive result and nonzero lane result.

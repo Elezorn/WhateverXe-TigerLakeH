@@ -3,6 +3,7 @@
 #define KERN_XELP_DONOR_HPP
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 namespace XELPDonor {
 inline bool displayPoolRequest(uint32_t enabled,uint32_t bytes) {
     return enabled && bytes && !(bytes&4095) && bytes<=0x4000000;
@@ -41,6 +42,15 @@ template<class IO> Poll waitEDIDReady(IO &io,uint32_t initial) {
         io.delayUs(10);r.elapsedUs+=10;r.value=io.readStatus();++r.reads;
     }
     return r;
+}
+// computeLaneCount ignores arg0: setupOptimalLaneCount passes port+0x124,
+// while the HDMI validator passes the actual port. Qualify the caller before
+// even reading config; correcting only the result does not protect this ABI.
+inline const uint32_t *hdmiLaneConfig(const void *argument,uintptr_t caller,uintptr_t validator) {
+    if(!argument || !validator || caller!=validator)return nullptr;
+    const uint32_t *config {};
+    memcpy(&config,static_cast<const uint8_t *>(argument)+0x548,sizeof(config));
+    return config;
 }
 inline bool skipHDMIDPLanes(bool selected,bool exactCaller,bool native,uint32_t available,uint32_t lanes) {
     return selected && exactCaller && !native && !available && !lanes;

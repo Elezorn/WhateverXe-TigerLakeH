@@ -240,7 +240,7 @@ private:
     static uint32_t wrapAlderLakeNConnectionAttr(IOService *fb,int connection,uint32_t attribute,unsigned long *value);
     static uint32_t wrapDisplay13FBDDC(IOService *fb,int connection,uint32_t block,uint32_t segment,uint32_t type,uint8_t *data,uint64_t *length);
     static uint32_t wrapAlderLakeNPortDDC(OSObject *port,uint32_t block,uint8_t *data,bool force);
-    static bool wrapAlderLakeNComputeLanes(OSObject *port,const void *timing,uint32_t bpp,uint32_t available,uint32_t *lanes);
+    static bool wrapAlderLakeNComputeLanes(void *port,const void *timing,uint32_t bpp,uint32_t available,uint32_t *lanes);
     static uint32_t wrapDisplay13GMBusRead(void *access,uint64_t reg);
     static void wrapDisplay13GMBusWrite(void *access,uint64_t reg,uint32_t value);
     mach_vm_address_t orgAlderLakeNGamma10 {},adlnGammaTableUpdate {},orgAlderLakeNPreGamma {};

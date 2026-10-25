@@ -12,6 +12,7 @@
 #include "kern_alderlake_s.hpp"
 #include "kern_tgl_combo_dp.hpp"
 #include "kern_xelp_donor.hpp"
+#include "kern_display13_fb_topology.hpp"
 struct OSObject {virtual ~OSObject()=default;};
 struct OSData:OSObject {std::vector<uint8_t> data;void *getBytesNoCopy(){return data.data();}uint32_t getLength(){return data.size();}};
 struct IOService {OSObject *property {};unsigned reads {};OSObject *getProperty(const char *name){assert(!strcmp(name,"tgl-hdmi-wiring"));++reads;return property;}};
@@ -38,6 +39,9 @@ struct XE {
  static bool wrapTGLGetOSInformation(void *);
  static uint32_t wrapTGLGMBus(void *,uint32_t,uint32_t,void *);
  static bool wrapTGLComputeLanes(void *,const void *,uint32_t,uint32_t,uint32_t *);
+ static bool wrapAlderLakeNComputeLanes(void *,const void *,uint32_t,uint32_t,uint32_t *);
+ uintptr_t orgAlderLakeNComputeLanes {},adlnHDMILaneCaller=0x100;
+ void *adlnPlatform {};Display13OutputWiring adlnOutputWiring;
 };
 XE object,*callbackXE=&object;
 // OBSERVATIONS
@@ -50,7 +54,7 @@ uint32_t nativeGMBus(void*,uint32_t,uint32_t,void*){++nativeGMBusCalls;edidSelec
  for(auto &o:tglGMBusObservations)if(o.thread==1)edidSelected=o.edid;return 0x91;}
 uint8_t *&platform(){return *reinterpret_cast<uint8_t **>(controller+0xD40);}
 void setup(){
- object=XE{};object.orgTGLGetOSInformation=(uintptr_t)nativeOS;object.orgTGLComputeLanes=(uintptr_t)nativeLanes;object.orgTGLGMBus=(uintptr_t)nativeGMBus;
+ object=XE{};object.orgAlderLakeNComputeLanes=(uintptr_t)nativeLanes;object.orgTGLGetOSInformation=(uintptr_t)nativeOS;object.orgTGLComputeLanes=(uintptr_t)nativeLanes;object.orgTGLGMBus=(uintptr_t)nativeGMBus;
  memset(controller,0,sizeof(controller));memset(original,0x5a,sizeof(original));platform()=original;original[0x12]=9;
  for(unsigned d=0;d<9;++d){uint32_t cfg[]={d,d+1,1,d>=3?1u:0u,0x400,0x201};memcpy(original+0x20+24*d,cfg,24);}
  const uint32_t panel[]={0,0,0,0,2,0x18};memcpy(original+0x20,panel,24);
@@ -104,15 +108,38 @@ int main(){
  const auto page=static_cast<size_t>(sysconf(_SC_PAGESIZE));
  void *inaccessible=mmap(nullptr,page,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0);
  assert(inaccessible!=MAP_FAILED);
- testCaller=0x101;
- for(bool native:{false,true}){
-  nativeLanesResult=native;uint32_t lanes=4;
-  assert(XE::wrapTGLComputeLanes(inaccessible,nullptr,24,20,&lanes)==native);
-  assert(lanes==4);
+ for(auto wrapper:{XE::wrapTGLComputeLanes,XE::wrapAlderLakeNComputeLanes}) {
+  testCaller=0x101;nativeLanesCalls=0;
+  for(bool native:{false,true}){
+   nativeLanesResult=native;uint32_t lanes=4;
+   assert(wrapper(inaccessible,nullptr,24,20,&lanes)==native);
+   assert(lanes==4);
+  }
+  object.tglHDMILaneCaller=object.adlnHDMILaneCaller=0;testCaller=0;
+  assert(wrapper(inaccessible,nullptr,24,20,nullptr));
+  assert(nativeLanesCalls==3);
+  object.tglHDMILaneCaller=object.adlnHDMILaneCaller=0x100;
  }
- object.tglHDMILaneCaller=0;testCaller=0;
- assert(XE::wrapTGLComputeLanes(inaccessible,nullptr,24,20,nullptr));
- assert(nativeLanesCalls==3);assert(munmap(inaccessible,page)==0);
+ assert(munmap(inaccessible,page)==0);
+ // The production Display13 wrapper keeps HDMI correction and DP pass-through
+ // under the exact validator, across both Combo and TC topology records.
+ for(unsigned d:{0U,1U,3U,4U,5U,6U})for(bool hdmi:{false,true}) {
+  setup();Display13OutputWiring w;w.valid=true;
+  original[0x13]=3;
+  for(unsigned i=3;i<9;++i)reinterpret_cast<uint32_t *>(original+0x20+24*i)[1]=i+6;
+  if(hdmi){w.hdmi=1U<<d;w.ddc[d]=d<2?d+1:d+6;}else w.dp=1U<<d;
+  alignas(8) uint8_t out[Display13FBTopology::Bytes] {};
+  assert(Display13FBTopology::apply(out,sizeof(out),original,w));
+  object.adlnPlatform=out;object.adlnOutputWiring=w;
+  auto config=reinterpret_cast<uint32_t *>(out+0x20+24*d);
+  memcpy(port+0x548,&config,sizeof(config));
+  for(bool native:{false,true})for(unsigned available:{0U,20U})for(unsigned lanes:{0U,4U}) {
+   nativeLanesResult=native;auto before=lanes;
+   assert(XE::wrapAlderLakeNComputeLanes(port,nullptr,24,available,&lanes)==
+          (native || (hdmi && !available && !lanes)));
+   assert(lanes==before);
+  }
+ }
  setup();auto current=property(2,0,2,0);IOService absent{&current};assert(XE::tglLoadHDMIWiring(&absent));assert(XE::wrapTGLGetOSInformation(controller));
  const auto p=platform();assert(p!=original&&object.tglHDMIWiringApplied&&object.tglHDMIWiring.ddc[1]==2);
  expectUnchangedExcept(p,{0x40,0x48,0x4C}); // HDMI protocol/type/flags; panel unchanged
