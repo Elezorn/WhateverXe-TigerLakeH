@@ -418,7 +418,7 @@ private:
     static constexpr uint32_t TGLPortCount = 9;
 	TGLTrainingLease tglTrainingLeases[TGLPortCount] {};
 	void *tglAllocatingFB[TGLPortCount] {};
-	bool tglLeasesStopping {},tglStopRetained {};
+	bool tglLeasesStopping {},tglStopRetained {},tglStopInProgress {},tglStopComplete {};
 	static TGLTrainingLease *tglTrainingLeaseForDDI(uint32_t ddi);
 	static TGLTrainingLease *tglAdoptingLease(); // caller holds the pool lock
 	static bool tglLeaseFBReserved(void *fb, const TGLTrainingLease *except = nullptr);
@@ -592,6 +592,9 @@ private:
  __attribute__((noinline)) bool processFramebufferKext(KernelPatcher &,size_t,mach_vm_address_t,size_t);
  __attribute__((noinline)) bool processFramebufferCommon(KernelPatcher &,size_t,mach_vm_address_t,size_t);
  bool framebufferTrainingHooksReady {};
+ bool framebufferStartInProgress {};
+ uint32_t framebufferProtocolCalls {};
+ void *framebufferStartedController {};
  __attribute__((noinline)) bool processFramebufferTraining(KernelPatcher &,size_t,mach_vm_address_t,size_t);
  static bool wrapFramebufferStart(IOService *,IOService *);
  static bool wrapFramebufferInit(IOService *,IOService *,uint32_t);

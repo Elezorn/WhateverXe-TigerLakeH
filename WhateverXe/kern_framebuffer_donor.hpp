@@ -5,6 +5,25 @@
 #include <stddef.h>
 #include <string.h>
 namespace FramebufferDonor {
+// Native entry admission is closed before controller/pool destruction. The
+// low bits count in-flight opens, training and resource adoption; stop never
+// holds the pool lock while draining them. Closing is terminal for this owner.
+class Call {
+    static constexpr uint32_t Closed=1U<<31;
+    uint32_t *state {};
+public:
+    explicit Call(uint32_t &value) {
+        auto old=__atomic_load_n(&value,__ATOMIC_ACQUIRE);
+        while(!(old&Closed) && old!=Closed-1) {
+            if(__atomic_compare_exchange_n(&value,&old,old+1,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)) {state=&value;break;}
+        }
+    }
+    ~Call(){if(state)__atomic_fetch_sub(state,1,__ATOMIC_RELEASE);}
+    Call(const Call &)=delete;Call &operator=(const Call &)=delete;
+    explicit operator bool() const {return state!=nullptr;}
+    static void close(uint32_t &value){__atomic_fetch_or(&value,Closed,__ATOMIC_ACQ_REL);}
+    static bool drained(uint32_t &value){return (__atomic_load_n(&value,__ATOMIC_ACQUIRE)&~Closed)==0;}
+};
 template<class T> T field(const void *object,size_t offset) {
     T value {};if(object)memcpy(&value,static_cast<const uint8_t *>(object)+offset,sizeof(value));return value;
 }

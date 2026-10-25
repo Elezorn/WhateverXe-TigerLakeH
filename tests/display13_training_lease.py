@@ -109,11 +109,25 @@ int main(int argc,char**argv){
  assert(!stopCalled&&obj.tglStopRetained&&retained[ctl.data()]==1);
  obj.tglTrainingLeases[5].busy=false;XE::wrapTGLControllerStop(ctl.data(),nullptr);
  assert(stopCalled&&!obj.tglStopRetained);clean();
+ // Adoption owns the native path even when our extra PG put fails. Stop
+ // retries only that extra reference and must not inspect the adopted path.
+ init(5,1);assert(!XE::wrapTGLTraining(ctl.data(),endReq,endOut));rejectPowerPut=true;
+ nativeBoundary=[&]{enablePG(power.data(),obj.tglTrainingLeases[5].pg);};
+ assert(!XE::wrapTGLAllocatePathResources(fbs[0].data(),5,0));nativeBoundary={};
+ auto &adopted=obj.tglTrainingLeases[5];auto nativePath=adopted.path;auto nativePG=adopted.pg;
+ assert(adopted.adopted&&adopted.powerOwned&&pgRefs[nativePG]==2);
+ adopted.path=(void*)1; // Native-owned path may already be destroyed.
+ XE::wrapTGLControllerStop(ctl.data(),nullptr);assert(!stopCalled&&obj.tglStopRetained&&adopted.adopted);
+ rejectPowerPut=false;XE::wrapTGLControllerStop(ctl.data(),nullptr);
+ assert(stopCalled&&!adopted.path&&pgRefs[nativePG]==1);
+ disablePG(power.data(),nativePG);freePath(nativePath);clean();
  // Failed power acquisition retains the reservation and cannot train on retry.
  init(5,1);uint32_t req[20]={6},out[20]={};rejectPowerGet=true;
  assert(XE::wrapTGLTraining(ctl.data(),req,out)==kIOReturnBusy&&linkCalls==0);
  assert(XE::wrapTGLTraining(ctl.data(),req,out)==kIOReturnBusy&&linkCalls==0);
- XE::wrapTGLControllerStop(ctl.data(),nullptr);used[1]=false;clean();
+ XE::wrapTGLControllerStop(ctl.data(),nullptr);
+ assert(!stopCalled&&obj.tglStopRetained&&obj.tglTrainingLeases[5].path&&!obj.tglTrainingLeases[5].powerOwned);
+ assert(retained[ctl.data()]==1); // Unproven transition remains quarantined, not synthetic cleanup.
  munmap(image,0x400000);
  puts("PASS production Display13 lease dispatch with native AGDC Begin/Train/retry/End and pool lookup; mock power/sink/adoption boundaries");
 }

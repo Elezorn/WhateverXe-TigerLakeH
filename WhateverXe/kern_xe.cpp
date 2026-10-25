@@ -7560,6 +7560,8 @@ bool XE::processFramebufferAGDC(KernelPatcher &patcher,size_t index,mach_vm_addr
 }
 
 uint32_t XE::wrapFramebufferUserClient(IOService *fb,void *task,void *security,uint32_t type,void **client) {
+ FramebufferDonor::Call admission(callbackXE->framebufferProtocolCalls);
+ if(!admission){if(client)*client=nullptr;return kIOReturnNotReady;}
     // Only type0 enters IOFramebuffer::open. Refuse before entering IOG: an
     // error from enableController permanently sets IOG's dead flag instead.
     // Native controller start publishes FB children before its AGDC nub.
@@ -7571,9 +7573,9 @@ uint32_t XE::wrapFramebufferUserClient(IOService *fb,void *task,void *security,u
             Display13FBMemory::field<IOService *>(fb,0x1D0) : nullptr;
         const bool bound=controller && controller->getMetaClass()->getClassSize()>=0x1C20 &&
             (!s->display13FramebufferRequested || controller==s->adlnTopologyController);
-        // Display13 additionally needs the hardware handoff complete before
-        // IOFramebuffer::open; callback safety itself is donor-wide.
-        const bool started=bound && (!s->display13FramebufferRequested || controller==s->tglObservationController);
+        // Publication follows the common start result, never a mutable diagnostic
+        // controller pointer that a training adapter can populate early.
+        const bool started=bound && controller==__atomic_load_n(&s->framebufferStartedController,__ATOMIC_ACQUIRE);
         const bool registered=bound && Display13FBMemory::field<uintptr_t>(controller,0x1BF8);
         uint64_t record[]={1,bound,started,registered,
             bound && Display13FBMemory::field<uintptr_t>(controller,0x1C00),
@@ -11195,11 +11197,23 @@ bool XE::processFramebufferCommon(KernelPatcher &patcher,size_t index,mach_vm_ad
 
 bool XE::wrapFramebufferStart(IOService *that,IOService *provider) {
  auto s=callbackXE;
- if(!s->framebufferDonorCommonReady || !s->framebufferBackendInstalled) {
+ if(!s->framebufferDonorCommonReady || !s->framebufferBackendInstalled || !s->tglPathPoolLock) {
   if(that)that->setProperty("WEXFramebufferCommonRejected",true);
   return false;
  }
- return s->display13FramebufferRequested ? wrapDisplay13FramebufferStart(that,provider) : wrapTGLFramebufferStart(that,provider);
+ IORecursiveLockLock(s->tglPathPoolLock);
+ if(s->framebufferStartInProgress || s->tglLeasesStopping || s->framebufferStartedController) {
+  IORecursiveLockUnlock(s->tglPathPoolLock);return false;
+ }
+ s->framebufferStartInProgress=true;
+ IORecursiveLockUnlock(s->tglPathPoolLock);
+ const bool native=s->display13FramebufferRequested ? wrapDisplay13FramebufferStart(that,provider) : wrapTGLFramebufferStart(that,provider);
+ IORecursiveLockLock(s->tglPathPoolLock);
+ const bool accepted=native && !s->tglLeasesStopping;
+ __atomic_store_n(&s->framebufferStartedController,accepted?static_cast<void *>(that):nullptr,__ATOMIC_RELEASE);
+ s->framebufferStartInProgress=false;
+ IORecursiveLockUnlock(s->tglPathPoolLock);
+ return accepted;
 }
 
 bool XE::wrapFramebufferInit(IOService *fb,IOService *controller,uint32_t index) {
@@ -16540,6 +16554,22 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 bool XE::tglReleaseTrainingLease(TGLTrainingLease &lease, bool disableLink) {
 	SYSLOG("igfx", "TGL330 release enter ddi=%u disable=%u", lease.ddi, disableLink);
 	auto s = callbackXE;
+ // A failed extra-reference put after adoption is not a training reservation.
+ // Native scanout owns (and may already have freed) the path. Retry only our
+ // retained power/object references, without inspecting/freeing that path.
+ if(lease.adopted) {
+  if(lease.powerOwned) {
+   if(s->trainingLeasePower) {if(!s->trainingLeasePower(lease.power,lease.pg,false))return false;}
+   else reinterpret_cast<void (*)(void *,uint32_t)>(s->tglDisablePG)(lease.power,lease.pg);
+  }
+  auto fb=static_cast<OSObject *>(lease.fb),port=static_cast<OSObject *>(lease.port),power=static_cast<OSObject *>(lease.power);
+  IORecursiveLockLock(s->tglPathPoolLock);
+  lease.path=lease.port=lease.fb=lease.power=nullptr;lease.powerOwned=false;
+  lease.adopted=false;lease.adoptThread=nullptr;lease.endCleanupPending=false;
+  IORecursiveLockUnlock(s->tglPathPoolLock);
+  fb->release();port->release();power->release();return true;
+ }
+
 	const auto pipe = lease.pipe;
 	if (!lease.path) return true;
 	if (!lease.powerOwned || pipe >= 3 || lease.ddi >= TGLPortCount ||
@@ -16637,72 +16667,59 @@ void *XE::wrapTGLAllocatePathFixed(uint32_t pipe) {
 }
 
 void XE::wrapTGLControllerStop(void *controller, IOService *provider) {
+ auto s=callbackXE;
+ if(!__sync_bool_compare_and_swap(&s->tglStopInProgress,false,true))return;
+ if(__atomic_load_n(&s->tglStopComplete,__ATOMIC_ACQUIRE)) {
+  __atomic_store_n(&s->tglStopInProgress,false,__ATOMIC_RELEASE);return;
+ }
  if(__atomic_load_n(&tglBootstrapAUX.enabled,__ATOMIC_ACQUIRE))__atomic_fetch_add(&tglBootstrapAUX.stopSeen,1,__ATOMIC_RELAXED);
  tglRecordStartOrder(7,controller);
-	auto s = callbackXE;
-	IORecursiveLockLock(s->tglPathPoolLock);
-	s->tglLeasesStopping = true;
-	IORecursiveLockUnlock(s->tglPathPoolLock);
-	// Native resource allocation runs outside the pool lock too. Drain those
-	// FB claims before touching their leases or tearing down the native pool.
-	for (unsigned waited=0;;++waited) {
-        if(s->trainingLeaseValidate && waited==500) {
-            // A void stop cannot cancel an in-flight native call. Keep the
-            // controller/pool alive when refusing teardown; admission is closed.
-            if(__sync_bool_compare_and_swap(&s->tglStopRetained,false,true))static_cast<OSObject *>(controller)->retain();
-            IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13StopBusy",true);return;
-        }
-		IORecursiveLockLock(s->tglPathPoolLock);
-		bool allocating = false;
-		for (auto fb : s->tglAllocatingFB) allocating |= fb != nullptr;
-		IORecursiveLockUnlock(s->tglPathPoolLock);
-		if (!allocating) break;
-		IOSleep(1);
-	}
-	// Block new reservations first, then drain every existing port. Do not hold
-	// the shared pool lock across native power waits or port shutdown.
-	for (auto &lease : s->tglTrainingLeases) {
-		for (unsigned waited=0;;++waited) {
-            if(s->trainingLeaseValidate && waited==500) {
-                // A void stop cannot cancel an in-flight native call. Keep the
-            // controller/pool alive when refusing teardown; admission is closed.
-            if(__sync_bool_compare_and_swap(&s->tglStopRetained,false,true))static_cast<OSObject *>(controller)->retain();
-            IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13StopBusy",true);return;
-            }
-			IORecursiveLockLock(s->tglPathPoolLock);
-			if (!lease.busy) { lease.busy = true; IORecursiveLockUnlock(s->tglPathPoolLock); break; }
-			IORecursiveLockUnlock(s->tglPathPoolLock);
-			IOSleep(1);
-		}
-		if (lease.path && !tglReleaseTrainingLease(lease, true)) {
-			// Native controller teardown owns any still-active path. Never return
-			// it to the pool, or dereference it after native stop destroys it.
-			tglObserveTrainingLease(lease, 9, 1);
-			auto fb = static_cast<OSObject *>(lease.fb), port = static_cast<OSObject *>(lease.port);
-			auto power = static_cast<OSObject *>(lease.power);
-			IORecursiveLockLock(s->tglPathPoolLock);
-			lease.path = lease.port = lease.fb = lease.power = nullptr;
-			lease.powerOwned = false; lease.adopted = false; lease.adoptThread = nullptr;
-			IORecursiveLockUnlock(s->tglPathPoolLock);
-			fb->release(); port->release(); power->release();
-		}
-		if (s->trainingLeaseValidate) {
-			// This stop owns the claim. Admission remains closed; release it so
-			// a later stop can retry if another lease is still in flight.
-			IORecursiveLockLock(s->tglPathPoolLock);
-			lease.busy = false;
-			IORecursiveLockUnlock(s->tglPathPoolLock);
-		}
-	}
-	FunctionCast(wrapTGLControllerStop, s->orgTGLControllerStop)(controller, provider);
- tglRecordStartOrder(8,controller);
- if(__sync_bool_compare_and_swap(&s->tglStopRetained,true,false)) {
-     IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13StopBusy",false);
-     static_cast<OSObject *>(controller)->release();
+ IORecursiveLockLock(s->tglPathPoolLock);
+ s->tglLeasesStopping=true;
+ FramebufferDonor::Call::close(s->framebufferProtocolCalls);
+ __atomic_store_n(&s->framebufferStartedController,static_cast<void *>(nullptr),__ATOMIC_RELEASE);
+ IORecursiveLockUnlock(s->tglPathPoolLock);
+ const auto blocked=[&](unsigned reason) {
+  // The native stop deletes the pool; it cannot finish an unproven WEX
+  // reservation's hardware teardown. Preserve its owner and all held refs.
+  if(__sync_bool_compare_and_swap(&s->tglStopRetained,false,true))static_cast<OSObject *>(controller)->retain();
+  IORegistryEntry::getRegistryRoot()->setProperty("WEXFramebufferStopBlocked",reason,32);
+  __atomic_store_n(&s->tglStopInProgress,false,__ATOMIC_RELEASE);
+ };
+ // Drain native startup/allocation before touching reservations. No pool
+ // lock crosses a wait, hardware transaction or native controller teardown.
+ for(unsigned waited=0;;++waited) {
+  IORecursiveLockLock(s->tglPathPoolLock);
+  bool active=s->framebufferStartInProgress || !FramebufferDonor::Call::drained(s->framebufferProtocolCalls);
+  for(auto fb:s->tglAllocatingFB)active|=fb!=nullptr;
+  IORecursiveLockUnlock(s->tglPathPoolLock);
+  if(!active)break;
+  if(waited==500){blocked(1);return;}
+  IOSleep(1);
  }
+ for(auto &lease:s->tglTrainingLeases) {
+  for(unsigned waited=0;;++waited) {
+   IORecursiveLockLock(s->tglPathPoolLock);
+   if(!lease.busy){lease.busy=true;IORecursiveLockUnlock(s->tglPathPoolLock);break;}
+   IORecursiveLockUnlock(s->tglPathPoolLock);
+   if(waited==500){blocked(1);return;}
+   IOSleep(1);
+  }
+  const bool released=!lease.path || tglReleaseTrainingLease(lease,true);
+  IORecursiveLockLock(s->tglPathPoolLock);lease.busy=false;IORecursiveLockUnlock(s->tglPathPoolLock);
+  if(!released){blocked(2);return;}
+ }
+ FunctionCast(wrapTGLControllerStop,s->orgTGLControllerStop)(controller,provider);
+ tglRecordStartOrder(8,controller);
+ __atomic_store_n(&s->tglStopComplete,true,__ATOMIC_RELEASE);
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXFramebufferStopBlocked",static_cast<uint64_t>(0),32);
+ if(__sync_bool_compare_and_swap(&s->tglStopRetained,true,false))static_cast<OSObject *>(controller)->release();
+ __atomic_store_n(&s->tglStopInProgress,false,__ATOMIC_RELEASE);
 }
 
 uint32_t XE::wrapTGLTrainingBegin(void *controller, void *request) {
+ FramebufferDonor::Call admission(callbackXE->framebufferProtocolCalls);
+ if(!admission){return kIOReturnBusy;}
 	static uint32_t observed {};
 	if (__sync_add_and_fetch(&observed, 1) == 1) tglAUXPublish();
 	auto req = static_cast<uint8_t *>(request);
@@ -16738,6 +16755,8 @@ uint32_t XE::wrapTGLTrainingBegin(void *controller, void *request) {
 }
 
 uint32_t XE::wrapTGLTraining(void *controller, void *request, void *output) {
+ FramebufferDonor::Call admission(callbackXE->framebufferProtocolCalls);
+ if(!admission){return kIOReturnBusy;}
 	auto req = static_cast<uint8_t *>(request);
 	const uint32_t id = req ? *reinterpret_cast<uint32_t *>(req) : 9;
 	uint32_t a = req ? *reinterpret_cast<uint32_t *>(req + 8) : 0;
@@ -16804,6 +16823,8 @@ uint32_t XE::wrapTGLTraining(void *controller, void *request, void *output) {
 }
 
 uint32_t XE::wrapTGLTrainingEnd(void *controller, void *request) {
+ FramebufferDonor::Call admission(callbackXE->framebufferProtocolCalls);
+ if(!admission){return kIOReturnBusy;}
 	auto req = static_cast<uint8_t *>(request);
 	const uint32_t id = req ? *reinterpret_cast<uint32_t *>(req) : 9;
 	uint32_t a = req ? *reinterpret_cast<uint32_t *>(req + 8) : 0, b = 0;
@@ -17048,6 +17069,8 @@ void XE::tglObserveConfig(void *controller, void *request, void *output, bool te
 }
 
 bool XE::wrapTGLAllocatePathResources(void *fb, uint32_t portIndex, uint32_t stream) {
+ FramebufferDonor::Call admission(callbackXE->framebufferProtocolCalls);
+ if(!admission){return false;}
 	SYSLOG("igfx", "TGL330 resources enter ddi=%u stream=%u", portIndex, stream);
 	auto caller = __builtin_return_address(0);
 	tglObserveResource(fb, nullptr, 9, false, 0, portIndex, stream, caller);

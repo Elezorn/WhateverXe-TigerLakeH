@@ -7,16 +7,13 @@ names=['processFramebufferAGDC','wrapFramebufferUserClient','wrapFramebufferAGDC
 functions='\n'.join(re.search(r'(?:bool|uint32_t) XE::'+n+r'\(.*?\n\}',s,re.S).group() for n in names)
 arrays={n:re.search(n+r'\[\]=\{([^}]+)',functions).group(1) for n in ['clientEntry','callbackEntry','dispatch']}
 assert s.count('processFramebufferAGDC(patcher,index,address,size)')==1
-start=s[s.index('bool XE::wrapDisplay13FramebufferStart('):s.index('void XE::wrapAlderLakeNSetupWorkLoop(')]
-invalidate='if(s->tglObservationController==that)s->tglObservationController=nullptr;'
-assert start.index(invalidate)<start.index('orgFramebufferStart')
-assert start.index('if(accepted)')<start.index('s->tglObservationController=that;')
 if len(sys.argv)>1:
  b=Path(sys.argv[1]).read_bytes()
  assert hashlib.sha256(b).hexdigest() in ['c004fc1ac9ee4157e2e12736f40fa6639bde025a279326beeb9dd48c9b445731','8f83afbe21f216ed18ea798c10d91b7b4fd990b62a5740832c1f90137722c32f']
  for key,offset in [('clientEntry',0x273b4),('callbackEntry',0x69df2),('dispatch',0x69e1e)]:
   expected=bytes(int(x,0) for x in arrays[key].split(','));assert b[offset:offset+len(expected)]==expected
 code=r'''
+#include "kern_framebuffer_donor.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -47,13 +44,13 @@ struct KernelPatcher {
 struct XE {
  static XE *callbackXE;bool display13FramebufferRequested=true,display13FBABIReady=true;
  IOService *adlnTopologyController=nullptr,*tglObservationController=nullptr;
+ uint32_t framebufferProtocolCalls=0;void *framebufferStartedController=nullptr;
  uintptr_t orgFramebufferUserClient=0,orgFramebufferAGDCCallback=0;
  bool processFramebufferAGDC(KernelPatcher &,size_t,uintptr_t,size_t);
  static uint32_t wrapFramebufferUserClient(IOService *,void *,void *,uint32_t,void **);
  static uint32_t wrapFramebufferAGDCCallback(IOService *,uint32_t,unsigned long,uint32_t);
  static void observeFramebufferUserClient(IOService*,uint32_t,void**,uint32_t){};
  static void tglTrace(unsigned,unsigned,bool,unsigned,unsigned,unsigned,unsigned long){};
- void restart(IOService *that){auto s=this;INVALIDATE}
 };
 XE *XE::callbackXE;
 FUNCTIONS
@@ -72,13 +69,14 @@ uint32_t originalCallback(IOService *c,uint32_t e,unsigned long a,uint32_t v){
  return fn(Display13FBMemory::field<void*>(c,0x1c00),inc?uint32_t(a+1):a,v,e);
 }
 void reset(XE &s){fb={};controller={};controller.meta.size=0x1c20;clientCalls=0;
+ s.framebufferProtocolCalls=0;s.framebufferStartedController=&controller;
  s.adlnTopologyController=s.tglObservationController=&controller;put(&fb,0x1d0,&controller);put(&controller,0x1bf8,(uintptr_t)receiver);}
 uint32_t open(void **client,unsigned type=0){return XE::wrapFramebufferUserClient(&fb,(void*)0x1234,(void*)0x5678,type,client);}
 void clients(XE &s){
  for(unsigned bad=0;bad<7;++bad){reset(s);
-  switch(bad){case 0:put(&controller,0x1bf8,uintptr_t(0));break;case 1:s.tglObservationController=nullptr;break;
+  switch(bad){case 0:put(&controller,0x1bf8,uintptr_t(0));break;case 1:s.framebufferStartedController=nullptr;break;
    case 2:s.adlnTopologyController=&other;break;case 3:fb.meta.size=0x100;break;case 4:controller.meta.size=0x100;break;
-   case 5:put(&fb,0x1d0,(IOService*)nullptr);break;case 6:s.restart(&controller);break;}
+   case 5:put(&fb,0x1d0,(IOService*)nullptr);break;case 6:FramebufferDonor::Call::close(s.framebufferProtocolCalls);break;}
   auto before=fb;void *client=(void*)1;assert(open(&client)==kIOReturnNotReady&&!client&&!clientCalls);
   assert(!memcmp(&before,&fb,sizeof(fb)));
  }
@@ -128,11 +126,11 @@ int main(int argc,char **argv){
   assert(open(&client)==result&&client==&controller);munmap(mem,length);
   puts("PASS exact donor client tail call, registration and 512 guarded/native event cases");
  }
- puts("PASS production AGDC admission, retry without FB mutation, passthrough, restart invalidation and installer refusals");
+ puts("PASS production AGDC admission, retry without FB mutation, passthrough, start/stop publication and installer refusals");
 }
-'''.replace('FUNCTIONS',functions).replace('INVALIDATE',invalidate)
+'''.replace('FUNCTIONS',functions)
 for old,key in [('CLIENT_ENTRY','clientEntry'),('CALLBACK_ENTRY','callbackEntry'),('DISPATCH','dispatch')]:code=code.replace(old,arrays[key])
 with tempfile.TemporaryDirectory(prefix='display13-agdc-') as d:
  p=Path(d);(p/'test.cpp').write_text(code)
- subprocess.run(['clang++','-arch','x86_64','-std=c++17','-O1','-g','-fsanitize=address,undefined',str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+ subprocess.run(['clang++','-arch','x86_64','-std=c++17','-O1','-g','-fsanitize=address,undefined','-I'+str(r/'WhateverXe'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')]+sys.argv[1:],check=True)

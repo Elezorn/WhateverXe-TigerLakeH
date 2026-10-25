@@ -28,6 +28,7 @@ code=r'''
 #include <iterator>
 #include <cstdio>
 using mach_vm_address_t=uintptr_t;
+void IORecursiveLockLock(void*){}void IORecursiveLockUnlock(void*){}
 struct IOService {void setProperty(const char*,bool) {}};
 struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
@@ -60,10 +61,11 @@ bool xelpInstallNVRAMABI(KernelPatcher&,size_t,uintptr_t,size_t){return nvramOK;
 struct XE {
  bool framebufferDonorAttempted=false,framebufferDonorCommonReady=false,framebufferBackendInstalled=false;
  bool display13FramebufferRequested=false,tglPlatformNVRAMReady=false,tglProbeReady=false,tglFramebufferInitReady=false;
+ void *tglPathPoolLock=(void*)1,*framebufferStartedController=nullptr;bool framebufferStartInProgress=false,tglLeasesStopping=false;
  bool runtimeOK=true,agdcOK=true,backendOK=true,trainingOK=true,framebufferTrainingHooksReady=false;
  uintptr_t orgFramebufferStart=0,orgFramebufferInit=0,orgFramebufferComputeLanes=0,framebufferLaneCaller=0;
  uintptr_t xelpProviderProbe=0x2000,xelpProviderConfigureProbe=0x3000;
- unsigned commonRuntimeCalls=0,backendCalls=0,startCalls=0;
+ unsigned commonRuntimeCalls=0,backendCalls=0,startCalls=0;bool stopDuringStart=false,nativeOK=true;
  bool processFramebufferKext(KernelPatcher&,size_t,uintptr_t,size_t);
  bool processFramebufferCommon(KernelPatcher&,size_t,uintptr_t,size_t);
  bool processFramebufferDonorRuntime(KernelPatcher&,size_t,uintptr_t,size_t){++commonRuntimeCalls;return runtimeOK;}
@@ -80,8 +82,8 @@ struct XE {
  static void wrapTGLProbePort(){}static void wrapFramebufferInit(){}static void wrapFramebufferComputeLanes(){}
 };
 XE *callbackXE;
-bool XE::wrapDisplay13FramebufferStart(IOService*,IOService*){assert(callbackXE->display13FramebufferRequested);++callbackXE->startCalls;return true;}
-bool XE::wrapTGLFramebufferStart(IOService*,IOService*){assert(!callbackXE->display13FramebufferRequested);++callbackXE->startCalls;return true;}
+bool XE::wrapDisplay13FramebufferStart(IOService*,IOService*){assert(callbackXE->display13FramebufferRequested);assert(!callbackXE->framebufferStartedController);if(callbackXE->stopDuringStart)callbackXE->tglLeasesStopping=true;++callbackXE->startCalls;return callbackXE->nativeOK;}
+bool XE::wrapTGLFramebufferStart(IOService*,IOService*){assert(!callbackXE->display13FramebufferRequested);assert(!callbackXE->framebufferStartedController);if(callbackXE->stopDuringStart)callbackXE->tglLeasesStopping=true;++callbackXE->startCalls;return callbackXE->nativeOK;}
 FUNCTIONS
 int main(int argc,char **argv){
  std::vector<uint8_t> image(0x150000);
@@ -93,15 +95,17 @@ int main(int argc,char **argv){
   if(argc>1)assert(!memcmp(image.data()+span.first,span.second.data(),span.second.size()));
   else memcpy(image.data()+span.first,span.second.data(),span.second.size());
  }
- for(bool display13:{false,true})for(unsigned failure=0;failure<11;++failure){
+ for(bool display13:{false,true})for(unsigned failure=0;failure<13;++failure){
   auto b=image;uintptr_t pure=0x1234;memcpy(b.data()+0xccad0+0x188,&pure,sizeof(pure));
   XE x;callbackXE=&x;x.display13FramebufferRequested=display13;KernelPatcher p;
-  surfaceOK=failure!=5;nvramOK=failure!=6;x.runtimeOK=failure!=7;x.agdcOK=failure!=8;x.backendOK=failure!=9;x.trainingOK=failure!=10;
+  surfaceOK=failure!=5;nvramOK=failure!=6;x.runtimeOK=failure!=7;x.agdcOK=failure!=8;x.backendOK=failure!=9;x.trainingOK=failure!=10;x.stopDuringStart=failure==11;x.nativeOK=failure!=12;
   if(failure>=1&&failure<=4)p.failAt=failure;
   bool handled=x.processFramebufferKext(p,1,(uintptr_t)b.data(),b.size());
   assert(handled==(failure!=1));
   IOService c;assert(XE::wrapFramebufferStart(&c,&c)==(failure==0));
-  assert(x.startCalls==(failure==0?1U:0U));
+  assert(x.startCalls==((failure==0||failure==11||failure==12)?1U:0U));
+  assert(x.framebufferStartedController==(failure==0?static_cast<void*>(&c):nullptr));
+  if(failure==0)assert(!XE::wrapFramebufferStart(&c,&c)&&x.startCalls==1);
   const auto calls=p.attempts,backends=x.backendCalls;
   x.processFramebufferKext(p,1,(uintptr_t)b.data(),b.size());
   assert(p.attempts==calls&&x.backendCalls==backends); // no second trampoline
