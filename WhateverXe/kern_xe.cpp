@@ -21,6 +21,7 @@
 #include "kern_display13_tc_lightup.hpp"
 #include "kern_display13_tc_native.hpp"
 #include "kern_display13_port_wait.hpp"
+#include "kern_display13_retirement.hpp"
 #include "kern_display13_tc_clock.hpp"
 #include "kern_display13_tc_dp.hpp"
 #include "kern_framebuffer_training_native.hpp"
@@ -5316,7 +5317,127 @@ bool XE::processDisplay13FramebufferLifecycle(KernelPatcher &patcher,size_t inde
 		!memcmp(reinterpret_cast<void *>(address+0x68C38),removeCall,sizeof(removeCall));
 	KernelPatcher::RouteRequest pathRoute {pathSymbol,wrapAlderLakeNFreePath,orgAlderLakeNFreePath};
 	const bool pathRouted=disableRouted && pathKnown && patcher.routeMultipleShort(index,&pathRoute,1,address,size);
-	patcher.clearError();return pathRouted;
+	patcher.clearError();
+    return pathRouted && (!Display13FBTopology::multiOutputWiring(adlnOutputWiring) ||
+        processDisplay13Retirement(patcher,index,address,size));
+}
+
+// These hooks are installed only for Display13's existing multi-output owner.
+// Keep native startup, StopTransactions, disableDisplay and successful cleanup.
+bool XE::processDisplay13Retirement(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+    using namespace Display13Retirement;
+    const char *freeAll="__ZN21AppleIntelFramebuffer20freeDisplayResourcesEv";
+    const char *allocate="__ZN21AppleIntelFramebuffer24allocateDisplayResourcesEv";
+    const uint8_t freeEntry[]={0x55,0x48,0x89,0xe5,0x53,0x50};
+    const uint8_t allocateEntry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x18};
+    const auto f=patcher.solveSymbol<mach_vm_address_t>(index,freeAll,address,size);patcher.clearError();
+    const auto a=patcher.solveSymbol<mach_vm_address_t>(index,allocate,address,size);patcher.clearError();
+    if(size<=ReleaseCall+sizeof(ReleaseBefore) || f!=address+0x67e8e || a!=address+0x67272 ||
+       memcmp(reinterpret_cast<void *>(f),freeEntry,sizeof(freeEntry)) ||
+       memcmp(reinterpret_cast<void *>(a),allocateEntry,sizeof(allocateEntry)) ||
+       memcmp(reinterpret_cast<void *>(address+Loop),Before,sizeof(Before)) ||
+       memcmp(reinterpret_cast<void *>(address+ReleaseCall),ReleaseBefore,sizeof(ReleaseBefore)))return false;
+    uint8_t after[sizeof(Before)];patch(after,reinterpret_cast<uintptr_t>(retireDisplay13Paths));
+    const struct {uint32_t offset;const uint8_t *before,*after;size_t bytes;} changes[]={
+        {Loop,Before,after,sizeof(Before)},
+        {ReleaseCall,ReleaseBefore,ReleaseAfter,sizeof(ReleaseBefore)}};
+    for(const auto &change:changes) {
+        KernelPatcher::LookupPatch edit{currentFramebuffer,change.before,change.after,change.bytes,1};
+        patcher.applyLookupPatch(&edit,reinterpret_cast<uint8_t *>(address+change.offset),change.bytes+1);
+        const bool ok=patcher.getError()==KernelPatcher::Error::NoError &&
+            !memcmp(reinterpret_cast<void *>(address+change.offset),change.after,change.bytes);
+        patcher.clearError();if(!ok)return false;
+    }
+    // Short prologues end before the native RIP-relative counters.
+    KernelPatcher::RouteRequest routes[]={
+        {freeAll,wrapDisplay13FreeResources,orgDisplay13FreeResources},
+        {allocate,wrapDisplay13AllocateResources,orgDisplay13AllocateResources}};
+    const bool ready=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
+    IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13RetirementReady",ready);
+    return ready;
+}
+
+bool XE::display13RetirementHealthy() {
+    if(!callbackXE->display13FramebufferRequested ||
+       !Display13FBTopology::multiOutputWiring(callbackXE->adlnOutputWiring))return true;
+    auto &c=display13FBPower;if(!c.lock)return false;
+    IOLockLock(c.lock);const bool ok=!c.memoryFaulted && !c.dbuf.faulted;IOLockUnlock(c.lock);
+    return ok;
+}
+
+bool XE::wrapDisplay13AllocateResources(void *fb) {
+    // Failed retirement retains the native allocated flag/path and WEX owner.
+    // Do not start another allocation after a partial native memory cleanup.
+    if(!display13RetirementHealthy())return false;
+    return FunctionCast(wrapDisplay13AllocateResources,callbackXE->orgDisplay13AllocateResources)(fb);
+}
+
+uint32_t XE::retireDisplay13Paths(void *raw) {
+    auto fb=static_cast<IOService *>(raw);auto &c=display13FBPower;
+    const auto fail=[&]() {
+        if(c.lock){IOLockLock(c.lock);adlnFault(c.memoryFaulted,__LINE__);IOLockUnlock(c.lock);}
+        return kIOReturnNotReady;
+    };
+    if(!fb || fb->getMetaClass()->getClassSize()<0x4b90 ||
+       Display13FBMemory::field<void *>(fb,0x1d0)!=c.controller)return fail();
+    auto mutex=Display13FBMemory::field<IORecursiveLock *>(fb,0x4220);if(!mutex)return fail();
+    // The free wrapper already holds controller+0x9b8. Acquire FB only after
+    // native StopTransactions/disableDisplay (whose callbacks also take it).
+    IORecursiveLockLock(mutex);
+    uint32_t error=0;
+    for(unsigned n=0;n<2;++n) {
+        const auto count=Display13FBMemory::field<uint32_t>(fb,0x49e8);
+        if(!count)break;
+        auto path=Display13FBMemory::field<OSObject *>(fb,0x49f0);
+        if(count>2 || !path || path->getMetaClass()->getClassSize()<0x3730 ||
+           Display13FBMemory::field<void *>(path,0x32b0)!=fb ||
+           Display13FBMemory::field<uint32_t>(path,0x3644)==2) {error=fail();break;}
+        error=releaseDisplay13Path(fb,path);
+        if(error || Display13FBMemory::field<uint32_t>(fb,0x49e8)!=count-1) {error=fail();break;}
+    }
+    if(!error && Display13FBMemory::field<uint32_t>(fb,0x49e8))error=fail();
+    IORecursiveLockUnlock(mutex);return error;
+}
+
+uint32_t XE::wrapDisplay13FreeResources(void *raw) {
+    auto fb=static_cast<IOService *>(raw);auto &c=display13FBPower;
+    if(!fb || fb->getMetaClass()->getClassSize()<0x4b90 || !c.controller ||
+       Display13FBMemory::field<void *>(fb,0x1d0)!=c.controller)return kIOReturnNotReady;
+    auto mutex=Display13FBMemory::field<IORecursiveLock *>(c.controller,0x9b8);
+    if(!mutex)return kIOReturnNotReady;
+    IORecursiveLockLock(mutex);
+    const auto before=Display13FBMemory::field<uint32_t>(fb,0x49e8);
+    reinterpret_cast<void (*)(void *)>(callbackXE->orgDisplay13FreeResources)(raw);
+    const auto count=Display13FBMemory::field<uint32_t>(fb,0x49e8);
+    const auto allocated=Display13FBMemory::field<uint8_t>(fb,0x1e7);
+    const auto result=display13RetirementHealthy() && !count && !allocated ? 0U : uint32_t(kIOReturnNotReady);
+    if(result && c.lock){IOLockLock(c.lock);adlnFault(c.memoryFaulted,__LINE__);IOLockUnlock(c.lock);}
+    // The native abort epilogue preserves allocated/path count. The memory
+    // adapter also keeps a sticky fault if suffix cleanup could not finish.
+    IORecursiveLockUnlock(mutex);
+    uint32_t record[]={1,Display13FBMemory::field<uint32_t>(fb,0x1dc),before,count,allocated,result};
+    IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13Retirement",record,sizeof(record));
+    return result;
+}
+
+bool XE::retireDisplay13Controller(void *raw) {
+    auto s=callbackXE;
+    if(!s->display13FramebufferRequested || !Display13FBTopology::multiOutputWiring(s->adlnOutputWiring))return true;
+    auto controller=static_cast<OSObject *>(raw);
+    if(!controller || controller!=display13FBPower.controller || controller->getMetaClass()->getClassSize()<0x1c20 ||
+       !s->orgDisplay13FreeResources || !display13RetirementHealthy())return false;
+    const auto count=Display13FBMemory::field<uint32_t>(controller,0xd5c);if(count>3)return false;
+    for(unsigned i=0;i<count;++i) {
+        auto fb=Display13FBMemory::field<OSObject *>(controller,0xd60+8*i);
+        if(!fb)continue;
+        if(fb->getMetaClass()->getClassSize()<0x4b90 || Display13FBMemory::field<void *>(fb,0x1d0)!=raw)return false;
+        if((Display13FBMemory::field<uint8_t>(fb,0x1e7) || Display13FBMemory::field<uint32_t>(fb,0x49e8)) &&
+           wrapDisplay13FreeResources(fb))return false;
+    }
+    auto &c=display13FBPower;IOLockLock(c.lock);bool clear=!c.memoryFaulted;
+    for(const auto &pipe:c.pipe)clear=clear && !pipe.memoryFramebuffer && !pipe.publishedScanout;
+    for(const auto &slot:display13FBSysMem.slot)clear=clear && !slot.buffer;
+    IOLockUnlock(c.lock);return clear;
 }
 
 bool XE::processDisplay13FramebufferDBUF(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
@@ -8174,10 +8295,10 @@ void XE::wrapAlderLakeNScanoutFree(IOService *fb) {
 }
 // A stopped-pipe release owns only its memory/IRQ/DDB consumers. It does not
 // stop shared CDCLK/engine or destroy the native path/DDI power lease.
-void XE::adlnFreeStoppedPipe(IOService *fb) {
+bool XE::adlnFreeStoppedPipe(IOService *fb) {
     auto &c=display13FBPower;auto &irq=display13FBIRQ;
-    if(!c.lock || !display13FBSysMem.retireLock || !fb || fb->getMetaClass()->getClassSize()<0x4B90)return;
-    auto mutex=Display13FBMemory::field<IORecursiveLock *>(fb,0x4220);if(!mutex)return;
+    if(!c.lock || !display13FBSysMem.retireLock || !fb || fb->getMetaClass()->getClassSize()<0x4B90)return false;
+    auto mutex=Display13FBMemory::field<IORecursiveLock *>(fb,0x4220);if(!mutex)return false;
     IORecursiveLockLock(mutex);IORecursiveLockLock(display13FBSysMem.retireLock);IOLockLock(c.lock);
     const auto pipe=Display13FBMemory::boundPipe(c.pipe,fb);
     uint64_t record[24] {1,pipe};bool freed=false,held=false;uint32_t master=0,blocked=0;bool enabled=false;
@@ -8275,18 +8396,19 @@ void XE::adlnFreeStoppedPipe(IOService *fb) {
     record[19]=pool.state;record[20]=binding.ddi;record[21]=held;record[22]=c.dbuf.consumers;record[23]=c.dbuf.unretired;
     IOLockUnlock(c.lock);IORecursiveLockUnlock(display13FBSysMem.retireLock);IORecursiveLockUnlock(mutex);
     adlnPublishMemory("N97FBStoppedMemoryFree",pipe,record,sizeof(record));
+    return freed;
 }
 
-void XE::wrapAlderLakeNFreePath(IOService *fb,OSObject *path) {
+uint32_t XE::releaseDisplay13Path(IOService *fb,OSObject *path) {
     if(!Display13FBTopology::multiOutputWiring(callbackXE->adlnOutputWiring)) {
-        FunctionCast(wrapAlderLakeNFreePath,callbackXE->orgAlderLakeNFreePath)(fb,path);return;
+        FunctionCast(wrapAlderLakeNFreePath,callbackXE->orgAlderLakeNFreePath)(fb,path);return 0;
     }
     auto &c=display13FBPower;
     if(!c.lock || !fb || !path || fb->getMetaClass()->getClassSize()<0x4B90 || path->getMetaClass()->getClassSize()<0x3730) {
-        FunctionCast(wrapAlderLakeNFreePath,callbackXE->orgAlderLakeNFreePath)(fb,path);return;
+        return kIOReturnNotReady;
     }
     auto mutex=Display13FBMemory::field<IORecursiveLock *>(fb,0x4220);
-    if(!mutex) {FunctionCast(wrapAlderLakeNFreePath,callbackXE->orgAlderLakeNFreePath)(fb,path);return;}
+    if(!mutex) {return kIOReturnNotReady;}
     fb->retain();path->retain();IORecursiveLockLock(mutex);
     uint64_t record[16] {1};bool released=false,detached=false;IOService *withdrawn=nullptr;
     IOLockLock(c.lock);const auto pipe=Display13FBMemory::boundPipe(c.pipe,fb);
@@ -8296,12 +8418,12 @@ void XE::wrapAlderLakeNFreePath(IOService *fb,OSObject *path) {
     const auto countOffset=Display13FBMemory::pathCountOffset(fb);
     record[4]=countOffset ? Display13FBMemory::field<uint32_t>(fb,countOffset) : UINT32_MAX;
     IOLockUnlock(c.lock);
-    if(selected)adlnFreeStoppedPipe(fb);
+    const bool memoryReleased=!selected || adlnFreeStoppedPipe(fb);
     IOLockLock(c.lock);
     if(selected) {
         c.pipe[pipe].destroyingPath=true;
         bool pinned=false;for(const auto &stored:display13FBSysMem.slot)if(stored.framebuffer==fb && stored.buffer)pinned=true;
-        released=!c.memoryFaulted && Display13FBMemory::field<uint8_t>(fb,0x4288)==0xFF &&
+        released=memoryReleased && !c.memoryFaulted && Display13FBMemory::field<uint8_t>(fb,0x4288)==0xFF &&
             !Display13FBMemory::field<uintptr_t>(fb,0x4348) && !pinned && !c.pipe[pipe].publishedScanout;
         if(released) {
             Display13FBDBUFIO io {c.map};const auto status=Display13DBUF::detach(io,c.dbuf,pipe);
@@ -8309,9 +8431,14 @@ void XE::wrapAlderLakeNFreePath(IOService *fb,OSObject *path) {
         }
     }
     IOLockUnlock(c.lock);
-    // Native freeDisplayResources loops until path count decreases. Always
-    // preserve original path release, including memory-retire failure; backing
-    // stays pinned/faulted instead of forging path-count progress or spinning.
+    // The enclosing native loop now handles refusal. Never discard the path
+    // association while WEX still owns its backing or DDB reservation.
+    if((pipe<3 && !selected) || (selected && (!released || !detached))) {
+        IOLockLock(c.lock);
+        if(pipe<3)c.pipe[pipe].destroyingPath=false;
+        adlnFault(c.memoryFaulted,__LINE__);IOLockUnlock(c.lock);
+        IORecursiveLockUnlock(mutex);path->release();fb->release();return kIOReturnNotReady;
+    }
     FunctionCast(wrapAlderLakeNFreePath,callbackXE->orgAlderLakeNFreePath)(fb,path);
     IOLockLock(c.lock);
     record[6]=countOffset ? Display13FBMemory::field<uint32_t>(fb,countOffset) : UINT32_MAX;
@@ -8332,6 +8459,11 @@ void XE::wrapAlderLakeNFreePath(IOService *fb,OSObject *path) {
     IOLockUnlock(c.lock);IORecursiveLockUnlock(mutex);
     OSSafeReleaseNULL(withdrawn);path->release();fb->release();
     adlnPublishMemory("N97FBPathFree",pipe,record,sizeof(record));
+    return selected && !removed ? kIOReturnNotReady : 0;
+}
+
+void XE::wrapAlderLakeNFreePath(IOService *fb,OSObject *path) {
+    (void)releaseDisplay13Path(fb,path);
 }
 
 IOMemoryDescriptor *XE::wrapAlderLakeNAperture(IOService *fb,int apertureIndex) {
@@ -16751,6 +16883,7 @@ void XE::wrapTGLControllerStop(void *controller, IOService *provider) {
   IORecursiveLockLock(s->tglPathPoolLock);lease.busy=false;IORecursiveLockUnlock(s->tglPathPoolLock);
   if(!released){blocked(2);return;}
  }
+ if(!retireDisplay13Controller(controller)){blocked(3);return;}
  FunctionCast(wrapTGLControllerStop,s->orgTGLControllerStop)(controller,provider);
  tglRecordStartOrder(8,controller);
  __atomic_store_n(&s->tglStopComplete,true,__ATOMIC_RELEASE);
@@ -17111,6 +17244,7 @@ void XE::tglObserveConfig(void *controller, void *request, void *output, bool te
 }
 
 bool XE::wrapTGLAllocatePathResources(void *fb, uint32_t portIndex, uint32_t stream) {
+ if(!display13RetirementHealthy())return false;
  FramebufferDonor::Call admission(callbackXE->framebufferProtocolCalls);
  if(!admission){return false;}
 	SYSLOG("igfx", "TGL330 resources enter ddi=%u stream=%u", portIndex, stream);

@@ -303,9 +303,17 @@ private:
 	static bool wrapAlderLakeNScanoutAllocate(IOService *framebuffer);
 	static void wrapAlderLakeNScanoutSetup(IOService *framebuffer);
 	static void wrapAlderLakeNScanoutFree(IOService *framebuffer);
-	static void adlnFreeStoppedPipe(IOService *framebuffer);
+	static bool adlnFreeStoppedPipe(IOService *framebuffer);
 	static void wrapAlderLakeNFreePath(IOService *framebuffer,OSObject *path);
 	mach_vm_address_t orgAlderLakeNFreePath {};
+    bool processDisplay13Retirement(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+    mach_vm_address_t orgDisplay13FreeResources {},orgDisplay13AllocateResources {};
+    static uint32_t releaseDisplay13Path(IOService *,OSObject *);
+    static uint32_t retireDisplay13Paths(void *);
+    static uint32_t wrapDisplay13FreeResources(void *);
+    static bool wrapDisplay13AllocateResources(void *);
+    static bool display13RetirementHealthy();
+    static bool retireDisplay13Controller(void *);
 	mach_vm_address_t orgAlderLakeNScanoutFree {};
 	static IOMemoryDescriptor *wrapAlderLakeNAperture(IOService *framebuffer,int aperture);
 	static void wrapAlderLakeNSetupWorkLoop(IOService *controller,IOWorkLoop *workLoop);

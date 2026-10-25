@@ -46,6 +46,8 @@ template<class... T> void tglObserveResource(T...) {}
 void tglAUXPublish() {}
 void tglDPCDPublish() {}
 struct XE {
+ static bool display13RetirementHealthy(){return true;}
+ static bool retireDisplay13Controller(void*){return true;}
  bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;
  // TC_WIRING_FIELDS
  // LEASE_FIELDS
