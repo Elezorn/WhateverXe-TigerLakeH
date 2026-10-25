@@ -395,6 +395,8 @@ private:
  bool tglHDMIWiringLoaded {},tglHDMIWiringExplicit {},tglHDMIWiringApplied {};
  uint32_t tglHDMIBackendMask {3}; // TGL-U combo PHY A/B; C is absent
  static bool tglLoadHDMIWiring(IOService *provider);
+ static bool adlsPrepareBoot(IOService *provider);
+ bool adlsBootConsumersFailed {false};
  bool tglHDMIEligible(const uint32_t *config) const {return tglHDMIWiringApplied && (adlsDisplaySelected?adlsWiring.matches(config,false):tglHDMIWiring.matches(config));}
  bool tglHDMIDDCEligible(uint32_t pin) const {return tglHDMIWiringApplied && (adlsDisplaySelected?adlsWiring.usesDDC(pin):tglHDMIWiring.usesDDC(pin));}
 

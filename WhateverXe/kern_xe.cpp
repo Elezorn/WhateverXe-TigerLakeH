@@ -40,6 +40,7 @@
 #include "kern_tgl_training_scope.hpp"
 #include "kern_tgl_port_map.hpp"
 #include "kern_adls_clock.hpp"
+#include "kern_adls_boot.hpp"
 #include "kern_tgl_combo_signal.hpp"
 #include "kern_tgl_panel_depth.hpp"
 #include "kern_xelp_panel_power.hpp"
@@ -12936,6 +12937,37 @@ XELP::DisplayContract::Mask XE::display13Available() const {
  return a;
 }
 
+// Run once before native start creates any path, IRQ or power owner.
+// Subsequent starts must never reinterpret an OS-owned pipe as firmware GOP.
+bool XE::adlsPrepareBoot(IOService *provider) {
+ auto self=callbackXE;
+ if(!self->adlsDisplaySelected)return true;
+ static uint32_t stage {};static bool accepted {};
+ if(__sync_val_compare_and_swap(&stage,0,1)!=0)return stage==2 && accepted;
+ AlderLakeS::Boot::Result result;
+ auto pci=OSDynamicCast(IOPCIDevice,provider);
+ if(pci && XELP::deviceProfile(pci).identity==self->xeProfile.identity && (pci->configRead16(4)&2)) {
+  auto map=pci->mapDeviceMemoryWithRegister(0x10,kIOMapInhibitCache);
+  if(map && map->getVirtualAddress() && map->getLength()==0x1000000) {
+   struct IO {
+    volatile uint8_t *base;
+    bool readable(uint32_t reg){return reg<=0xFFFFFC;}
+    uint32_t read(uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);}
+    void write(uint32_t reg,uint32_t value){*reinterpret_cast<volatile uint32_t *>(base+reg)=value;}
+    void delay(){IODelay(100);}
+   } io {reinterpret_cast<volatile uint8_t *>(map->getVirtualAddress())};
+   result=AlderLakeS::Boot::prepare(io,true,self->adlsWiring);
+  }
+  if(map)map->release();
+ }
+ // Unclassified firmware remains untouched. The live training guard still
+ // rejects it. A partially retired pipe must not enter native startup.
+ accepted=!result.writes || result.status==AlderLakeS::Boot::Status::Complete;
+ __atomic_store_n(&self->adlsBootConsumersFailed,!accepted,__ATOMIC_RELEASE);
+ IORegistryEntry::getRegistryRoot()->setProperty("ADLSBootConsumers",&result,sizeof(result));
+ __atomic_store_n(&stage,2,__ATOMIC_RELEASE);return accepted;
+}
+
 bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  if((callbackXE->display12SmallGTDetected && !callbackXE->display12SmallGTReady) ||
     (callbackXE->adlsDisplaySelected && !callbackXE->adlsDisplayHooksReady)) {
@@ -12990,6 +13022,8 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
   IORegistryEntry::getRegistryRoot()->setProperty("TGLFramebufferStartBlockedByVtable",true);
   return false;
  }
+
+ if(!adlsPrepareBoot(provider))return false;
 
  // r88: use the native provider-workloop mode so IRQ registration does not
  // depend on a WindowServer framebuffer open after accelerator startup.
@@ -13075,7 +13109,8 @@ uint32_t XE::wrapTGLLaneMask(void *port) {
 
 bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
  if((callbackXE->display12SmallGTDetected && !callbackXE->display12SmallGTReady) ||
-    (callbackXE->adlsDisplaySelected && !callbackXE->adlsDisplayHooksReady))return false;
+    (callbackXE->adlsDisplaySelected && (!callbackXE->adlsDisplayHooksReady ||
+     __atomic_load_n(&callbackXE->adlsBootConsumersFailed,__ATOMIC_ACQUIRE))))return false;
  if (callbackXE->adlnDetected && adlnNativeRCSProfileRequested && !adlnNativeRCSProfileReady) {
   SYSLOG("igfx", "AlderLakeN native RCS profile qualification rejected accelerator start");
   return false;
@@ -16772,6 +16807,14 @@ uint32_t XE::tglPrepareTrainingLease(void *controller, TGLTrainingLease &lease) 
 	const uint32_t buffer = *reinterpret_cast<volatile uint32_t *>(mmio + (0x64000 + 0x100 * lease.ddi)); // physical port, not pipe-indexed
 	const uint32_t pipeState = *reinterpret_cast<volatile uint32_t *>(mmio + 0x70008 + 0x1000*pipe);
 	if (((func | tp | buffer) & 0x80000000U) || (clock & 0xF0000000U) || (pipeState & 0xC0000000U)) {
+        // Temporary diagnosis: report the guard's existing powered reads once
+        // per port. No extra MMIO or power lifetime is introduced.
+        static uint32_t guardObserved {};
+        if (!(__sync_fetch_and_or(&guardObserved,1U<<lease.ddi) & (1U<<lease.ddi))) {
+            uint32_t values[] {1,lease.ddi,pipe,clock,func,tp,buffer,pipeState};
+            char key[40];snprintf(key,sizeof(key),"TGLTrainingGuard%u",lease.ddi);
+            IORegistryEntry::getRegistryRoot()->setProperty(key,values,sizeof(values));
+        }
 		// No training register was changed. Drop only this reservation and its
 		// power reference; never restore over unexpected live hardware.
 		tglObserveTrainingLease(lease, 0, 5);
