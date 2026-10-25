@@ -21,6 +21,7 @@
 #include "kern_xelp_panel_pwm.hpp"
 #include "kern_xelp_donor.hpp"
 #include "kern_xelp_display_contract.hpp"
+#include "kern_xelp_link_requirements.hpp"
 
 #include "kern_dvmt.hpp"
 #include <Headers/kern_patcher.hpp>
@@ -610,6 +611,9 @@ private:
  bool framebufferHDMIEligible(const uint32_t *) const;
  static void observeFramebufferUserClient(void *,uint32_t,void **,uint32_t);
  bool framebufferDonorRuntimeReady {};
+ static XELP::LinkRequirements framebufferLinkRequirements(void *,uint32_t);
+ static uint32_t framebufferPortWaitPolls(void *);
+ bool processFramebufferPortWait(KernelPatcher &,size_t,mach_vm_address_t,size_t);
  bool processFramebufferDonorRuntime(KernelPatcher &,size_t,mach_vm_address_t,size_t);
 	mach_vm_address_t orgTGLHDCP2Init {};
 	static bool wrapTGLHDCP2Init(void *hdcp, void *path);

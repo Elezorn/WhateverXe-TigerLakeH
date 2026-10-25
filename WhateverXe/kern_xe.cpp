@@ -20,7 +20,8 @@
 #include "kern_display13_tc_mode.hpp"
 #include "kern_display13_tc_lightup.hpp"
 #include "kern_display13_tc_native.hpp"
-#include "kern_display13_port_wait.hpp"
+#include "kern_xelp_port_wait.hpp"
+#include "kern_xelp_link_requirements.hpp"
 #include "kern_display13_retirement.hpp"
 #include "kern_display13_tc_clock.hpp"
 #include "kern_display13_tc_dp.hpp"
@@ -6418,9 +6419,11 @@ uint32_t XE::wrapDisplay13TCMode(OSObject *port,uint32_t wanted) {
     const auto tc=ddi-3;auto &mode=c.tcMode[tc];
     if(!c.tcObject[tc]){c.tcObject[tc]=port;port->retain();}
     struct IO : Display13FBTCIO {
-        uint32_t (*base)(OSObject *,uint32_t);bool firmware;
-        IO(OSObject *p,unsigned t,uint32_t (*f)(OSObject *,uint32_t),bool inherited):Display13FBTCIO(p,t),base(f),firmware(inherited) {}
-        bool admissionReady(){return base && admitted(tc);}
+        using Preparation=XELP::LinkRequirements::Preparation;
+        uint32_t (*base)(OSObject *,uint32_t);Preparation preparation;
+        IO(OSObject *p,unsigned t,uint32_t (*f)(OSObject *,uint32_t),Preparation selected):Display13FBTCIO(p,t),base(f),preparation(selected) {}
+        bool admissionReady(){return base && admitted(tc) &&
+            (preparation==Preparation::ColdTC13 || preparation==Preparation::FirmwareTC13);}
         uint32_t nativeMode(){return Display13FBMemory::field<uint32_t>(object,0x550);}
         uint32_t nativeSetMode(uint32_t value) {
             // mode0 invokes the native reset callback. Retain this exact port
@@ -6439,7 +6442,7 @@ uint32_t XE::wrapDisplay13TCMode(OSObject *port,uint32_t wanted) {
                 port==reinterpret_cast<uintptr_t>(object) && d==tc+3 && Display13FBTCIO::accessHeld();
         }
         bool inheritedVerified(uintptr_t controller,uintptr_t port,unsigned d) {
-            return firmware && controller==reinterpret_cast<uintptr_t>(display13FBPower.controller) &&
+            return preparation==Preparation::FirmwareTC13 && controller==reinterpret_cast<uintptr_t>(display13FBPower.controller) &&
                 port==reinterpret_cast<uintptr_t>(object) && d==tc+3;
         }
         bool quiescent(uintptr_t controller,uintptr_t port,unsigned d) {
@@ -6464,7 +6467,8 @@ uint32_t XE::wrapDisplay13TCMode(OSObject *port,uint32_t wanted) {
         const auto source=AlderLakeN::readDisplay(bootIO,true);
         inherited=source.activePipes==1 && AlderLakeN::dpSourceUnchanged(bootIO,source,0,ddi,0,&boot);
     }
-    IO io{port,tc,reinterpret_cast<uint32_t (*)(OSObject *,uint32_t)>(self->display13TCBaseMode),inherited};
+    const auto preparation=framebufferLinkRequirements(port,4).preparation(inherited);
+    IO io{port,tc,reinterpret_cast<uint32_t (*)(OSObject *,uint32_t)>(self->display13TCBaseMode),preparation};
     const auto owner=reinterpret_cast<uintptr_t>(c.controller),object=reinterpret_cast<uintptr_t>(port);
     const auto result=wanted?mode.connect(io,owner,object,ddi):mode.disconnect(io,owner,object,ddi);
     const bool done=result.status==Display13TC::Status::Complete;
@@ -7128,19 +7132,6 @@ bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach
     memcmp(reinterpret_cast<void *>(address+0x60EB9),pcsABI,sizeof(pcsABI)) ||
     memcmp(reinterpret_cast<void *>(address+0x61468),lanesABI,sizeof(lanesABI)) ||
     memcmp(reinterpret_cast<void *>(address+0x61478),successABI,sizeof(successABI)))return false;
- // Correct only the admitted Display13 native post-write wait. Native port
- // ownership, DP stagger callsite, failure return and cleanup remain intact.
- using namespace Display13PortWait;
- const auto wait=reinterpret_cast<uint8_t *>(address+WaitOffset);
- if(!waitKnown(wait,sizeof(WaitBefore)))return false;
- uint8_t before[sizeof(WaitBefore)],after[sizeof(WaitBefore)];
- memcpy(before,wait,sizeof(before));Display13PortWait::patch(after,before);
- KernelPatcher::LookupPatch waitPatch{currentFramebuffer,before,after,sizeof(after),1};
- patcher.applyLookupPatch(&waitPatch,wait,sizeof(after)+1);
- const bool waitReady=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(wait,after,sizeof(after));
- patcher.clearError();if(!waitReady)return false;
- uint32_t budgets[]={1,1000,3000};
- IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13PortWaitBudget",budgets,sizeof(budgets));
  KernelPatcher::RouteRequest routes[] {
   {pattern,wrapDisplay13TrainingPattern,orgDisplay13TrainingPattern},
   {signal,wrapDisplay13SignalLevels,orgDisplay13SignalLevels},
@@ -11424,6 +11415,59 @@ bool XE::wrapFramebufferComputeLanes(void *argument,const void *timing,uint32_t 
  return native || corrected;
 }
 
+XELP::LinkRequirements XE::framebufferLinkRequirements(void *port,uint32_t mode) {
+ auto self=callbackXE;auto p=static_cast<uint8_t *>(port);
+ XELP::LinkRequirements req;
+ if(!p)return req;
+ auto config=Display13FBMemory::field<uint32_t *>(p,0x548);
+ if(!config || config[0]>=9 || p[0x117] ||
+    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] ||
+    Display13FBMemory::field<uint32_t>(p,0x590)!=0x64000+0x100*config[0])return req;
+ const auto ddi=config[0];
+ using R=XELP::LinkRequirements;
+ if(self->display13FramebufferRequested) {
+  if(!Display13FBTopology::selected(self->adlnPlatform,config,self->adlnOutputWiring) ||
+     mode!=(ddi>=3?4U:1U))return req;
+  req={self->xeProfile.display,ddi>=3?R::PHY::TC:R::PHY::Combo,
+   (self->adlnOutputWiring.dp&(1U<<ddi))?R::Protocol::FixedDP:R::Protocol::HDMI};
+ } else {
+  // ADL-S TC-numbered DDIs are Combo; native mode alone is not a PHY ID.
+  const bool bound=config==reinterpret_cast<const uint32_t *>(self->tglPlatformCopy+0x20+24*ddi);
+  if(!bound)return req;
+  if(mode==1 && self->tglHDMIEligible(config))
+   req={self->xeProfile.display,R::PHY::Combo,R::Protocol::HDMI};
+  else {
+   const auto route=self->tglSSTRoutes().external(ddi,mode);
+   using T=XELP::Display12SSTRoute::Transport;
+   if(config[2]==1 && (route.transport==T::Combo || route.transport==T::DekelLegacy))
+    req={self->xeProfile.display,route.transport==T::Combo?R::PHY::Combo:R::PHY::TC,R::Protocol::FixedDP};
+  }
+ }
+ return req;
+}
+
+uint32_t XE::framebufferPortWaitPolls(void *port) {
+ if(!port)return 100;
+ return framebufferLinkRequirements(port,Display13FBMemory::field<uint32_t>(port,0x550)).activePolls();
+}
+
+bool XE::processFramebufferPortWait(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ using namespace XELPPortWait;
+ const char *symbol="__ZN17AppleIntelPortHAL10enablePortEv";
+ const auto enable=patcher.solveSymbol<mach_vm_address_t>(index,symbol,address,size);patcher.clearError();
+ if(size<WaitOffset+sizeof(WaitBefore)+1 || enable!=address+0x5f9f4)return false;
+ auto wait=reinterpret_cast<uint8_t *>(address+WaitOffset);
+ if(!waitKnown(wait,sizeof(WaitBefore)))return false;
+ uint8_t before[sizeof(WaitBefore)],after[sizeof(WaitBefore)];
+ memcpy(before,wait,sizeof(before));XELPPortWait::patch(after,before,reinterpret_cast<uintptr_t>(framebufferPortWaitPolls));
+ KernelPatcher::LookupPatch change{currentFramebuffer,before,after,sizeof(after),1};
+ patcher.applyLookupPatch(&change,wait,sizeof(after)+1);
+ const bool ready=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(wait,after,sizeof(after));
+ patcher.clearError();
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXExternalLinkWaitReady",ready);
+ return ready;
+}
+
 bool XE::processFramebufferDonorRuntime(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
  if(framebufferDonorRuntimeReady)return true;
  bool hdcpReady=false,meiReady=false;
@@ -11498,7 +11542,8 @@ bool XE::processFramebufferDonorRuntime(KernelPatcher &patcher,size_t index,mach
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLMEITXFIFOReadbackR364", known);
 				patcher.clearError();
 			}
- framebufferDonorRuntimeReady=hdcpReady && tglPanelPowerPropertyReady && meiReady;
+ framebufferDonorRuntimeReady=hdcpReady && tglPanelPowerPropertyReady && meiReady &&
+  processFramebufferPortWait(patcher,index,address,size);
  IORegistryEntry::getRegistryRoot()->setProperty("WEXFramebufferDonorRuntimeReady",framebufferDonorRuntimeReady);
  return framebufferDonorRuntimeReady;
 }
@@ -15411,8 +15456,12 @@ uint32_t XE::wrapTGLSetPortMode(void *port, uint32_t mode) {
   if(transitionLock)IORecursiveLockUnlock(transitionLock);
   return kIOReturnNotReady;
  }
+ // Select fixed-link requirements after the existing native admission. Native
+ // owns cold/GOP mode acquisition on Display12, with our mapped FIA accesses.
+ using LR=XELP::LinkRequirements;
+ const LR fixed{self->xeProfile.display,self->tglLegacyTCEligible(traceDDI)?LR::PHY::TC:LR::PHY::None,LR::Protocol::FixedDP};
  const bool fiaEligible=dpAltTransaction || ((mode==0 || mode==4) && traceDDI<9 &&
-  (previousMode==0 || previousMode==4) && self->tglLegacyTCEligible(traceDDI));
+  (previousMode==0 || previousMode==4) && fixed.preparation(false)==LR::Preparation::NativeTC12);
  TGLNativeFiaScope fiaScope(self->tglNativeFiaContext,reinterpret_cast<uintptr_t>(current_thread()),fiaEligible?port:nullptr,
   traceDDI,transitionLock && self->tglNativeFiaReady);
 	auto result = FunctionCast(wrapTGLSetPortMode, callbackXE->orgTGLSetPortMode)(port, mode);
@@ -18755,37 +18804,7 @@ uint32_t XE::wrapTGLEnablePort(void *port) {
 	const auto original = FunctionCast(wrapTGLEnablePort, callbackXE->orgTGLEnablePort)(port);
 	if(original)tglComboAUXReference(port,false); // only releases if buffer stayed off
 	auto r = original;
-	// The donor only waits 100 * 5us. Linux allows 3ms for TGL TC PHYs.
-	// Observe another bounded 3ms and accept only a real enabled/non-idle state.
-	auto bytes = static_cast<uint8_t *>(port);
-	TGLTypeCPort mapping;
-	if (callbackXE->tglLegacyTCEligible(id) && TGLTypeCPort::resolve(id, mapping) &&
-		original == 0xE00002D6 &&
-		*reinterpret_cast<uint32_t *>(bytes + 0x550) == 4 &&
-		*reinterpret_cast<uint32_t *>(bytes + 0x590) == mapping.ddiBuffer) {
-		auto access = *reinterpret_cast<uint8_t **>(bytes + 0x578);
-		auto base = access ? *reinterpret_cast<volatile uint8_t **>(access + 0x50) : nullptr;
-		if (base && *reinterpret_cast<uint32_t *>(access + 0x60) >= mapping.ddiBuffer + 4) {
-			auto reg = reinterpret_cast<volatile uint32_t *>(base + mapping.ddiBuffer);
-			uint32_t before = *reg, after = before, delay = 0;
-			while (delay < 3000 && after != 0xFFFFFFFFU && (after & 0x80000080U) == 0x80000080U) {
-				IODelay(100);
-				delay += 100;
-				after = *reg;
-			}
-			if ((after & 0x80000080U) == 0x80000000U) r = 0;
-			static uint32_t count {};
-			const auto seq = __sync_add_and_fetch(&count, 1);
-			uint32_t record[] = {seq, original, r, delay, before, after, mapping.ddi};
-			char key[48];
-			snprintf(key, sizeof(key), "TGLEnableLate%uLast%u", mapping.ddi, seq % 64);
-			IORegistryEntry::getRegistryRoot()->setProperty(key, record, sizeof(record));
-			if (seq <= 16) {
-				snprintf(key, sizeof(key), "TGLEnableLate%uFirst%u", mapping.ddi, seq);
-				IORegistryEntry::getRegistryRoot()->setProperty(key, record, sizeof(record));
-			}
-		}
-	}
+	// Activation waiting is installed once in the native donor loop.
 	tglSnapshotTransmitter(port, true, r);
 	tglTrace(21, id, true, original, 0, r, 0);
 	return r;

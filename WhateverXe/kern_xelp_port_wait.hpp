@@ -1,10 +1,10 @@
-// Exact c004fc1a Display13 DDI activation wait. Keep native MMIO and return paths.
-#ifndef KERN_DISPLAY13_PORT_WAIT_HPP
-#define KERN_DISPLAY13_PORT_WAIT_HPP
+// Exact c004fc1a DDI activation wait for admitted Display12/13 external links. Keep native MMIO and return paths.
+#ifndef KERN_XELP_PORT_WAIT_HPP
+#define KERN_XELP_PORT_WAIT_HPP
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
-namespace Display13PortWait {
+namespace XELPPortWait {
 constexpr uint32_t WaitOffset=0x5fba0;
 constexpr uint8_t WaitBefore[]={
  0xbb,0x64,0x00,0x00,0x00,0x48,0xff,0x05,0xac,0x2d,0x08,0x00,0x48,0xff,0x05,0xbd,0x2d,0x08,0x00,
@@ -18,17 +18,15 @@ inline bool waitKnown(const uint8_t *p,size_t n) {
     return true;
 }
 
-inline void patch(uint8_t (&out)[sizeof(WaitBefore)],const uint8_t *before) {
+// The callback runs after the native buffer write, before its first poll.
+// Native mode/clock writes, return PC and timeout propagation remain intact.
+inline void patch(uint8_t (&out)[sizeof(WaitBefore)],const uint8_t *before,uintptr_t select) {
     memcpy(out,before,sizeof(out));
-    // Display13 admitted DDIs 0/1 are Combo; 3..6 are TC (both HDMI and DP).
-    // Linux v6.12 intel_wait_ddi_buf_active: Combo 1000us, TC 3000us.
-    // Keep native 5us polling: 200 or 600 iterations. Replace only the
-    // initial count and two profiling increments; the write return PC stays.
-    // mov ebx,200; cmp dword [r15+0x120],3; jb +4; mov bx,600
-    const uint8_t init[]={0xbb,0xc8,0,0,0,0x41,0x83,0xbf,0x20,0x01,0,0,0x03,0x72,0x04,0x66,0xbb,0x58,0x02};
-    memcpy(out,init,sizeof(init));
-    // Loop directly to the original read, never reinitialize the count.
-    out[51]=0xdf; // jne 0x5fbb3 from 0x5fbd2
+    // mov rdi,r15; movabs rax,select; call rax; mov ebx,eax; nop; nop
+    // The donor already aligns its stack for calls here; r15 owns the port.
+    const uint8_t init[]={0x4c,0x89,0xff,0x48,0xb8,0,0,0,0,0,0,0,0,0xff,0xd0,0x89,0xc3,0x90,0x90};
+    memcpy(out,init,sizeof(init));memcpy(out+5,&select,sizeof(select));
+    out[51]=0xdf; // jne original read, without reinitializing the count
 }
 }
 #endif

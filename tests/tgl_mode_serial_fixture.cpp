@@ -1,6 +1,8 @@
 #include "kern_alderlake_s.hpp"
 #include <cassert>
 #include "kern_tgl_native_fia.hpp"
+#include "kern_xelp_link_requirements.hpp"
+#include "kern_xelp_platform.hpp"
 #include <thread>
 void *current_thread(){thread_local char token;return &token;}
 #include <cstdint>
@@ -27,6 +29,7 @@ void tglAUXRecord(void*,unsigned,bool,uint32_t,uint32_t,uint32_t){}
 bool coldReady=true;
 bool tglDPAltColdReady(void*){return coldReady;}
 struct XE {
+ XELP::Profile xeProfile=XELP::identify(0x9a498086,1);
  bool adlsDisplaySelected=false;AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
  uint32_t tglDPAltCandidates=0;void *tglObservationController=nullptr;
  uint32_t tglTCAutoRegistered=0,tglTCAutoCandidates=0x10,tglAUXParentMask=0x18;
