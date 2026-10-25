@@ -1,8 +1,8 @@
 // Exact c004fc1a donor interfaces for pre-modeset SST training and adoption.
-#ifndef KERN_DISPLAY13_TRAINING_NATIVE_HPP
-#define KERN_DISPLAY13_TRAINING_NATIVE_HPP
+#ifndef KERN_FRAMEBUFFER_TRAINING_NATIVE_HPP
+#define KERN_FRAMEBUFFER_TRAINING_NATIVE_HPP
 #include <stdint.h>
-namespace Display13TrainingNative {
+namespace FramebufferTrainingNative {
 enum Index {Begin,Train,End,AllocateAny,AllocateFixed,Free,Add,Resources,Stop,PortTrain,Lookup,Port};
 struct Entry {const char *symbol;uint32_t offset;uint8_t prefix[16];};
 static constexpr Entry entries[]={

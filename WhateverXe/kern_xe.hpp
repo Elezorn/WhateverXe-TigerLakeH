@@ -200,14 +200,12 @@ private:
 	// describe installed routes, not successful runtime ownership or scanout.
 	bool display13FBPowerBackendReady {false};
 	bool display13FBClockReady {false}, display13FBIRQReady {false}, display13FBMemoryReady {false}, display13FBABIReady {false};
-	mach_vm_address_t orgDisplay13FramebufferStart {}, orgAlderLakeNPowerReferences[7] {};
+	mach_vm_address_t orgAlderLakeNPowerReferences[7] {};
 	mach_vm_address_t orgAlderLakeNClockInit {}, orgAlderLakeNClockProbe {};
 	mach_vm_address_t orgAlderLakeNClockSet {};
 	mach_vm_address_t orgAlderLakeNScanoutAllocate {}, orgAlderLakeNScanoutSetup {}, orgAlderLakeNAperture {};
 	mach_vm_address_t adlnScanoutDisableFB {};
 	mach_vm_address_t orgAlderLakeNSetupWorkLoop {};
-	mach_vm_address_t orgDisplay13FramebufferInit {};
-	__attribute__((noinline)) bool processDisplay13FramebufferABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size);
 	__attribute__((noinline)) bool processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size);
     bool display13FBTCHooksReady {};
     mach_vm_address_t orgDisplay13TCMode {},display13TCBaseMode {},orgDisplay13TCEnableClocks {},orgDisplay13TCDisableClocks {};
@@ -231,16 +229,15 @@ private:
 	static bool wrapAlderLakeNGetOSInformation(IOService *controller);
 	static uint32_t wrapAlderLakeNPortState(OSObject *port);
     mach_vm_address_t orgDisplay13GMBus {},orgDisplay13GMBusRead {},orgDisplay13GMBusWrite {},adlnGMBusFunction {};
-    mach_vm_address_t orgDisplay13FBEnable {},orgAlderLakeNConnectionAttr {},orgAlderLakeNPortDDC {},orgDisplay13FBDDC {},orgAlderLakeNComputeLanes {},adlnHDMILaneCaller {};
+    mach_vm_address_t orgDisplay13FBEnable {},orgAlderLakeNConnectionAttr {},orgAlderLakeNPortDDC {},orgDisplay13FBDDC {};
     static uint32_t wrapDisplay13FBEnable(IOService *fb);
-    bool processDisplay13FramebufferAGDC(KernelPatcher &,size_t,mach_vm_address_t,size_t);
-    mach_vm_address_t orgDisplay13FBUserClient {},orgDisplay13AGDCCallback {};
-    static uint32_t wrapDisplay13FBUserClient(IOService *,void *,void *,uint32_t,void **);
-    static uint32_t wrapDisplay13AGDCCallback(IOService *,uint32_t,unsigned long,uint32_t);
+    bool processFramebufferAGDC(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+    mach_vm_address_t orgFramebufferUserClient {},orgFramebufferAGDCCallback {};
+    static uint32_t wrapFramebufferUserClient(IOService *,void *,void *,uint32_t,void **);
+    static uint32_t wrapFramebufferAGDCCallback(IOService *,uint32_t,unsigned long,uint32_t);
     static uint32_t wrapAlderLakeNConnectionAttr(IOService *fb,int connection,uint32_t attribute,unsigned long *value);
     static uint32_t wrapDisplay13FBDDC(IOService *fb,int connection,uint32_t block,uint32_t segment,uint32_t type,uint8_t *data,uint64_t *length);
     static uint32_t wrapAlderLakeNPortDDC(OSObject *port,uint32_t block,uint8_t *data,bool force);
-    static bool wrapAlderLakeNComputeLanes(void *port,const void *timing,uint32_t bpp,uint32_t available,uint32_t *lanes);
     static uint32_t wrapDisplay13GMBusRead(void *access,uint64_t reg);
     static void wrapDisplay13GMBusWrite(void *access,uint64_t reg,uint32_t value);
     mach_vm_address_t orgAlderLakeNGamma10 {},adlnGammaTableUpdate {},orgAlderLakeNPreGamma {};
@@ -249,7 +246,6 @@ private:
     static void wrapAlderLakeNPreGamma(void *path,void *transaction,uint32_t control);
     static void wrapAlderLakeNGammaTable(void *path,uint16_t *table);
     static uint32_t wrapDisplay13GMBus(IOService *controller,uint32_t bus,uint32_t speed,void *request);
-	static bool wrapDisplay13FramebufferInit(IOService *framebuffer,IOService *controller,uint32_t index);
 	static bool wrapDisplay13FramebufferStart(IOService *that, IOService *provider);
 	static void wrapAlderLakeNPowerInit(void *power, void *controller);
 	static void wrapAlderLakeNEngineEnable(void *power);
@@ -401,6 +397,8 @@ private:
 	IORecursiveLock *tglPathPoolLock {};
 	mach_vm_address_t orgTGLAllocatePathAny {}, orgTGLAllocatePathFixed {}, orgTGLControllerStop {};
 	mach_vm_address_t tglDisablePort {}, tglDisableClocks {};
+	// Shared donor protocol despite historical TGL names. Registration belongs
+	// only to processFramebufferTraining; backends supply hardware adapters.
 	// One reservation per physical port; the native pool limits simultaneous pipes.
 	struct TGLTrainingLease {
 		void *path {}, *port {}, *fb {}, *power {}, *adoptThread {};
@@ -588,7 +586,18 @@ private:
 	static bool tglDekelAccess(void *port, uint32_t index, bool write, uint32_t &value);
 	bool tglPlatformNVRAMReady {false};
 	bool tglFramebufferInitReady {false};
-	mach_vm_address_t orgTGLFramebufferInit {};
+ // The donor layer owns its hooks once, before the hardware backend runs.
+ bool framebufferDonorAttempted {},framebufferDonorCommonReady {},framebufferBackendInstalled {};
+ mach_vm_address_t orgFramebufferStart {},orgFramebufferInit {},orgFramebufferComputeLanes {},framebufferLaneCaller {};
+ __attribute__((noinline)) bool processFramebufferKext(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ __attribute__((noinline)) bool processFramebufferCommon(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ bool framebufferTrainingHooksReady {};
+ __attribute__((noinline)) bool processFramebufferTraining(KernelPatcher &,size_t,mach_vm_address_t,size_t);
+ static bool wrapFramebufferStart(IOService *,IOService *);
+ static bool wrapFramebufferInit(IOService *,IOService *,uint32_t);
+ static bool wrapFramebufferComputeLanes(void *,const void *,uint32_t,uint32_t,uint32_t *);
+ bool framebufferHDMIEligible(const uint32_t *) const;
+ static void observeFramebufferUserClient(void *,uint32_t,void **,uint32_t);
  bool framebufferDonorRuntimeReady {};
  bool processFramebufferDonorRuntime(KernelPatcher &,size_t,mach_vm_address_t,size_t);
 	mach_vm_address_t orgTGLHDCP2Init {};
@@ -598,8 +607,6 @@ private:
 	static void wrapTGLHDCP1Timer(void *hdcp, void *timer);
 	static uint32_t tglObserveHDCP1(void *hdcp, uint32_t stage, uint32_t event,
 		bool done, uint32_t result, uint32_t pipe = 0xFFFFFFFFU);
-	static bool wrapTGLFramebufferInit(void *framebuffer, void *controller, uint32_t index);
-	mach_vm_address_t orgTGLFramebufferStart {};
 	bool tglFBIRQReady {true};
 	mach_vm_address_t orgTGLFBEnableIRQ {}, orgTGLFBSetupIRQ {};
 	static uint32_t wrapTGLFBEnableIRQ(void *controller);
@@ -707,8 +714,6 @@ private:
 	static uint32_t wrapTGLAGDCPortStatus(void *controller, void *request, void *output);
 	mach_vm_address_t orgTGLAGDCAUX {};
 	static uint32_t wrapTGLAGDCAUX(void *controller, void *request, void *output);
-	mach_vm_address_t orgTGLFBUserClient {};
-	static uint32_t wrapTGLFBUserClient(void *fb, void *task, void *security, uint32_t type, void **client);
 	mach_vm_address_t orgTGLFBSetAttr {};
 	static uint32_t wrapTGLFBSetAttr(void *fb, uint32_t attribute, unsigned long value);
 	mach_vm_address_t orgTGLFBGetAttr {};
@@ -723,8 +728,6 @@ private:
 	static uint32_t wrapTGLLinkConfig(void *controller, void *request, void *output);
 	mach_vm_address_t orgTGLGPUCapability {};
 	static uint32_t wrapTGLGPUCapability(void *controller, void *output);
-	mach_vm_address_t orgTGLAGDCCallback {};
-	static uint32_t wrapTGLAGDCCallback(void *controller, uint32_t event, unsigned long argument, uint32_t value);
 	mach_vm_address_t orgTGLTopDDC {};
 	static uint32_t wrapTGLTopDDC(void *fb, int connection, uint32_t block, uint32_t type, uint32_t options, uint8_t *data, uint64_t *length);
 	mach_vm_address_t orgTGLPortDDC {};
@@ -733,8 +736,6 @@ private:
 	static uint32_t wrapTGLStreamEDID(void *controller, void *request, void *output);
 	mach_vm_address_t orgTGLSetEDID {};
 	static uint32_t wrapTGLSetEDID(void *controller, void *request);
-	mach_vm_address_t orgTGLComputeLanes {}, tglHDMILaneCaller {};
-	static bool wrapTGLComputeLanes(void *port, const void *timing, uint32_t bpp, uint32_t available, uint32_t *lanes);
 	mach_vm_address_t orgTGLFBOnline {};
 	static uint32_t wrapTGLFBOnline(void *controller, void *request);
 	mach_vm_address_t orgTGLAGDCRegister {};

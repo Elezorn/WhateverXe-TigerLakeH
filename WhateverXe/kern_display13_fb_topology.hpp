@@ -100,12 +100,6 @@ inline XELP::NativePorts boundPorts(const void *platform,const Display13OutputWi
         !selected(platform,static_cast<const uint8_t *>(platform)+0x20+24*d,w))return {};
     return {platform,w.selected()};
 }
-// Same exact donor CPU defect corrected for MI646: the mode validator
-// asks a TMDS connector for DP lanes. Keep its remaining HDMI constraints.
-inline bool skipDPLanes(const void *platform,const void *config,const Display13OutputWiring &w,
-                        bool exactCaller,bool native,uint32_t available,uint32_t lanes) {
-    return XELPDonor::skipHDMIDPLanes(selected(platform,config,w) && w.matchesHDMI(static_cast<const uint32_t *>(config)),exactCaller,native,available,lanes);
-}
 // ICP/TGP SDE bits24..29 are TC1..6 hotplug, not legacy GMBUS bit24.
 // Combo A..C hotplug uses bits16..18. Authorize exclusions only after
 // every unselected native record is disabled and has no connection flags.

@@ -7,7 +7,7 @@ r = Path(__file__).resolve().parents[1]
 s = (r / 'WhateverXe/kern_xe.cpp').read_text()
 install = s[s.index('bool XE::processFramebufferDonorRuntime('):s.index('bool XE::processKextFull(')]
 wrapper = re.search(r'bool XE::wrapTGLHDCP2Init\(.*?\n\}', s, re.S).group()
-assert s.count('processFramebufferDonorRuntime(patcher,index,address,size);') == 2
+assert s.count('processFramebufferDonorRuntime(patcher,index,address,size);') == 1
 assert s.count('wrapTGLMEIWrite,orgTGLMEIWrite') == 1
 assert 'wrapTGLMEIWrite, orgTGLMEIWrite' not in s
 assert 'hdcpReady && tglPanelPowerPropertyReady && meiReady' in install

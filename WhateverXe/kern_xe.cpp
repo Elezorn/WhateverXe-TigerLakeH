@@ -8,6 +8,7 @@
 //
 
 #include "kern_xe.hpp"
+#include "kern_framebuffer_donor.hpp"
 #include "kern_xelp_os.hpp"
 #include "kern_alderlake_n.hpp"
 #include "kern_xelp_device.hpp"
@@ -21,7 +22,7 @@
 #include "kern_display13_tc_native.hpp"
 #include "kern_display13_tc_clock.hpp"
 #include "kern_display13_tc_dp.hpp"
-#include "kern_display13_training_native.hpp"
+#include "kern_framebuffer_training_native.hpp"
 #include "kern_tgl_gmbus.hpp"
 #include "kern_alderlake_n_gpu.hpp"
 #include "kern_display13_fb_memory.hpp"
@@ -4336,8 +4337,9 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
     }
 	// Display dispatch is independent of the selected Render implementation.
 	// Keep both adapters outside the large Display12 framebuffer patch frame.
-	if(display13FramebufferRequested && currentFramebuffer && currentFramebuffer->loadIndex==index)
-		return processDisplay13Framebuffer(patcher,index,address,size);
+	if(currentFramebuffer && currentFramebuffer->loadIndex==index &&
+       (display13FramebufferRequested || (tglRequested && tglActive)))
+        return processFramebufferKext(patcher,index,address,size);
     if(adlpDisplaySelected && !adlpRenderRequested) {
         if(index==kextIntelTGL.loadIndex)return processADLPLoadOnly(patcher,index,address,size);
         return false;
@@ -5017,19 +5019,17 @@ bool XE::processDisplay13Framebuffer(KernelPatcher &patcher,size_t index,mach_vm
 		"__ZN19AppleIntelPowerWell18enablePowerWellDDIEj",
 		"__ZN19AppleIntelPowerWell19disablePowerWellDDIEj",
 		"__ZN19AppleIntelPowerWell18enablePowerWellAuxEj",
-		"__ZN19AppleIntelPowerWell19disablePowerWellAuxEj",
-		"__ZN31AppleIntelFramebufferController5startEP9IOService"
+		"__ZN19AppleIntelPowerWell19disablePowerWellAuxEj"
 	};
-	static const uintptr_t offsets[] {0x59F88,0x5BEDC,0x5B366,0x5BFA8,0x5AA86,0x5C4BA,0x5AE0A,0x3F1FC};
-	static const uint8_t prefixes[8][24] {
+	static const uintptr_t offsets[] {0x59F88,0x5BEDC,0x5B366,0x5BFA8,0x5AA86,0x5C4BA,0x5AE0A};
+	static const uint8_t prefixes[7][24] {
 		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x18,0x48,0xff,0x05,0xe8,0x76,0x08,0x00},
 		{0x55,0x48,0x89,0xe5,0x53,0x50,0x48,0x89,0xfb,0x48,0xff,0x05,0xac,0x5e,0x08,0x00,0x85,0xf6,0x74,0x18,0xb8,0x01,0x00,0x00},
 		{0x55,0x48,0x89,0xe5,0x53,0x50,0x48,0x89,0xfb,0x48,0xff,0x05,0x5a,0x67,0x08,0x00,0x85,0xf6,0x74,0x23,0xb8,0x01,0x00,0x00},
 		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x50,0x48,0xff,0x05,0x23,0x5e,0x08,0x00,0x89,0xf0,0x8b},
 		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x18,0x48,0xff,0x05,0x92,0x6e,0x08,0x00},
 		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x48,0x48,0xff,0x05,0x26,0x5a,0x08,0x00},
-		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x28,0x48,0xff,0x05,0xb6,0x6b,0x08,0x00},
-		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x38,0x49,0x89,0xf6,0x49,0x89,0xfd,0x48}
+		{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x28,0x48,0xff,0x05,0xb6,0x6b,0x08,0x00}
 	};
 	bool known=display13FramebufferRequested && size>0x5C4D2;
 	for(unsigned i=0;i<arrsize(offsets);++i) {
@@ -5042,9 +5042,6 @@ bool XE::processDisplay13Framebuffer(KernelPatcher &patcher,size_t index,mach_vm
 		!memcmp(reinterpret_cast<void *>(address+0x3FE26),ownerStore,sizeof(ownerStore));
 	if(!known)return false;
 	if(!display13FBPower.lock)display13FBPower.lock=IOLockAlloc();
-	KernelPatcher::RouteRequest start(symbols[7],wrapDisplay13FramebufferStart,orgDisplay13FramebufferStart);
-	const bool startRouted=patcher.routeMultiple(index,&start,1,address,size);patcher.clearError();
-	if(!startRouted)return false;
  // Apply DVMT calculation before routing FBMemMgr_Init: the common
  // module scans its native entry, not our later trampoline. Startup is
  // already guarded, so missing opt-in/failed patch cannot run the bad formula.
@@ -5209,7 +5206,7 @@ bool XE::processDisplay13Framebuffer(KernelPatcher &patcher,size_t index,mach_vm
 
 	display13FBIRQReady=processDisplay13FramebufferIRQ(patcher,index,address,size);
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBIRQHooksReady",display13FBIRQReady);
-	display13FBABIReady=processDisplay13FramebufferABI(patcher,index,address,size);
+	display13FBABIReady=framebufferDonorCommonReady;
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBCommonABIReady",display13FBABIReady);
 	display13FBLifecycleHooksReady=processDisplay13FramebufferLifecycle(patcher,index,address,size);
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBLifecycleHooksReady",display13FBLifecycleHooksReady);
@@ -5221,7 +5218,6 @@ bool XE::processDisplay13Framebuffer(KernelPatcher &patcher,size_t index,mach_vm
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBGTTHooksReady",display13FBGTTHooksReady);
 	display13FBTopologyHooksReady=processDisplay13FramebufferTopology(patcher,index,address,size);
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FBTopologyHooksReady",display13FBTopologyHooksReady);
- processFramebufferDonorRuntime(patcher,index,address,size);
  using C=XELP::DisplayContract;const auto installed=display13Available();
  display13FBPowerBackendReady=C{C::Power13,installed}.ready();
  display13FBClockReady=C{C::Clock13,installed}.ready();
@@ -6634,16 +6630,12 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
         {"__ZN21AppleIntelFramebuffer16enableControllerEv",0x3A6F4,false},
         {"__ZN21AppleIntelFramebuffer25getAttributeForConnectionEijPm",0x34692,false},
         {"__ZN14AppleIntelPort11getDDCBlockEjPhb",0x1F5B2,false},
-        {"__ZN21AppleIntelFramebuffer11getDDCBlockEijjjPhPy",0x2FEE8,false},
-        {"__ZN14AppleIntelPort16computeLaneCountEPK29IODetailedTimingInformationV2jjPj",0x1FC22,true}
+        {"__ZN21AppleIntelFramebuffer11getDDCBlockEijjjPhPy",0x2FEE8,false}
     };
     for(auto &e:frontend) {
         auto fn=patcher.solveSymbol<mach_vm_address_t>(index,e.symbol,address,size);patcher.clearError();
         if(fn!=address+e.offset || memcmp(reinterpret_cast<void *>(fn),e.shortBase ? readEntry : busEntry,e.shortBase ? sizeof(readEntry) : sizeof(busEntry)))return false;
     }
-    const uint8_t laneCall[] {0xE8,0x2A,0xF7,0xFE,0xFF,0x84,0xC0,0x74,0x1A};
-    if(memcmp(reinterpret_cast<void *>(address+0x304F3),laneCall,sizeof(laneCall)))return false;
-    adlnHDMILaneCaller=address+0x304F8;
     auto read=patcher.solveSymbol<mach_vm_address_t>(index,
         "__ZN31AppleIntelRegisterAccessManager14ReadRegister32Em",address,size);patcher.clearError();
     auto write=patcher.solveSymbol<mach_vm_address_t>(index,
@@ -6659,7 +6651,6 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
 		memcmp(reinterpret_cast<void *>(bus+0x335),busBefore,sizeof(busBefore)) ||
 		memcmp(reinterpret_cast<void *>(bus+0xEA),pinLimit,sizeof(pinLimit)) ||
 		memcmp(reinterpret_cast<void *>(bus+0x2E0),resetBefore,sizeof(resetBefore)))return false;
-    if(!processDisplay13FramebufferAGDC(patcher,index,address,size))return false;
 	struct Change {uintptr_t offset;const uint8_t *find,*replace;size_t length;};
 	const Change changes[] {
 		{0x9A0E8,reinterpret_cast<const uint8_t *>(before),reinterpret_cast<const uint8_t *>(after),sizeof(before)},
@@ -6684,8 +6675,7 @@ bool XE::processDisplay13FramebufferOutput(KernelPatcher &patcher,size_t index,m
         {frontend[0].symbol,wrapDisplay13FBEnable,orgDisplay13FBEnable},
         {frontend[1].symbol,wrapAlderLakeNConnectionAttr,orgAlderLakeNConnectionAttr},
         {frontend[2].symbol,wrapAlderLakeNPortDDC,orgAlderLakeNPortDDC},
-        {frontend[3].symbol,wrapDisplay13FBDDC,orgDisplay13FBDDC},
-        {frontend[4].symbol,wrapAlderLakeNComputeLanes,orgAlderLakeNComputeLanes}
+        {frontend[3].symbol,wrapDisplay13FBDDC,orgDisplay13FBDDC}
     };
     const bool ready=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
     IORegistryEntry::getRegistryRoot()->setProperty("N97FBGMBusObservationReady",ready);
@@ -6788,11 +6778,11 @@ uint32_t XE::wrapDisplay13RunAUX(void *port,uint32_t command,uint32_t *packet,ui
  IOLockUnlock(c.lock);return r ? r : complete ? 0 : kIOReturnNotReady;
 }
 
-bool XE::processDisplay13Training(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
- if(!adlnOutputWiring.dp)return true;
- using namespace Display13TrainingNative;
- if(!display13FBDPHooksReady || !display13FBSSTHooksReady || !display13FBPowerReferencesReady ||
-    !orgDisplay13GMBusWrite || size<=0x91DA0)return false;
+// The donor protocol owns reservation, adoption and pool serialization once.
+// Installing these hooks grants no port/power eligibility; backend adapters do.
+bool XE::processFramebufferTraining(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ using namespace FramebufferTrainingNative;
+ if(size<=0x91DA0)return false;
  for(const auto &e:entries) {
   const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,e.symbol,address,size);patcher.clearError();
   if(fn!=address+e.offset || memcmp(reinterpret_cast<void *>(fn),e.prefix,sizeof(e.prefix)))return false;
@@ -6811,9 +6801,28 @@ bool XE::processDisplay13Training(KernelPatcher &patcher,size_t index,mach_vm_ad
   {entries[Add].symbol,wrapTGLAddPath,orgTGLAddPath},
   {entries[Resources].symbol,wrapTGLAllocatePathResources,orgTGLAllocatePathResources},
   {entries[Stop].symbol,wrapTGLControllerStop,orgTGLControllerStop},
-  {entries[PortTrain].symbol,wrapDisplay13PortTraining,orgDisplay13PortTraining},
  };
  const bool routed=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
+ if(!routed)return false;
+ // Lookup tracing is backend-specific, but the original has one owner.
+ if(!display13FramebufferRequested) {
+  KernelPatcher::RouteRequest trace(entries[Lookup].symbol,wrapTGLPathLookup,orgTGLPathLookup);
+  const bool traced=patcher.routeMultipleShort(index,&trace,1,address,size);patcher.clearError();
+  if(!traced)return false;
+ }
+ return true;
+}
+
+bool XE::processDisplay13Training(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ if(!adlnOutputWiring.dp)return true;
+ using namespace FramebufferTrainingNative;
+ if(!framebufferTrainingHooksReady || !display13FBDPHooksReady || !display13FBSSTHooksReady ||
+    !display13FBPowerReferencesReady || !orgDisplay13GMBusWrite)return false;
+ const auto &e=entries[PortTrain];
+ const auto fn=patcher.solveSymbol<mach_vm_address_t>(index,e.symbol,address,size);patcher.clearError();
+ if(fn!=address+e.offset || memcmp(reinterpret_cast<void *>(fn),e.prefix,sizeof(e.prefix)))return false;
+ KernelPatcher::RouteRequest route(e.symbol,wrapDisplay13PortTraining,orgDisplay13PortTraining);
+ const bool routed=patcher.routeMultipleShort(index,&route,1,address,size);patcher.clearError();
  if(!routed)return false;
  trainingLeaseDP13Mask=adlnOutputWiring.dp;
  trainingLeaseValidate=display13LeaseValidate;trainingLeasePower=display13LeasePower;trainingLeaseStop=display13LeaseStop;
@@ -7526,7 +7535,7 @@ static void adlnPublishFrontend(const char *name,const char *phase,uint64_t (&r)
     char key[64];snprintf(key,sizeof(key),"N97FB%s%u%s",name,static_cast<uint32_t>(r[2]),phase);
     IORegistryEntry::getRegistryRoot()->setProperty(key,r,sizeof(r));
 }
-bool XE::processDisplay13FramebufferAGDC(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+bool XE::processFramebufferAGDC(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
     // Both short trampolines end before the donor's RIP-relative counters.
     const char *client="__ZN21AppleIntelFramebuffer13newUserClientEP4taskPvjPP12IOUserClient";
     const char *callback="__ZN31AppleIntelFramebufferController12CallBackAGDCE31kAGDCRegisterLinkControlEvent_tmj";
@@ -7534,7 +7543,7 @@ bool XE::processDisplay13FramebufferAGDC(KernelPatcher &patcher,size_t index,mac
     const uint8_t callbackEntry[]={0x55,0x48,0x89,0xe5,0x89,0xf0};
     const uint8_t dispatch[]={0x4c,0x8b,0x87,0xf8,0x1b,0,0,0x48,0x8b,0xbf,0,0x1c,0,0,
         0x48,0x89,0xd6,0x89,0xca,0x89,0xc1,0x5d,0x41,0xff,0xe0};
-    if(!display13FramebufferRequested || !display13FBABIReady || size<0x69E60)return false;
+    if(size<0x69E60)return false;
     const auto c=patcher.solveSymbol<mach_vm_address_t>(index,client,address,size);patcher.clearError();
     const auto a=patcher.solveSymbol<mach_vm_address_t>(index,callback,address,size);patcher.clearError();
     if(c!=address+0x273B4 || a!=address+0x69DF2 ||
@@ -7542,15 +7551,15 @@ bool XE::processDisplay13FramebufferAGDC(KernelPatcher &patcher,size_t index,mac
        memcmp(reinterpret_cast<void *>(a),callbackEntry,sizeof(callbackEntry)) ||
        memcmp(reinterpret_cast<void *>(address+0x69E1E),dispatch,sizeof(dispatch)))return false;
     KernelPatcher::RouteRequest routes[] {
-        {client,wrapDisplay13FBUserClient,orgDisplay13FBUserClient},
-        {callback,wrapDisplay13AGDCCallback,orgDisplay13AGDCCallback}
+        {client,wrapFramebufferUserClient,orgFramebufferUserClient},
+        {callback,wrapFramebufferAGDCCallback,orgFramebufferAGDCCallback}
     };
     const bool ready=patcher.routeMultipleShort(index,routes,arrsize(routes),address,size);patcher.clearError();
     IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13AGDCGuardReady",ready);
     return ready;
 }
 
-uint32_t XE::wrapDisplay13FBUserClient(IOService *fb,void *task,void *security,uint32_t type,void **client) {
+uint32_t XE::wrapFramebufferUserClient(IOService *fb,void *task,void *security,uint32_t type,void **client) {
     // Only type0 enters IOFramebuffer::open. Refuse before entering IOG: an
     // error from enableController permanently sets IOG's dead flag instead.
     // Native controller start publishes FB children before its AGDC nub.
@@ -7560,9 +7569,11 @@ uint32_t XE::wrapDisplay13FBUserClient(IOService *fb,void *task,void *security,u
         const bool framebuffer=fb && fb->getMetaClass()->getClassSize()>=0x4B90;
         auto controller=framebuffer ?
             Display13FBMemory::field<IOService *>(fb,0x1D0) : nullptr;
-        const bool bound=controller && controller==s->adlnTopologyController &&
-            controller->getMetaClass()->getClassSize()>=0x1C20;
-        const bool started=bound && controller==s->tglObservationController;
+        const bool bound=controller && controller->getMetaClass()->getClassSize()>=0x1C20 &&
+            (!s->display13FramebufferRequested || controller==s->adlnTopologyController);
+        // Display13 additionally needs the hardware handoff complete before
+        // IOFramebuffer::open; callback safety itself is donor-wide.
+        const bool started=bound && (!s->display13FramebufferRequested || controller==s->tglObservationController);
         const bool registered=bound && Display13FBMemory::field<uintptr_t>(controller,0x1BF8);
         uint64_t record[]={1,bound,started,registered,
             bound && Display13FBMemory::field<uintptr_t>(controller,0x1C00),
@@ -7573,17 +7584,21 @@ uint32_t XE::wrapDisplay13FBUserClient(IOService *fb,void *task,void *security,u
             return kIOReturnNotReady;
         }
     }
-    return FunctionCast(wrapDisplay13FBUserClient,callbackXE->orgDisplay13FBUserClient)(fb,task,security,type,client);
+    const auto result=FunctionCast(wrapFramebufferUserClient,callbackXE->orgFramebufferUserClient)(fb,task,security,type,client);
+    if(!callbackXE->display13FramebufferRequested)observeFramebufferUserClient(fb,type,client,result);
+    return result;
 }
 
-uint32_t XE::wrapDisplay13AGDCCallback(IOService *controller,uint32_t event,unsigned long argument,uint32_t value) {
+uint32_t XE::wrapFramebufferAGDCCallback(IOService *controller,uint32_t event,unsigned long argument,uint32_t value) {
     // Other native notifications can also precede policy registration. Return
     // failure for a real notification with no receiver; never synthesize ACK.
     // Keep the native event filter, argument conversion and registered path.
     const bool notification=event==4 || event==0x80 || (event<=11 && (0x90FU&(1U<<event)));
     if(notification && (!controller || controller->getMetaClass()->getClassSize()<0x1C20 ||
        !Display13FBMemory::field<uintptr_t>(controller,0x1BF8)))return kIOReturnNotReady;
-    return FunctionCast(wrapDisplay13AGDCCallback,callbackXE->orgDisplay13AGDCCallback)(controller,event,argument,value);
+    const auto result=FunctionCast(wrapFramebufferAGDCCallback,callbackXE->orgFramebufferAGDCCallback)(controller,event,argument,value);
+    if(!callbackXE->display13FramebufferRequested)tglTrace(7,event,true,event,value,result,argument);
+    return result;
 }
 
 uint32_t XE::wrapDisplay13FBEnable(IOService *fb) {
@@ -7621,85 +7636,6 @@ uint32_t XE::wrapAlderLakeNPortDDC(OSObject *port,uint32_t block,uint8_t *data,b
         root->setProperty("N97FBPortDDCLast",r,sizeof(r));
     }
     return result;
-}
-bool XE::wrapAlderLakeNComputeLanes(void *port,const void *timing,uint32_t bpp,uint32_t available,uint32_t *lanes) {
-    const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
-    const auto native=FunctionCast(wrapAlderLakeNComputeLanes,callbackXE->orgAlderLakeNComputeLanes)(port,timing,bpp,available,lanes);
-    auto config=XELPDonor::hdmiLaneConfig(port,caller,callbackXE->adlnHDMILaneCaller);
-    if(!config)return native;
-    const bool corrected=lanes && Display13FBTopology::skipDPLanes(callbackXE->adlnPlatform,config,callbackXE->adlnOutputWiring,
-        caller==callbackXE->adlnHDMILaneCaller,native,available,*lanes);
-    static uint32_t count {};uint64_t r[] {1,__sync_add_and_fetch(&count,1),config ? config[0] : 9,config ? config[2] : 0,
-        bpp,available,native,lanes ? *lanes : UINT32_MAX,caller==callbackXE->adlnHDMILaneCaller,corrected};
-    IORegistryEntry::getRegistryRoot()->setProperty("N97FBHDMILaneLast",r,sizeof(r));
-    return native || corrected;
-}
-
-bool XE::processDisplay13FramebufferABI(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
-	// OS/donor ABI corrections are shared with Display12. Keep hardware
-	// routing and topology in the selected Display13 backend.
-	if(!display13FramebufferRequested || size<=0xCCCD8)return false;
-	const bool surface=tglInstallSonomaSurfaceABI(patcher,index,address,size,true);
-	const bool nvram=xelpInstallNVRAMABI(patcher,index,address,size);
-	auto table=patcher.solveSymbol<mach_vm_address_t>(index,"__ZTV17AppleIntelPortHAL",address,size);
-	auto pure=patcher.solveSymbol(KernelPatcher::KernelID,"___cxa_pure_virtual");
-	const uint8_t halSize[] {0xB9,0xB0,0x06,0,0};
-	bool probe=table==address+0xCCAD0 && pure && xelpProviderProbe && xelpProviderConfigureProbe &&
-		!memcmp(reinterpret_cast<void *>(address+0x5EE5E),halSize,sizeof(halSize)) &&
-		*reinterpret_cast<mach_vm_address_t *>(table+0x188)==pure;
-	patcher.clearError();
-	if(probe) {
-		auto replacement=xelpProviderProbe;
-		patcher.routeBlock(table+0x188,reinterpret_cast<uint8_t *>(&replacement),sizeof(replacement));
-		probe=patcher.getError()==KernelPatcher::Error::NoError &&
-			*reinterpret_cast<mach_vm_address_t *>(table+0x188)==replacement;
-		patcher.clearError();
-	}
-	const char *initSymbol="__ZN21AppleIntelFramebuffer4initEP31AppleIntelFramebufferControllerj";
-	auto init=patcher.solveSymbol<mach_vm_address_t>(index,initSymbol,address,size);
-	const uint8_t initEntry[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x54,0x53,0x48,0x83,0xEC,0x10,
-		0x41,0x89,0xD6,0x49,0x89,0xF7,0x48,0x89,0xFB};
-	bool managers=init==address+0x29EC8 && !memcmp(reinterpret_cast<void *>(init),initEntry,sizeof(initEntry));
-	patcher.clearError();
-	KernelPatcher::RouteRequest binding(initSymbol,wrapDisplay13FramebufferInit,orgDisplay13FramebufferInit);
-	managers=managers && patcher.routeMultiple(index,&binding,1,address,size);
-	patcher.clearError();
-	uint32_t record[] {2,nvram,probe,managers,surface};
-	IORegistryEntry::getRegistryRoot()->setProperty("N97FBCommonABIHooks",record,sizeof(record));
-	return surface && nvram && probe && managers;
-}
-
-bool XE::wrapDisplay13FramebufferInit(IOService *fb,IOService *controller,uint32_t index) {
-	auto pci=controller ? OSDynamicCast(IOPCIDevice,controller->getProvider()) : nullptr;
-	if(!callbackXE->display13FBABIReady || !fb || !pci || index>=3 ||
-		!xelpDisplay13Device(pci) ||
-		controller->getMetaClass()->getClassSize()<0x1C20 || fb->getMetaClass()->getClassSize()<0x4B90)return false;
-	if(!FunctionCast(wrapDisplay13FramebufferInit,callbackXE->orgDisplay13FramebufferInit)(fb,controller,index))return false;
-	auto manager=Display13FBMemory::field<OSObject *>(controller,0xC40);
-	if(Display13FBMemory::field<IOService *>(fb,0x1D0)!=controller ||
-		Display13FBMemory::field<uint32_t>(fb,0x1DC)!=index || !manager ||
-		manager->getMetaClass()->getClassSize()<0x68 || !Display13FBMemory::field<uintptr_t>(manager,0x50) ||
-		Display13FBMemory::field<uint32_t>(manager,0x60)!=0x1000000)return false;
-	// Validate every donor-owned CPU object before filling any borrowed manager
-	// field. A conflicting non-null reference is failure, not a successful bind.
-	const size_t arrays[] {0xF58,0xF28},identities[] {0x7C,0x1C},slots[] {0x90,0x28};
-	const unsigned counts[] {15,6},minimum[] {0x1C8,0x58};
-	for(unsigned group=0;group<2;++group)for(unsigned i=0;i<counts[group];++i) {
-		auto object=Display13FBMemory::field<OSObject *>(controller,arrays[group]+8*i);
-		if(!object || object->getMetaClass()->getClassSize()<minimum[group] ||
-			Display13FBMemory::field<uint32_t>(object,identities[group])!=i)return false;
-		auto stored=Display13FBMemory::field<OSObject *>(object,slots[group]);
-		if(stored && stored!=manager)return false;
-	}
-	auto stored=Display13FBMemory::field<OSObject *>(fb,0x4A40);
-	if(stored && stored!=manager)return false;
-	for(unsigned group=0;group<2;++group)for(unsigned i=0;i<counts[group];++i) {
-		auto object=Display13FBMemory::field<uint8_t *>(controller,arrays[group]+8*i);
-		memcpy(object+slots[group],&manager,sizeof(manager));
-	}
-	memcpy(reinterpret_cast<uint8_t *>(fb)+0x4A40,&manager,sizeof(manager));
-	fb->setProperty("N97FBManagersBound",true);
-	return true;
 }
 
 bool XE::prepareDisplay13BootScanout(IOPCIDevice *pci) {
@@ -7776,7 +7712,7 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	if(!featuresSelected)return false;
     if(Display13FBTopology::deferredBootPrepare(board,s->adlpDisplaySelected) && !s->prepareDisplay13BootScanout(pci))return false;
 	SYSLOG("igfx","Display13 native controller start enter offline=%u",display13Offline);
-	const auto started=FunctionCast(wrapDisplay13FramebufferStart,s->orgDisplay13FramebufferStart)(that,provider);
+	const auto started=FunctionCast(wrapDisplay13FramebufferStart,s->orgFramebufferStart)(that,provider);
 	SYSLOG("igfx","Display13 native controller start return=%u",started);
 	that->setProperty("N97FramebufferOriginalStart",started);
 	IORegistryEntry::getRegistryRoot()->setProperty("N97FramebufferOriginalStart",started);
@@ -11182,8 +11118,124 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			return true;
 }
 
-// CPU object initialization and posted FIFO writes belong to this donor,
-// not to a Display generation. Both framebuffer dispatchers install them.
+// One entry owns donor ABI/lifecycle repairs for every hardware backend.
+// Backend installers cannot independently opt into or replace these hooks.
+bool XE::processFramebufferKext(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ if(framebufferDonorAttempted)return framebufferBackendInstalled;
+ framebufferDonorAttempted=true;
+ const auto symbol="__ZN31AppleIntelFramebufferController5startEP9IOService";
+ const uint8_t entry[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x38,0x49,0x89,0xf6,0x49,0x89,0xfd};
+ const auto start=patcher.solveSymbol<mach_vm_address_t>(index,symbol,address,size);patcher.clearError();
+ if(size<=0x3F1FC+sizeof(entry) || start!=address+0x3F1FC ||
+    memcmp(reinterpret_cast<void *>(start),entry,sizeof(entry)))return false;
+ KernelPatcher::RouteRequest gate(symbol,wrapFramebufferStart,orgFramebufferStart);
+ const bool routed=patcher.routeMultiple(index,&gate,1,address,size);patcher.clearError();
+ if(!routed)return false;
+ framebufferDonorCommonReady=processFramebufferCommon(patcher,index,address,size);
+ // Install hardware routes even after a common failure so their diagnostics
+ // remain available. The common start gate never enters native startup then.
+ framebufferBackendInstalled=display13FramebufferRequested ?
+  processDisplay13Framebuffer(patcher,index,address,size) : processKextFull(patcher,index,address,size);
+ uint32_t record[]={1,routed,framebufferDonorCommonReady,framebufferBackendInstalled};
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXFramebufferInstallation",record,sizeof(record));
+ return true;
+}
+
+bool XE::processFramebufferCommon(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
+ tglSonomaSurfaceFramebufferReady=tglInstallSonomaSurfaceABI(patcher,index,address,size,true);
+ tglPlatformNVRAMReady=xelpInstallNVRAMABI(patcher,index,address,size);
+ auto table=patcher.solveSymbol<mach_vm_address_t>(index,"__ZTV17AppleIntelPortHAL",address,size);
+ auto pure=patcher.solveSymbol(KernelPatcher::KernelID,"___cxa_pure_virtual");
+ const uint8_t halSize[]={0xB9,0xB0,0x06,0,0};
+ bool probe=size>0xCCCD8 && table==address+0xCCAD0 && pure && xelpProviderProbe && xelpProviderConfigureProbe &&
+  !memcmp(reinterpret_cast<void *>(address+0x5EE5E),halSize,sizeof(halSize)) &&
+  *reinterpret_cast<mach_vm_address_t *>(table+0x188)==pure;
+ patcher.clearError();
+ if(probe) {
+  // Slot repair is common; the target retains the existing hardware adapter.
+  auto replacement=display13FramebufferRequested ? xelpProviderProbe : reinterpret_cast<mach_vm_address_t>(wrapTGLProbePort);
+  patcher.routeBlock(table+0x188,reinterpret_cast<uint8_t *>(&replacement),sizeof(replacement));
+  probe=patcher.getError()==KernelPatcher::Error::NoError && *reinterpret_cast<mach_vm_address_t *>(table+0x188)==replacement;
+  patcher.clearError();
+ }
+ tglProbeReady=probe;
+ const auto initSymbol="__ZN21AppleIntelFramebuffer4initEP31AppleIntelFramebufferControllerj";
+ const auto init=patcher.solveSymbol<mach_vm_address_t>(index,initSymbol,address,size);patcher.clearError();
+ const uint8_t initEntry[]={0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x54,0x53,0x48,0x83,0xEC,0x10,0x41,0x89,0xD6,0x49,0x89,0xF7,0x48,0x89,0xFB};
+ KernelPatcher::RouteRequest binding(initSymbol,wrapFramebufferInit,orgFramebufferInit);
+ tglFramebufferInitReady=size>0x29EC8+sizeof(initEntry) && init==address+0x29EC8 &&
+  !memcmp(reinterpret_cast<void *>(init),initEntry,sizeof(initEntry)) && patcher.routeMultiple(index,&binding,1,address,size);
+ patcher.clearError();
+ const auto laneSymbol="__ZN14AppleIntelPort16computeLaneCountEPK29IODetailedTimingInformationV2jjPj";
+ const auto lanes=patcher.solveSymbol<mach_vm_address_t>(index,laneSymbol,address,size);patcher.clearError();
+ const uint8_t laneEntry[]={0x55,0x48,0x89,0xE5,0x53,0x50};
+ const uint8_t laneCall[]={0xE8,0x2A,0xF7,0xFE,0xFF,0x84,0xC0,0x74,0x1A};
+ bool laneReady=size>0x304FC && lanes==address+0x1FC22 &&
+  !memcmp(reinterpret_cast<void *>(lanes),laneEntry,sizeof(laneEntry)) &&
+  !memcmp(reinterpret_cast<void *>(address+0x304F3),laneCall,sizeof(laneCall));
+ if(laneReady) {
+  framebufferLaneCaller=address+0x304F8;
+  KernelPatcher::RouteRequest lane(laneSymbol,wrapFramebufferComputeLanes,orgFramebufferComputeLanes);
+  laneReady=patcher.routeMultipleShort(index,&lane,1,address,size);patcher.clearError();
+ }
+ const bool agdc=processFramebufferAGDC(patcher,index,address,size);
+ const bool runtime=processFramebufferDonorRuntime(patcher,index,address,size);
+ framebufferTrainingHooksReady=processFramebufferTraining(patcher,index,address,size);
+ const bool ready=tglSonomaSurfaceFramebufferReady && tglPlatformNVRAMReady && probe && tglFramebufferInitReady && laneReady && agdc && runtime && framebufferTrainingHooksReady;
+ uint32_t record[]={4,tglPlatformNVRAMReady,probe,tglFramebufferInitReady,tglSonomaSurfaceFramebufferReady,laneReady,agdc,runtime,framebufferTrainingHooksReady,ready};
+ auto root=IORegistryEntry::getRegistryRoot();
+ root->setProperty("WEXFramebufferCommonHooks",record,sizeof(record));
+ root->setProperty("TGLSonomaSurfaceFramebufferReady",tglSonomaSurfaceFramebufferReady);
+ root->setProperty("TGLHDMILaneRoute317",laneReady);
+ root->setProperty("TGLHDMILaneGuard316",framebufferLaneCaller!=0);
+ root->setProperty("TGLWEGProbeVtableFixed",probe);
+ root->setProperty("TGLWEGFramebufferInitRouted",tglFramebufferInitReady);
+ return ready;
+}
+
+bool XE::wrapFramebufferStart(IOService *that,IOService *provider) {
+ auto s=callbackXE;
+ if(!s->framebufferDonorCommonReady || !s->framebufferBackendInstalled) {
+  if(that)that->setProperty("WEXFramebufferCommonRejected",true);
+  return false;
+ }
+ return s->display13FramebufferRequested ? wrapDisplay13FramebufferStart(that,provider) : wrapTGLFramebufferStart(that,provider);
+}
+
+bool XE::wrapFramebufferInit(IOService *fb,IOService *controller,uint32_t index) {
+ if(!callbackXE->framebufferDonorCommonReady || !fb || !controller || index>=3 ||
+    fb->getMetaClass()->getClassSize()<0x4B90 || controller->getMetaClass()->getClassSize()<0x1C20)return false;
+ if(!FunctionCast(wrapFramebufferInit,callbackXE->orgFramebufferInit)(fb,controller,index))return false;
+ struct Objects {size_t size(void *p) const {return p ? static_cast<OSObject *>(p)->getMetaClass()->getClassSize() : 0;}} objects;
+ const bool bound=FramebufferDonor::bindManagers(objects,fb,controller,index);
+ fb->setProperty("WEXFramebufferManagersBound",bound);
+ if(callbackXE->display13FramebufferRequested)fb->setProperty("N97FBManagersBound",bound);
+ auto root=IORegistryEntry::getRegistryRoot();
+ root->setProperty("TGLWEGFramebufferManagerBound",bound);
+ root->setProperty("TGLWEGPlaneManagersBound",bound?15:0,32);
+ root->setProperty("TGLWEGScalerManagersBound",bound?6:0,32);
+ return bound;
+}
+
+bool XE::framebufferHDMIEligible(const uint32_t *config) const {
+ if(display13FramebufferRequested)
+  return Display13FBTopology::selected(adlnPlatform,config,adlnOutputWiring) && adlnOutputWiring.matchesHDMI(config);
+ return tglHDMIB && tglHDMIEligible(config);
+}
+
+bool XE::wrapFramebufferComputeLanes(void *argument,const void *timing,uint32_t bpp,uint32_t available,uint32_t *lanes) {
+ const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+ const auto native=FunctionCast(wrapFramebufferComputeLanes,callbackXE->orgFramebufferComputeLanes)(argument,timing,bpp,available,lanes);
+ const auto config=XELPDonor::hdmiLaneConfig(argument,caller,callbackXE->framebufferLaneCaller);
+ if(!config || !lanes)return native;
+ const bool corrected=XELPDonor::skipHDMIDPLanes(callbackXE->framebufferHDMIEligible(config),true,native,available,*lanes);
+ if(corrected) {
+  static uint32_t count {};
+  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMILaneCorrections316",__sync_add_and_fetch(&count,1),32);
+ }
+ return native || corrected;
+}
+
 bool XE::processFramebufferDonorRuntime(KernelPatcher &patcher,size_t index,mach_vm_address_t address,size_t size) {
  if(framebufferDonorRuntimeReady)return true;
  bool hdcpReady=false,meiReady=false;
@@ -11271,9 +11323,6 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 	if (tglRequested) {
 		if (!tglActive) return false;
 		if (currentFramebuffer->loadIndex == index) {
-            processFramebufferDonorRuntime(patcher,index,address,size);
-			tglSonomaSurfaceFramebufferReady=tglInstallSonomaSurfaceABI(patcher,index,address,size,true);
-			IORegistryEntry::getRegistryRoot()->setProperty("TGLSonomaSurfaceFramebufferReady",tglSonomaSurfaceFramebufferReady);
 			if (modDVMTCalcFix.enabled && modDVMTCalcFix.available)
 				modDVMTCalcFix.processFramebufferKext(patcher, index, address, size);
    // Exact donor transaction entries. Each installed wrapper arbitrates
@@ -11322,7 +11371,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			tglConnectionImage = address;
 			tglConnectionImageSize = size;
 			tglConnectionLock = IOSimpleLockAlloc();
-			tglPlatformNVRAMReady=xelpInstallNVRAMABI(patcher,index,address,size);
+
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLPlatformNVRAMABIReady", tglPlatformNVRAMReady);
 			if (tglHDMIB) {
 				// r319: the donor's combo PLL tables still contain ICL MMIO
@@ -11609,27 +11658,6 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteTopology", tglTopologyReady);
 				patcher.clearError();
 			}
-			// DP1 KC vtable inheritance fixup replaces this externally supplied
-			// override with the base class's pure-virtual slot. Verify and repair
-			// only this donor slot; never replace the global pure-virtual handler.
-			auto table = patcher.solveSymbol<mach_vm_address_t>(index, "__ZTV17AppleIntelPortHAL", address, size);
-			auto probe = reinterpret_cast<mach_vm_address_t>(wrapTGLProbePort);
-			auto pure = patcher.solveSymbol(KernelPatcher::KernelID, "___cxa_pure_virtual");
-			bool probeFixed = false;
-			if (table && probe && pure && xelpProviderProbe && xelpProviderConfigureProbe && table >= address && table - address == 0xCCAD0 &&
-				*reinterpret_cast<mach_vm_address_t *>(table + 0x188) == pure) {
-				patcher.routeBlock(table + 0x188, reinterpret_cast<uint8_t *>(&probe), sizeof(probe));
-				probeFixed = patcher.getError() == KernelPatcher::Error::NoError &&
-					*reinterpret_cast<mach_vm_address_t *>(table + 0x188) == probe;
-			}
-			IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGProbeVtableFixed", probeFixed);
-			tglProbeReady = probeFixed;
-			patcher.clearError();
-			KernelPatcher::RouteRequest initRequest("__ZN21AppleIntelFramebuffer4initEP31AppleIntelFramebufferControllerj",
-				wrapTGLFramebufferInit, orgTGLFramebufferInit);
-			tglFramebufferInitReady = patcher.routeMultiple(index, &initRequest, 1, address, size);
-			IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGFramebufferInitRouted", tglFramebufferInitReady);
-			patcher.clearError();
 
 			{
 				KernelPatcher::RouteRequest hdcp[] {
@@ -11650,12 +11678,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				if (tglFBIRQReady) tglFBIRQReady=patcher.routeMultiple(index,irq,arrsize(irq),address,size);
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLFBIRQRouted",tglFBIRQReady);patcher.clearError();
 			}
-			KernelPatcher::RouteRequest request("__ZN31AppleIntelFramebufferController5startEP9IOService",
-				wrapTGLFramebufferStart, orgTGLFramebufferStart);
-			const bool ok = patcher.routeMultiple(index, &request, 1, address, size);
-			SYSLOG("igfx", "TGL framebuffer start route=%d", ok);
-			IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGFramebufferStartRouted", ok);
-			patcher.clearError();
+
 			{
 				KernelPatcher::RouteRequest observe("__ZN21AppleIntelFramebuffer11getDDCBlockEijjjPhPy", wrapTGLTopDDC, orgTGLTopDDC);
 				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
@@ -11681,18 +11704,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				patcher.clearError();
 			}
 			{
-				if (tglHDMIB) {
-					const auto validate = patcher.solveSymbol(index, "__ZN21AppleIntelFramebuffer22validateDetailedTimingEPvy", address, size);
-					const uint8_t call[] {0xE8,0x2A,0xF7,0xFE,0xFF,0x84,0xC0,0x74,0x1A};
-					if (validate && !memcmp(reinterpret_cast<void *>(validate+0x529), call, sizeof(call)))
-						tglHDMILaneCaller = validate+0x52E;
-					IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMILaneGuard316", tglHDMILaneCaller != 0);
-					patcher.clearError();
-					KernelPatcher::RouteRequest laneRoute("__ZN14AppleIntelPort16computeLaneCountEPK29IODetailedTimingInformationV2jjPj", wrapTGLComputeLanes, orgTGLComputeLanes);
-					const bool ok = patcher.routeMultiple(index, &laneRoute, 1, address, size);
-					IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMILaneRoute317", ok);
-					patcher.clearError();
-				}
+
 				KernelPatcher::RouteRequest observe("__ZN31AppleIntelFramebufferController22SetFbStatusOnNextProbeEP14AGDCFBOnline_t", wrapTGLFBOnline, orgTGLFBOnline);
 				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteFBOnline", routed);
@@ -11708,12 +11720,6 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				KernelPatcher::RouteRequest observe("__ZN21AppleIntelFramebuffer25getAttributeForConnectionEijPm", wrapTGLConnectionAttr, orgTGLConnectionAttr);
 				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteConnectionAttr", routed);
-				patcher.clearError();
-			}
-			{
-				KernelPatcher::RouteRequest observe("__ZN31AppleIntelFramebufferController12CallBackAGDCE31kAGDCRegisterLinkControlEvent_tmj", wrapTGLAGDCCallback, orgTGLAGDCCallback);
-				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteAGDCCallback", routed);
 				patcher.clearError();
 			}
 			{
@@ -11759,12 +11765,6 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				patcher.clearError();
 			}
 			{
-				KernelPatcher::RouteRequest observe("__ZN21AppleIntelFramebuffer13newUserClientEP4taskPvjPP12IOUserClient", wrapTGLFBUserClient, orgTGLFBUserClient);
-				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteFBUserClient", routed);
-				patcher.clearError();
-			}
-			{
 				KernelPatcher::RouteRequest observe("__ZN31AppleIntelFramebufferController18GetStreamAccessAUXEP21AGDCStreamAccessAUX_tS1_", wrapTGLAGDCAUX, orgTGLAGDCAUX);
 				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteAGDCAUX", routed);
@@ -11782,24 +11782,6 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 					IORegistryEntry::getRegistryRoot()->setProperty("TGLInactivePortsReady", routed && solved);
 					patcher.clearError();
 				}
-			}
-			{
-				KernelPatcher::RouteRequest observe("__ZN31AppleIntelFramebufferController19doLinkTrainingBeginEP25AGDCDPLinkTrainingBegin_t", wrapTGLTrainingBegin, orgTGLTrainingBegin);
-				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteTrainingBegin", routed);
-				patcher.clearError();
-			}
-			{
-				KernelPatcher::RouteRequest observe("__ZN31AppleIntelFramebufferController14doLinkTrainingEP18AGDCDPPortConfig_tS1_", wrapTGLTraining, orgTGLTraining);
-				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteTraining", routed);
-				patcher.clearError();
-			}
-			{
-				KernelPatcher::RouteRequest observe("__ZN31AppleIntelFramebufferController17doLinkTrainingEndEP23AGDCDPLinkTrainingEnd_t", wrapTGLTrainingEnd, orgTGLTrainingEnd);
-				const bool routed = patcher.routeMultiple(index, &observe, 1, address, size);
-				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteTrainingEnd", routed);
-				patcher.clearError();
 			}
 			{
 				KernelPatcher::RouteRequest observe("__ZN17AppleIntelPortHAL10enablePortEv", wrapTGLEnablePort, orgTGLEnablePort);
@@ -12006,8 +11988,6 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     patcher.clearError();
 				KernelPatcher::RouteRequest observations[] {
 					{"__ZN14AppleIntelPort12linkTrainingEP18AGDCDPPortConfig_t", wrapTGLPortTraining, orgTGLPortTraining},
-					{"__ZN21AppleIntelDisplayPath18getFirstPathByPortEP14AppleIntelPort", wrapTGLPathLookup, orgTGLPathLookup},
-					{"__ZN21AppleIntelDisplayPath8freePathEv", wrapTGLFreePath, orgTGLFreePath},
 					{"__ZN31AppleIntelFramebufferController9LightUpDPEP21AppleIntelFramebufferP21AppleIntelDisplayPathPK29IODetailedTimingInformationV2", wrapTGLLightUpDP, orgTGLLightUpDP},
 					{"__ZN31AppleIntelFramebufferController11LightUpTMDSEP21AppleIntelFramebufferP21AppleIntelDisplayPathPK29IODetailedTimingInformationV2", wrapTGLLightUpTMDS, orgTGLLightUpTMDS},
 					{"__ZN31AppleIntelFramebufferController14disableDisplayEP21AppleIntelFramebufferP21AppleIntelDisplayPathh", wrapTGLDisableDisplay, orgTGLDisableDisplay},
@@ -12034,9 +12014,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 					{"__ZN31AppleIntelFramebufferController31releaseResourceConfigurationSetEP28AGDCFBReleaseConfiguration_t", wrapTGLReleaseResources, orgTGLReleaseResources},
 					{"__ZN31AppleIntelFramebufferController30commitResourceConfigurationSetEP30AGDCResourceConfigurationSet_tS1_", wrapTGLCommitResources, orgTGLCommitResources},
 					{"__ZN31AppleIntelFramebufferController28testResourceConfigurationSetEP30AGDCResourceConfigurationSet_tS1_", wrapTGLTestResources, orgTGLTestResources},
-					{"__ZN21AppleIntelFramebuffer17attachDisplayPathEP21AppleIntelDisplayPath", wrapTGLAttachPath, orgTGLAttachPath},
-					{"__ZN21AppleIntelFramebuffer28allocateDisplayPathResourcesEjj", wrapTGLAllocatePathResources, orgTGLAllocatePathResources},
-					{"__ZN21AppleIntelFramebuffer14addDisplayPathEj", wrapTGLAddPath, orgTGLAddPath}
+					{"__ZN21AppleIntelFramebuffer17attachDisplayPathEP21AppleIntelDisplayPath", wrapTGLAttachPath, orgTGLAttachPath}
 				};
 				const bool routed = patcher.routeMultiple(index, observations, arrsize(observations), address, size);
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteResourceObservations", routed);
@@ -12143,20 +12121,12 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				patcher.clearError();
 			}
 			if (tglTrainingLeaseRequested) {
-				tglPathPoolLock = IORecursiveLockAlloc();
-				for (uint32_t ddi = 0; ddi < TGLPortCount; ++ddi) tglTrainingLeases[ddi].ddi = ddi;
 				KernelPatcher::SolveRequest symbols[] {
 					{"__ZN17AppleIntelPortHAL11disablePortEv", tglDisablePort},
 					{"__ZN31AppleIntelFramebufferController13disableClocksEP14AppleIntelPortS1_", tglDisableClocks}
 				};
-				KernelPatcher::RouteRequest routes[] {
-					{"__ZN21AppleIntelDisplayPath12allocatePathEv", wrapTGLAllocatePathAny, orgTGLAllocatePathAny},
-					{"__ZN21AppleIntelDisplayPath12allocatePathEj", wrapTGLAllocatePathFixed, orgTGLAllocatePathFixed},
-					{"__ZN31AppleIntelFramebufferController4stopEP9IOService", wrapTGLControllerStop, orgTGLControllerStop}
-				};
-				tglTrainingLeaseReady = tglPathPoolLock &&
-					patcher.solveMultiple(index, symbols, arrsize(symbols), address, size) &&
-					patcher.routeMultiple(index, routes, arrsize(routes), address, size);
+				tglTrainingLeaseReady = framebufferTrainingHooksReady &&
+					patcher.solveMultiple(index, symbols, arrsize(symbols), address, size);
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGRouteTrainingLease", tglTrainingLeaseReady);
 				IORegistryEntry::getRegistryRoot()->setProperty("TGLTrainingFreePath320", tglTrainingLeaseReady);
 				patcher.clearError();
@@ -12182,8 +12152,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			{
 				KernelPatcher::SolveRequest symbols[] {
 					{"__ZN19AppleIntelPowerWell17enablePowerWellPGEj", tglEnablePG},
-					{"__ZN19AppleIntelPowerWell18disablePowerWellPGEj", tglDisablePG},
-					{"__ZN14AppleIntelPort12getPortByDDIEj", tglPortByDDI}
+					{"__ZN19AppleIntelPowerWell18disablePowerWellPGEj", tglDisablePG}
 				};
 				if (patcher.solveMultiple(index, symbols, arrsize(symbols), address, size)) {
 					KernelPatcher::RouteRequest routes[] {
@@ -12798,7 +12767,7 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
 
 	tglTimeEvent(22, 0, false, 0, 0);
 	SYSLOG("igfx", "TGL framebuffer start entered");
-	bool result = FunctionCast(wrapTGLFramebufferStart, callbackXE->orgTGLFramebufferStart)(that, provider);
+	bool result = FunctionCast(wrapTGLFramebufferStart, callbackXE->orgFramebufferStart)(that, provider);
 	tglTimeEvent(22, 0, true, 0, result);
  tglRecordStartOrder(4,that,9,0,0,result);
 	tglFBIRQPublish();
@@ -15159,61 +15128,7 @@ bool XE::wrapTGLHDCP2Init(void *hdcp, void *path) {
 	return stored == manager;
 }
 
-bool XE::wrapTGLFramebufferInit(void *framebuffer, void *controller, uint32_t index) {
-	tglTimeEvent(23, index, false, 0, 0);
-	const auto initialized = FunctionCast(wrapTGLFramebufferInit, callbackXE->orgTGLFramebufferInit)(framebuffer, controller, index);
-	tglTimeEvent(23, index, true, 0, initialized);
-	if (!initialized) return false;
-	// This donor initializes the controller's shared MMIO manager but leaves
-	// the framebuffer's manager unset. Borrow it for direct register access;
-	// the controller owns it for the lifetime of its child framebuffers.
-	auto fb = static_cast<uint8_t *>(framebuffer);
-	auto ctl = static_cast<uint8_t *>(controller);
-	if (*reinterpret_cast<void **>(fb + 0x1D0) != controller) return false;
-	auto manager = *reinterpret_cast<uint8_t **>(ctl + 0xC40);
-	if (!manager || !*reinterpret_cast<void **>(manager + 0x50) ||
-		*reinterpret_cast<uint32_t *>(manager + 0x60) <= 0x60404) return false;
-	// All 15 controller-owned planes are constructed before framebuffer init.
-	// Check every plane identity before changing any manager reference.
-	for (uint32_t i = 0; i < 15; ++i) {
-		auto plane = *reinterpret_cast<uint8_t **>(ctl + 0xF58 + i * sizeof(void *));
-		if (!plane || *reinterpret_cast<uint32_t *>(plane + 0x7C) != i) {
-			SYSLOG("igfx", "TGL plane identity check failed index=%u", i);
-			return false;
-		}
-	}
-	// Six scalers precede the planes in controller construction order.
-	for (uint32_t i = 0; i < 6; ++i) {
-		auto scaler = *reinterpret_cast<uint8_t **>(ctl + 0xF28 + i * sizeof(void *));
-		if (!scaler || *reinterpret_cast<uint32_t *>(scaler + 0x1C) != i) {
-			SYSLOG("igfx", "TGL scaler identity check failed index=%u", i);
-			return false;
-		}
-	}
-	uint32_t scalerBound = 0;
-	for (uint32_t i = 0; i < 6; ++i) {
-		auto scaler = *reinterpret_cast<uint8_t **>(ctl + 0xF28 + i * sizeof(void *));
-		auto &scalerManager = *reinterpret_cast<void **>(scaler + 0x28);
-		if (!scalerManager) scalerManager = manager;
-		if (scalerManager == manager) ++scalerBound;
-	}
-	IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGScalerManagersBound", scalerBound, 32);
-	SYSLOG("igfx", "TGL scaler managers bound=%u", scalerBound);
-	uint32_t bound = 0;
-	for (uint32_t i = 0; i < 15; ++i) {
-		auto plane = *reinterpret_cast<uint8_t **>(ctl + 0xF58 + i * sizeof(void *));
-		auto &planeManager = *reinterpret_cast<void **>(plane + 0x90);
-		if (!planeManager) planeManager = manager;
-		if (planeManager == manager) ++bound;
-	}
-	IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGPlaneManagersBound", bound, 32);
-	SYSLOG("igfx", "TGL plane managers bound=%u", bound);
-	auto &stored = *reinterpret_cast<void **>(fb + 0x4A40);
-	if (!stored) stored = manager;
-	IORegistryEntry::getRegistryRoot()->setProperty("TGLWEGFramebufferManagerBound", stored == manager);
-	SYSLOG("igfx", "TGL framebuffer init index=%u manager bound=%d", index, stored == manager);
-	return true;
-}
+
 
 
 uint32_t XE::wrapTGLHPDState(void *port) {
@@ -16239,22 +16154,7 @@ uint32_t XE::wrapTGLSetEDID(void *controller, void *request) {
 	return r;
 }
 
-bool XE::wrapTGLComputeLanes(void *port, const void *timing, uint32_t bpp, uint32_t available, uint32_t *lanes) {
- const auto result = FunctionCast(wrapTGLComputeLanes, callbackXE->orgTGLComputeLanes)(port, timing, bpp, available, lanes);
- const auto caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
- auto config = XELPDonor::hdmiLaneConfig(port,caller,callbackXE->tglHDMILaneCaller);
- if (!config) return result;
- // r316: this exact validator incorrectly asks a TMDS connector for DP link lanes.
- // Leave lane count zero and continue the remaining native HDMI/scaler checks.
- // Preserve every DP call, other caller, positive result and nonzero lane result.
- if (lanes && config && XELPDonor::skipHDMIDPLanes(callbackXE->tglHDMIEligible(config),
-     caller==callbackXE->tglHDMILaneCaller,result,available,*lanes)) {
-  static uint32_t corrected {};
-  IORegistryEntry::getRegistryRoot()->setProperty("TGLHDMILaneCorrections316", __sync_add_and_fetch(&corrected, 1), 32);
-  return true;
- }
- return result;
-}
+
 
 uint32_t XE::wrapTGLFBOnline(void *controller, void *request) {
 	auto req = static_cast<uint32_t *>(request);
@@ -16292,12 +16192,7 @@ uint32_t XE::wrapTGLConnectionAttr(void *fb, int connection, uint32_t attribute,
 	return r;
 }
 
-uint32_t XE::wrapTGLAGDCCallback(void *controller, uint32_t event, unsigned long argument, uint32_t value) {
-	tglTrace(7, event, false, event, value, 0, argument);
-	const auto r = FunctionCast(wrapTGLAGDCCallback, callbackXE->orgTGLAGDCCallback)(controller, event, argument, value);
-	tglTrace(7, event, true, event, value, r, argument);
-	return r;
-}
+
 
 uint32_t XE::wrapTGLGPUCapability(void *controller, void *output) {
 	tglTrace(8, 0, false, output != nullptr, 0, 0, 0);
@@ -16367,16 +16262,13 @@ uint32_t XE::wrapTGLFBSetAttr(void *fb, uint32_t attribute, unsigned long value)
 	return r;
 }
 
-uint32_t XE::wrapTGLFBUserClient(void *fb, void *task, void *security, uint32_t type, void **client) {
-	const auto id = *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(fb) + 0x1DC);
-	tglSnapshotFB(fb);
-	tglTrace(15, id, false, type, 0, 0, 0);
-	const auto r = FunctionCast(wrapTGLFBUserClient, callbackXE->orgTGLFBUserClient)(fb, task, security, type, client);
-	tglTrace(15, id, true, type, 0, r, r == 0 && client && *client ? 1 : 0);
-	tglSnapshotFB(fb);
+void XE::observeFramebufferUserClient(void *fb,uint32_t type,void **client,uint32_t result) {
+    const auto id=FramebufferDonor::field<uint32_t>(fb,0x1DC);
+    tglTrace(15,id,true,type,0,result,result==0 && client && *client ? 1 : 0);
+    tglSnapshotFB(fb);
 	// A successful standard shared connection provides an on-demand read-only
 	// boundary after desktop composition; never take WindowServer's type0 client.
-	if (type == 1 && r == 0) {
+	if (type == 1 && result == 0) {
 		tglConnectionPublish();
 		tglProgramPublish();
 		tglPublishCursorLifetime();
@@ -16386,7 +16278,6 @@ uint32_t XE::wrapTGLFBUserClient(void *fb, void *task, void *security, uint32_t 
 		tglDPCDPublish();
 	}
 
-	return r;
 }
 
 uint32_t XE::wrapTGLAGDCAUX(void *controller, void *request, void *output) {

@@ -3,13 +3,13 @@
 from pathlib import Path
 import hashlib,re,subprocess,sys,tempfile
 r=Path(__file__).resolve().parents[1];s=(r/'WhateverXe/kern_xe.cpp').read_text()
-names=['processDisplay13FramebufferAGDC','wrapDisplay13FBUserClient','wrapDisplay13AGDCCallback']
+names=['processFramebufferAGDC','wrapFramebufferUserClient','wrapFramebufferAGDCCallback']
 functions='\n'.join(re.search(r'(?:bool|uint32_t) XE::'+n+r'\(.*?\n\}',s,re.S).group() for n in names)
 arrays={n:re.search(n+r'\[\]=\{([^}]+)',functions).group(1) for n in ['clientEntry','callbackEntry','dispatch']}
-assert 'if(!processDisplay13FramebufferAGDC(patcher,index,address,size))return false;' in s
+assert s.count('processFramebufferAGDC(patcher,index,address,size)')==1
 start=s[s.index('bool XE::wrapDisplay13FramebufferStart('):s.index('void XE::wrapAlderLakeNSetupWorkLoop(')]
 invalidate='if(s->tglObservationController==that)s->tglObservationController=nullptr;'
-assert start.index(invalidate)<start.index('orgDisplay13FramebufferStart')
+assert start.index(invalidate)<start.index('orgFramebufferStart')
 assert start.index('if(accepted)')<start.index('s->tglObservationController=that;')
 if len(sys.argv)>1:
  b=Path(sys.argv[1]).read_bytes()
@@ -47,10 +47,12 @@ struct KernelPatcher {
 struct XE {
  static XE *callbackXE;bool display13FramebufferRequested=true,display13FBABIReady=true;
  IOService *adlnTopologyController=nullptr,*tglObservationController=nullptr;
- uintptr_t orgDisplay13FBUserClient=0,orgDisplay13AGDCCallback=0;
- bool processDisplay13FramebufferAGDC(KernelPatcher &,size_t,uintptr_t,size_t);
- static uint32_t wrapDisplay13FBUserClient(IOService *,void *,void *,uint32_t,void **);
- static uint32_t wrapDisplay13AGDCCallback(IOService *,uint32_t,unsigned long,uint32_t);
+ uintptr_t orgFramebufferUserClient=0,orgFramebufferAGDCCallback=0;
+ bool processFramebufferAGDC(KernelPatcher &,size_t,uintptr_t,size_t);
+ static uint32_t wrapFramebufferUserClient(IOService *,void *,void *,uint32_t,void **);
+ static uint32_t wrapFramebufferAGDCCallback(IOService *,uint32_t,unsigned long,uint32_t);
+ static void observeFramebufferUserClient(IOService*,uint32_t,void**,uint32_t){};
+ static void tglTrace(unsigned,unsigned,bool,unsigned,unsigned,unsigned,unsigned long){};
  void restart(IOService *that){auto s=this;INVALIDATE}
 };
 XE *XE::callbackXE;
@@ -71,7 +73,7 @@ uint32_t originalCallback(IOService *c,uint32_t e,unsigned long a,uint32_t v){
 }
 void reset(XE &s){fb={};controller={};controller.meta.size=0x1c20;clientCalls=0;
  s.adlnTopologyController=s.tglObservationController=&controller;put(&fb,0x1d0,&controller);put(&controller,0x1bf8,(uintptr_t)receiver);}
-uint32_t open(void **client,unsigned type=0){return XE::wrapDisplay13FBUserClient(&fb,(void*)0x1234,(void*)0x5678,type,client);}
+uint32_t open(void **client,unsigned type=0){return XE::wrapFramebufferUserClient(&fb,(void*)0x1234,(void*)0x5678,type,client);}
 void clients(XE &s){
  for(unsigned bad=0;bad<7;++bad){reset(s);
   switch(bad){case 0:put(&controller,0x1bf8,uintptr_t(0));break;case 1:s.tglObservationController=nullptr;break;
@@ -92,30 +94,33 @@ void events(){
   put(&controller,0x1bf8,registered?(uintptr_t)receiver:0);put(&controller,0x1c00,(void*)nullptr);
   const uintptr_t arg=0x12345678fffffff0;const bool inc=event<=11&&(0x90fU&(1U<<event)),invoked=inc||event==4||event==128;
   expectedArgument=inc?uint32_t(arg+1):arg;expectedEvent=event;expectedValue=0x789;callbackCalls=0;
-  assert(XE::wrapDisplay13AGDCCallback(&controller,event,arg,expectedValue)==(invoked?(registered?result:kIOReturnNotReady):0));
+  assert(XE::wrapFramebufferAGDCCallback(&controller,event,arg,expectedValue)==(invoked?(registered?result:kIOReturnNotReady):0));
   assert(callbackCalls==(invoked&&registered?1U:0U));
  }
 }
 int main(int argc,char **argv){
- XE s;XE::callbackXE=&s;s.orgDisplay13FBUserClient=(uintptr_t)originalClient;s.orgDisplay13AGDCCallback=(uintptr_t)originalCallback;
- clients(s);events();void *client=nullptr;assert(open(&client,1000)==result+1000);
+ XE s;XE::callbackXE=&s;s.orgFramebufferUserClient=(uintptr_t)originalClient;s.orgFramebufferAGDCCallback=(uintptr_t)originalCallback;
+ clients(s);events();
+ s.display13FramebufferRequested=false;events();reset(s);put(&controller,0x1bf8,uintptr_t(0));
+ void *blocked=(void*)1;assert(open(&blocked)==kIOReturnNotReady && !blocked);
+ s.display13FramebufferRequested=true;void *client=nullptr;assert(open(&client,1000)==result+1000);
  const uint8_t clientEntry[]={CLIENT_ENTRY},callbackEntry[]={CALLBACK_ENTRY},dispatch[]={DISPATCH};
  std::vector<uint8_t>b(0x150000);
  memcpy(b.data()+0x273b4,clientEntry,sizeof(clientEntry));memcpy(b.data()+0x69df2,callbackEntry,sizeof(callbackEntry));memcpy(b.data()+0x69e1e,dispatch,sizeof(dispatch));
- for(unsigned bad=0;bad<8;++bad){KernelPatcher p;auto copy=b;s.display13FramebufferRequested=s.display13FBABIReady=true;size_t size=b.size();
+ for(unsigned bad=2;bad<8;++bad){KernelPatcher p;auto copy=b;s.display13FramebufferRequested=s.display13FBABIReady=true;size_t size=b.size();
   switch(bad){case 0:s.display13FramebufferRequested=false;break;case 1:s.display13FBABIReady=false;break;case 2:size=0x69e5f;break;
    case 3:p.delta=1;break;case 4:copy[0x273b4]^=1;break;case 5:copy[0x69df2]^=1;break;case 6:copy[0x69e21]^=1;break;case 7:p.fail=true;break;}
-  assert(!s.processDisplay13FramebufferAGDC(p,1,(uintptr_t)copy.data(),size));assert(p.routes==(bad==7?1U:0U));
+  assert(!s.processFramebufferAGDC(p,1,(uintptr_t)copy.data(),size));assert(p.routes==(bad==7?1U:0U));
  }
  s.display13FramebufferRequested=s.display13FBABIReady=true;KernelPatcher p;
- assert(s.processDisplay13FramebufferAGDC(p,1,(uintptr_t)b.data(),b.size())&&p.routes==1);
+ assert(s.processFramebufferAGDC(p,1,(uintptr_t)b.data(),b.size())&&p.routes==1);
  if(argc>1){
   std::ifstream f(argv[1],std::ios::binary);b.assign(std::istreambuf_iterator<char>(f),{});
   size_t length=((b.size()>0x150000?b.size():0x150000)+4095)&~size_t(4095);
   auto mem=(uint8_t*)mmap(nullptr,length,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);assert(mem!=MAP_FAILED);memcpy(mem,b.data(),b.size());
   uintptr_t baseVtable[256]{};baseVtable[0x788/8]=(uintptr_t)originalClient;put(mem,0xc8088,(uintptr_t)baseVtable);
   assert(!mprotect(mem,length,PROT_READ|PROT_WRITE|PROT_EXEC));
-  s.orgDisplay13FBUserClient=(uintptr_t)(mem+0x273b4);s.orgDisplay13AGDCCallback=(uintptr_t)(mem+0x69df2);
+  s.orgFramebufferUserClient=(uintptr_t)(mem+0x273b4);s.orgFramebufferAGDCCallback=(uintptr_t)(mem+0x69df2);
   clients(s);events();
   reset(s);put(&controller,0x1bf8,uintptr_t(0));assert(open(&client)==kIOReturnNotReady);
   using Register=uint32_t(*)(void*,void*);void *request[]={nullptr,(void*)receiver};

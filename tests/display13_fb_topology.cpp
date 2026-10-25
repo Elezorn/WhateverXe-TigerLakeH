@@ -50,15 +50,6 @@ int main() {
     assert(!apply(input.data(),Bytes,input.data(),wiring));
     assert(!apply(output.data(),Bytes-1,input.data(),wiring));
     assert(!apply(output.data(),Bytes,nullptr,wiring));
-    assert(skipDPLanes(output.data(),output.config(1),wiring,true,false,0,0));
-    assert(!skipDPLanes(output.data(),output.config(1),wiring,false,false,0,0));
-    assert(!skipDPLanes(output.data(),output.config(1),wiring,true,true,0,0));
-    assert(!skipDPLanes(output.data(),output.config(1),wiring,true,false,1,0));
-    assert(!skipDPLanes(output.data(),output.config(1),wiring,true,false,0,1));
-    assert(!skipDPLanes(output.data(),input.config(1),wiring,true,false,0,0));
-    assert(!skipDPLanes(output.data(),output.config(0),wiring,true,false,0,0));
-    auto dp=output;dp.config(1)[2]=1;
-    assert(!skipDPLanes(dp.data(),dp.config(1),wiring,true,false,0,0));
     // Both physical S1 routes and their simultaneous board description.
     for(unsigned mask=1;mask<=7;++mask) {
         const uint32_t prop[] {1,mask,(mask&1)?1U:0U,(mask&2)?2U:0U,(mask&4)?3U:0U};
@@ -108,7 +99,6 @@ int main() {
         for(unsigned d=0;d<9;++d) {
             const bool on=w.selected()&(1U<<d),hdmi=w.hdmi&(1U<<d);
             assert(selected(out.data(),out.config(d),w)==on);
-            assert(skipDPLanes(out.data(),out.config(d),w,true,false,0,0)==hdmi);
             if(on)assert(out.config(d)[2]==(hdmi?2U:1U));
             for(unsigned mode=0;mode<8;++mode)
                 assert(bootDDI(w,0x80000000|((d+1)<<27)|(mode<<24))==(hdmi&&mode<=1?d:~0U));

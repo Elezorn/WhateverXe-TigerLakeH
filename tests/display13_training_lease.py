@@ -25,7 +25,7 @@ for _ in range(struct.unpack_from('<I',b,16)[0]):
    end=b.index(b'\0',stroff+name);symbols[b[stroff+name:end].decode()]=value
  pos+=size
 # Entries and side-effect spans are also checked independently of route installation.
-contract=(r/'WhateverXe/kern_display13_training_native.hpp').read_text()
+contract=(r/'WhateverXe/kern_framebuffer_training_native.hpp').read_text()
 for name,off,values in re.findall(r'\{"([^"]+)",0x([0-9a-f]+),\{([^}]+)\}\}',contract):
  off=int(off,16);v=bytes(int(x,0) for x in values.split(','));assert symbols[name]==off and b[off:off+len(v)]==v
 for off,length,values in re.findall(r'\{0x([0-9a-f]+),(\d+),\{([^}]+)\}\}',contract):

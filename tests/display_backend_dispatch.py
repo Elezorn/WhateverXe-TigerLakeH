@@ -26,12 +26,12 @@ struct Kext {size_t loadIndex;};Kext kextIntelTGL{2};
 bool loadOnly=false;
 bool checkKernelArgument(const char *arg) {assert(!strcmp(arg,"-wex-adln-load-only"));return loadOnly;}
 struct XE {
- bool adlpDisplaySelected=false,adlpRenderRequested=false;
+ bool adlpDisplaySelected=false,adlpRenderRequested=false,tglRequested=false;
  bool display13FramebufferRequested=false,adlnRequested=false,adlnDetected=false;
  bool adlnNativeRequested=false,adlnNativeReady=false,display13BootReady=false,tglActive=false;
  Kext *currentFramebuffer=nullptr,*currentGraphics=nullptr;
  enum Call {None,Display13,Render,Rejected,LoadOnly,Display12};Call call=None;
- bool processDisplay13Framebuffer(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Display13;return true;}
+ bool processFramebufferKext(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=display13FramebufferRequested?Display13:Display12;return true;}
  bool processADLPLoadOnly(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Rejected;return true;}
  bool processTGLAccelerator(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Render;return true;}
  bool processAlderLakeNRejectedAccelerator(KernelPatcher&,size_t,mach_vm_address_t,size_t){call=Rejected;return true;}
