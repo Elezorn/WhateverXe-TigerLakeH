@@ -20,6 +20,7 @@
 #include "kern_display13_tc_mode.hpp"
 #include "kern_display13_tc_lightup.hpp"
 #include "kern_display13_tc_native.hpp"
+#include "kern_display13_port_wait.hpp"
 #include "kern_display13_tc_clock.hpp"
 #include "kern_display13_tc_dp.hpp"
 #include "kern_framebuffer_training_native.hpp"
@@ -6982,6 +6983,19 @@ bool XE::processDisplay13FramebufferSST(KernelPatcher &patcher,size_t index,mach
     memcmp(reinterpret_cast<void *>(address+0x60EB9),pcsABI,sizeof(pcsABI)) ||
     memcmp(reinterpret_cast<void *>(address+0x61468),lanesABI,sizeof(lanesABI)) ||
     memcmp(reinterpret_cast<void *>(address+0x61478),successABI,sizeof(successABI)))return false;
+ // Correct only the admitted Display13 native post-write wait. Native port
+ // ownership, DP stagger callsite, failure return and cleanup remain intact.
+ using namespace Display13PortWait;
+ const auto wait=reinterpret_cast<uint8_t *>(address+WaitOffset);
+ if(!waitKnown(wait,sizeof(WaitBefore)))return false;
+ uint8_t before[sizeof(WaitBefore)],after[sizeof(WaitBefore)];
+ memcpy(before,wait,sizeof(before));Display13PortWait::patch(after,before);
+ KernelPatcher::LookupPatch waitPatch{currentFramebuffer,before,after,sizeof(after),1};
+ patcher.applyLookupPatch(&waitPatch,wait,sizeof(after)+1);
+ const bool waitReady=patcher.getError()==KernelPatcher::Error::NoError && !memcmp(wait,after,sizeof(after));
+ patcher.clearError();if(!waitReady)return false;
+ uint32_t budgets[]={1,1000,3000};
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13PortWaitBudget",budgets,sizeof(budgets));
  KernelPatcher::RouteRequest routes[] {
   {pattern,wrapDisplay13TrainingPattern,orgDisplay13TrainingPattern},
   {signal,wrapDisplay13SignalLevels,orgDisplay13SignalLevels},
