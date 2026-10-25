@@ -4021,7 +4021,12 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
         IORegistryEntry::getRegistryRoot()->setProperty("N97NativeMapperAdmission",mapperAdmission,sizeof(mapperAdmission));
         const bool dp=bootDDI<7 && (board.dp&(1U<<bootDDI));
         const auto protocol=dp?AlderLakeN::GOPProtocol::DP:AlderLakeN::GOPProtocol::TMDS;
-        const auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0,dp);
+        auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0,dp);
+        if(bootDDI>=3 && bootDDI<7)pci->setProperty("WEXDisplay13TCBoot",&tc,sizeof(tc));
+        AlderLakeN::LinearPlan bootPlan;
+        uint32_t sourceProof[]={1,bootDDI,uint32_t(protocol),uint32_t(AlderLakeN::linearPlan(
+            display,bootPlan,bootDDI,protocol,bootDDI>=3?&tc:nullptr)),tc.valid()};
+        pci->setProperty("N97NativeBootSource",sourceProof,sizeof(sourceProof));
         const bool prefix=Display13Boot::reservedPrefix(io,display,bootstrapReady,bootDDI,xelpMemory,
             bootDDI>=3 ? &tc : nullptr,protocol);
         auto aperture=pci->getDeviceMemoryWithRegister(0x18);

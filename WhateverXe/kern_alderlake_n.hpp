@@ -218,8 +218,12 @@ inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi,const
     const unsigned lanes=((trans>>1)&7)+1;
     // Linux v6.12 i915_reg.h: SST, normal training, scrambling, no FEC/MST,
     // port sync, HDCP, DSC or joined pipes. Enhanced framing may be on or off.
+    // intel_ddi_read_func_ctl classifies SST from MODE_SELECT, not the MST
+    // payload-allocation bit. Firmware may leave bit8 set on an SST GOP;
+    // preserve it and include it in the unchanged-source check, never clear it
+    // on an enabled transcoder or infer an MST transport from that bit alone.
     return (trans&0xFF700000U)==(0x82000000U|((ddi+1)<<27)) &&
-        !(trans&((1U<<15)|(1U<<9)|(1U<<8))) && !ctl2 &&
+        !(trans&((1U<<15)|(1U<<9))) && !ctl2 &&
         (lanes==1 || lanes==2 || lanes==4) && ((buf>>1)&7)==lanes-1 &&
         (buf&(typeC && tc->ownershipOptional?0x80000080U:0x800000C0U))==
             (typeC && !tc->ownershipOptional?0x80000040U:0x80000000U) &&

@@ -145,7 +145,27 @@ static void unownedDP() {
         assert(nativeMemory(hdmi,ddi,optional).status==Display13FBMemory::Status::DisplayState);
     }
 }
+static void sstPayloadReadout() {
+    for(unsigned ddi=3;ddi<=6;++ddi) {
+        auto io=dpFirmware(ddi,4,true);
+        // Observed firmware SST source: bit8 set, enhanced framing, four lanes.
+        // The coordinate translation is synthetic for the other TC slots.
+        io.regs[0x60400]|=1U<<8;
+        io.regs[0x60030]=0x7e1a6666;io.regs[0x60040]=0x23333;io.regs[0x60044]=0x80000;
+        const auto tc=Display13TC::Boot::capture(io,true,ddi,0);
+        const auto source=readDisplay(io,true);
+        assert(Display13Boot::prepareLinear(io,source,true,ddi,io.memory,&tc,GOPProtocol::DP).status==LinearStatus::Success);
+        assert(io.regs[0x60400]==(0x82030106U|((ddi+1)<<27)));
+        const auto after=readDisplay(io,true);
+        assert(nativeMemory(io,ddi,tc,&after).status==Display13FBMemory::Status::Complete);
+        io.regs[0x60400]^=1U<<8;
+        assert(!dpSourceUnchanged(io,source,0,ddi,0,&tc));
+        io.regs[0x60400]|=1U<<24; // Real MST mode still rejected.
+        assert(!dpSource(readDisplay(io,true),0,ddi,&tc));
+    }
+}
 int main() {
+    sstPayloadReadout();
     unownedDP();
     unsigned cases=0;
     for(unsigned ddi=3;ddi<=6;++ddi) {
