@@ -176,6 +176,12 @@ template<class IO> DisplayReadout readDisplay(IO &io, bool admitted) {
         for (auto offset : transport)
             add(offset + 0x1000 * pipe);
         add(0x46140 + 4 * pipe);
+        // Display11+ has two scalers per powered pipe (Linux display runtime).
+        // Capture the binding and destination, without touching power/coefficients.
+        for(unsigned scaler=0;scaler<2;++scaler) {
+            const auto base=0x68170+0x800*pipe+0x100*scaler;
+            add(base);add(base+4);add(base+0x10);
+        }
         // Display13 DSC/joiner belongs to the corresponding pipe well.
         add(0x78000 + 0x200 * pipe);add(0x78004 + 0x200 * pipe);
     }
@@ -308,6 +314,42 @@ struct LinearResult {
     uint32_t pipe {}, writes {}, framesBefore {}, framesAfter {}, restored {};
 };
 
+// Qualify a firmware pipe scaler separately from an unscaled linear GOP.
+// PIPESRC is width:height minus one; scaler WIN_SZ is width:height, not
+// minus one. Only one pipe-bound scaler covering the complete output is
+// accepted. Plane-bound/planar/programmed-factor scaling is not this contract.
+inline bool bootGeometry(const DisplayReadout &r,unsigned pipe,const XELPGeometry::Linear &geometry,
+                         uint32_t ht,uint32_t vt) {
+    if(XELPGeometry::timing(geometry,ht,vt))return true;
+    if(!geometry.valid || pipe>=3 || ht==UINT32_MAX || vt==UINT32_MAX ||
+       (ht&0xC000C000) || (vt&0xC000C000))return false;
+    uint32_t src=0;
+    if(!value(r,0x6001C+0x1000*pipe,src) ||
+       src!=(((geometry.width-1)<<16)|(geometry.height-1)))return false;
+    const auto width=(ht&0x3FFF)+1,height=(vt&0x3FFF)+1;
+    if(((ht>>16)&0x3FFF)+1<width || ((vt>>16)&0x3FFF)+1<height ||
+       width<geometry.width || height<geometry.height)return false;
+    unsigned active=0;
+    for(unsigned scaler=0;scaler<2;++scaler) {
+        const auto base=0x68170+0x800*pipe+0x100*scaler;
+        uint32_t ctl=0,pos=0,size=0;
+        if(!value(r,base+0x10,ctl) || !value(r,base,pos) || !value(r,base+4,size))return false;
+        if(!(ctl&0x80000000U))continue;
+        if((ctl&((7U<<25)|(1U<<29)|(1U<<19))) || pos || size!=((width<<16)|height))return false;
+        ++active;
+    }
+    return active==1;
+}
+template<class IO> bool bootGeometryUnchanged(IO &io,const DisplayReadout &r,unsigned pipe) {
+    // The accepted scaler stays live while the primary plane changes GGTT mode.
+    // Any captured source/timing/scaler drift invalidates the handoff.
+    const uint32_t regs[] {0x60000+0x1000*pipe,0x6000C+0x1000*pipe,0x6001C+0x1000*pipe,
+        0x68170+0x800*pipe,0x68174+0x800*pipe,0x68180+0x800*pipe,
+        0x68270+0x800*pipe,0x68274+0x800*pipe,0x68280+0x800*pipe};
+    for(auto reg:regs) {uint32_t v=0;if(value(r,reg,v) && io.read(reg)!=v)return false;}
+    return true;
+}
+
 // First Display 13 operation: reinitialize an existing linear RGB primary
 // plane on the explicitly selected Combo, or fixed TC with a live link
 // certificate. The default remains B for
@@ -342,7 +384,7 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
     p.geometry=XELPGeometry::linear(p.control,p.stride,p.size,p.position,p.offset);
     if(!p.geometry.valid || (p.surface&4095) || p.surface!=surfLive ||
        ((trans>>20)&7)!=0 || (pipeConf&0xC0000000)!=0xC0000000 ||
-       !XELPGeometry::timing(p.geometry,htotal,vtotal))return LinearStatus::NotLinearFHD;
+       !bootGeometry(r,p.pipe,p.geometry,htotal,vtotal))return LinearStatus::NotLinearFHD;
     // DPT disable is global on Display 13. Exclude all other active planes
     // and cursors, including planes on powered but inactive pipes.
     for (unsigned pipe=0;pipe<3;++pipe) {
@@ -372,6 +414,7 @@ template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout 
     const auto write=[&](uint32_t reg,uint32_t v){io.write(reg,v);++out.writes;io.read(reg);};
     bool linkChanged=false;
     const auto linkStable=[&] {
+        if(!bootGeometryUnchanged(io,r,p.pipe))linkChanged=true;
         if(protocol==GOPProtocol::DP && !dpSourceUnchanged(io,r,p.pipe,ddi,0,tc))linkChanged=true;
         if(ddi>=3 && (!tc || !tc->unchanged(io)))linkChanged=true;
         return !linkChanged;

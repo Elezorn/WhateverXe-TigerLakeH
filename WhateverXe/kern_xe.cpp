@@ -3852,6 +3852,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 		uint32_t read(uint32_t offset) const { return *reinterpret_cast<volatile uint32_t *>(base + offset); }
 		void write(uint32_t offset,uint32_t value) { *reinterpret_cast<volatile uint32_t *>(base + offset)=value; }
 		void delay() { IODelay(100); }
+		void delayUs(unsigned us) { IODelay(us); }
 		uint64_t readPTE(uint32_t offset) { return *reinterpret_cast<volatile uint64_t *>(base+offset); }
 		void writePTE(uint32_t offset,uint64_t value) { *reinterpret_cast<volatile uint64_t *>(base+offset)=value; }
 		uint32_t apertureRead(uint32_t offset) { return *reinterpret_cast<volatile uint32_t *>(aperture+offset); }
