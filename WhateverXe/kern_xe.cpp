@@ -9176,6 +9176,10 @@ void XE::wrapDisplay13WMArmUpdate(IOService *fb) {
 	record[11]=static_cast<uint32_t>(retired);record[12]=old;record[13]=c.dbuf.unretired;
 	record[14]=c.dbuf.owned;record[15]=c.pipe[pipe].watermarkClockHz;
 	if(result.status!=Display13WM::Status::Complete && result.status!=Display13WM::Status::Unavailable) {
+		uint64_t proof[16] {1,pipe,static_cast<uint32_t>(result.status),static_cast<uint32_t>(result.check),
+			result.pipeControl,result.planeControl,result.cursorControl,result.checkRegister,result.checkValue,
+			result.clockHz,actualHz,result.frameBefore,result.frameAfter,result.lastReg,result.expected,result.observed};
+		adlnPublishMemory("N97FBWMLatchFailure",pipe,proof,sizeof(proof),true);
 		uint64_t cursor[8] {1,pipe};Display13FBDBUFIO readout {c.map};
 		if(Display13FBIRQ::powered(readout.read(0x45404),pipe)) {
 			cursor[2]=readout.read(0x70080+0x1000*pipe);

@@ -349,9 +349,30 @@ int main() {
         assert(latch(wrongWM,wrongWM.snapshot(p)).status==Status::Readback);
         LatchIO wrongLine(p);wrongLine.moveToPipe(pipe);wrongLine.regs[0x45270+4*pipe]=118;
         assert(latch(wrongLine,wrongLine.snapshot(p)).status==Status::Readback);
+        // The diagnostic must retain the rejecting branch and the values
+        // already consumed by it, including pipe C, without probing farther.
+        LatchIO disabledPlane(p);disabledPlane.moveToPipe(pipe);
+        disabledPlane.regs[0x70180+0x1000*pipe]&=~Enabled;
+        const auto controls=latch(disabledPlane,disabledPlane.snapshot(p));
+        assert(controls.status==Status::Conflict && controls.check==LatchCheck::Controls &&
+            controls.pipeControl==0xC0000000 && controls.planeControl==0x04000000 &&
+            !controls.cursorControl && disabledPlane.reads.back()==0x70080+0x1000*pipe && disabledPlane.writes.empty());
+        LatchIO peerPlane(p);peerPlane.moveToPipe(pipe);peerPlane.regs[0x70280+0x1000*pipe]=Enabled;
+        const auto peer=latch(peerPlane,peerPlane.snapshot(p));
+        assert(peer.status==Status::Conflict && peer.check==LatchCheck::OtherPlane &&
+            peer.checkRegister==0x70280+0x1000*pipe && peer.checkValue==Enabled &&
+            peerPlane.reads.back()==peer.checkRegister && peerPlane.writes.empty());
+        LatchIO otherClock(p);otherClock.moveToPipe(pipe);auto beforeClock=otherClock.snapshot(p);
+        otherClock.clock=384000000;
+        const auto clockProof=latch(otherClock,beforeClock);
+        assert(clockProof.status==Status::Conflict && clockProof.check==LatchCheck::Clock &&
+            clockProof.clockHz==384000000 && otherClock.writes.empty());
         for(auto control:{1U,0x80000000U,UINT32_MAX}) {
             LatchIO dsb(p);dsb.moveToPipe(pipe);dsb.regs[0x70B08+0x1000*pipe]=control;
-            assert(latch(dsb,dsb.snapshot(p)).status==Status::Conflict && !dsb.elapsed);
+            const auto proof=latch(dsb,dsb.snapshot(p));
+            assert(proof.status==Status::Conflict && !dsb.elapsed && proof.check==LatchCheck::DSB &&
+                proof.checkRegister==0x70B08+0x1000*pipe && proof.checkValue==control &&
+                dsb.reads.back()==proof.checkRegister && dsb.writes.empty());
         }
     }
     // PW2 is a physical prerequisite for pipe B/C even if its own well is on.
