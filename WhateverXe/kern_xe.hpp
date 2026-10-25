@@ -106,6 +106,8 @@ private:
     static void wrapADLSPowerPG(void *power,bool enable,uint32_t requested);
     mach_vm_address_t orgADLSEnableClocks {};
     static bool adlsClockTarget(void *controller,void *port,void *otherPort);
+    static bool adlsBeginClock(void *controller,void *port,bool enable,bool &keepPLL);
+    static void adlsEndClock();
     static void wrapADLSEnableClocks(void *controller,void *port,void *otherPort,uint32_t *params);
     mach_vm_address_t orgADLSPortInit {};
     static bool wrapADLSPortInit(void *port,uint32_t *config);
