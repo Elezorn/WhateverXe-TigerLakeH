@@ -3268,6 +3268,14 @@ bool tglMEILiveSerialize(void *, void *, OSSerialize *serializer) {
 	return result;
 }
 
+// Bounded main-link AUX decisions. Copy only values already inspected by the
+// lifetime guard; collection does not issue MMIO or native power operations.
+struct TGLComboAUXDecision { uint64_t ns; uint32_t word[14]; };
+static TGLComboAUXDecision tglComboAUXFirst[64] {},tglComboAUXLast[64] {};
+static uint32_t tglComboAUXCount {};
+static void tglComboAUXDecisionRecord(uint32_t *word);
+static bool tglComboAUXDecisionSerialize(void *,void *,OSSerialize *);
+
 struct TGLAUXRecord {
 	uint64_t ns, thread;
 	uint32_t word[28];
@@ -3280,6 +3288,27 @@ uint32_t tglAUXCounts[9] {};
 // copies software records only; it never enters native mode/power or MMIO.
 TGLAUXRecord tglAUXControl[9][64] {};
 uint32_t tglAUXControlCounts[9] {};
+
+static void tglComboAUXDecisionRecord(uint32_t *word) {
+ if(!tglAUXLock)return;
+ TGLComboAUXDecision r {};uint64_t ticks;clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,&r.ns);
+ memcpy(r.word,word,sizeof(r.word));
+ IOSimpleLockLock(tglAUXLock);r.word[0]=++tglComboAUXCount;
+ if(r.word[0]<=64)tglComboAUXFirst[r.word[0]-1]=r;
+ tglComboAUXLast[(r.word[0]-1)%64]=r;IOSimpleLockUnlock(tglAUXLock);
+}
+static bool tglComboAUXDecisionSerialize(void *,void *,OSSerialize *serializer) {
+ if(!tglAUXLock)return false;
+ constexpr size_t size=16+sizeof(tglComboAUXFirst)+sizeof(tglComboAUXLast);
+ auto copy=static_cast<uint8_t *>(IOMalloc(size));if(!copy)return false;
+ auto h=reinterpret_cast<uint32_t *>(copy);h[0]=1;h[2]=64;h[3]=sizeof(TGLComboAUXDecision);
+ IOSimpleLockLock(tglAUXLock);h[1]=tglComboAUXCount;
+ memcpy(copy+16,tglComboAUXFirst,sizeof(tglComboAUXFirst));
+ memcpy(copy+16+sizeof(tglComboAUXFirst),tglComboAUXLast,sizeof(tglComboAUXLast));
+ IOSimpleLockUnlock(tglAUXLock);
+ auto data=OSData::withBytes(copy,size);IOFree(copy,size);if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
+}
 
 // Bounded lifecycle evidence, separate from bulk AUX. Capture arguments and
 // existing native results only; never perform diagnostic hardware accesses.
@@ -12983,6 +13012,9 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  if(auto live=OSSerializer::forTarget(nullptr,tglDPCDSerialize)) {
   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeDPCDLive",live);live->release();
  }
+ if(auto live=OSSerializer::forTarget(nullptr,tglComboAUXDecisionSerialize)) {
+  IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeComboAUXDecisions",live);live->release();
+ }
  for(uintptr_t ddi=0;ddi<=8;++ddi) {
   if(ddi==2)continue; // TGL combo A/B and TC D..I; no combo C.
   if(auto live=OSSerializer::forTarget(nullptr,tglAUXLiveSerialize,reinterpret_cast<void *>(ddi))) {
@@ -18873,46 +18905,66 @@ void XE::wrapTGLPortWriteReg(void *port, uint32_t reg, uint32_t value) {
 // must not accumulate refs and an unrelated port cannot release our reference.
 void XE::tglComboAUXReference(void *port,bool acquire) {
 	auto s=callbackXE;
+ // seq, reason, DDI, acquire, type, flags, mode, owner, IO, buffer,
+ // native refs before/after, AUX state, wait us. UINT_MAX means unsampled.
+ uint32_t observed[14] {0,0,UINT32_MAX,acquire,UINT32_MAX,UINT32_MAX,UINT32_MAX,0,
+  UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX,0};
+ const auto finish=[&](uint32_t reason){observed[1]=reason;tglComboAUXDecisionRecord(observed);};
 	auto p=static_cast<uint8_t *>(port);
 	auto ctl=static_cast<uint8_t *>(s->tglObservationController);
 	auto &f=s->tglTCNativeFunctions; // shared native AUX API, not TC admission
 	if(!p || !ctl || !s->tglActive || !s->tglComboAUXLifetimeReady || !f.complete() ||
-		(XELP::displayAdapter(s->xeProfile.family)!=XELP::DisplayAdapter::TGL && !s->adlsDisplaySelected) || *f.controllerSlot!=ctl)return;
+		(XELP::displayAdapter(s->xeProfile.family)!=XELP::DisplayAdapter::TGL && !s->adlsDisplaySelected) || *f.controllerSlot!=ctl)return finish(1);
 	auto config=*reinterpret_cast<uint32_t **>(p+0x548);
-	const bool adls=s->adlsDisplaySelected && s->adlsWiring.boundSST(s->tglPlatformCopy,config);
+	if(config) {observed[2]=config[0];observed[4]=config[2];observed[5]=config[3];}
+ observed[6]=*reinterpret_cast<uint32_t *>(p+0x550);
+ const bool adls=s->adlsDisplaySelected && s->adlsWiring.boundSST(s->tglPlatformCopy,config);
  const bool fixed=!s->adlsDisplaySelected && TGLComboDP::bound(s->tglComboDPMask,s->tglPlatformCopy,config);
- if(s->adlsDisplaySelected && !adls)return;
-    if(!config || (config[0]>1 && !adls))return;
+ if(s->adlsDisplaySelected && !adls)return finish(2);
+    if(!config || (config[0]>1 && !adls))return finish(3);
 	const auto ddi=config[0];
 	auto &owner=s->tglComboAUXOwners[ddi];
-	if(acquire ? owner!=nullptr : owner!=port)return;
+	observed[7]=owner==port?1:owner?2:0;
+ if(acquire ? owner!=nullptr : owner!=port)return finish(4);
 	auto power=*reinterpret_cast<uint8_t **>(ctl+0xC8);
 	auto access=*reinterpret_cast<uint8_t **>(ctl+0xC40);
 	if(!power || !access || *reinterpret_cast<void **>(power+0x10)!=ctl ||
 		*reinterpret_cast<void **>(power+0x78)!=access ||
 		*reinterpret_cast<void **>(p+0x578)!=access ||
 		*reinterpret_cast<uint32_t *>(access+0x60)<(0x64004U+0x100*ddi) ||
-		!*reinterpret_cast<void **>(access+0x50))return;
+		!*reinterpret_cast<void **>(access+0x50))return finish(5);
 	const uint32_t buffer=0x64000+0x100*ddi,mask=3U<<(2*ddi);
-	if(*reinterpret_cast<uint32_t *>(p+0x590)!=buffer)return;
+	if(*reinterpret_cast<uint32_t *>(p+0x590)!=buffer)return finish(6);
     XELP::Display12SSTRoute route;
     const XELP::Display12SSTRoutes routes{adls?s->adlsWiring.dp:fixed?s->tglComboDPMask:0,0,0};
 	if(acquire && (config[3]!=0 || p[0x117] ||
         !routes.resolve(ddi,config[2],*reinterpret_cast<uint32_t *>(p+0x550),route) || !route.retainComboAUX() ||
         !s->firmwarePorts.valid() || !(s->firmwarePorts.present&(1U<<ddi)) ||
         !s->firmwarePorts.port[ddi].dp() ||
-        (!adls && !fixed && (config[2]!=0 || !s->firmwarePorts.port[ddi].internal()))))return;
+        (!adls && !fixed && (config[2]!=0 || !s->firmwarePorts.port[ddi].internal()))))return finish(7);
 	const auto io=wrapTGLRegisterRead(access,0x45454);
-	if(io==~0U || (io&mask)!=mask)return;
+	observed[8]=io;
+ if(io==~0U || (io&mask)!=mask)return finish(8);
 	const auto bufferState=wrapTGLRegisterRead(access,buffer);
-	if(bufferState==~0U || (bufferState&0x80000000U))return;
+	observed[9]=bufferState;
+ if(bufferState==~0U || (bufferState&0x80000000U))return finish(9);
 	auto &refs=*reinterpret_cast<uint32_t *>(power+0x54+4*ddi);
-	const uint32_t before=refs;
+	const uint32_t before=refs;observed[10]=before;
 	uint32_t aux=0,reason=0;
 	if(acquire) {
-		if(before==~0U)return;
+		if(before==~0U)return finish(10);
 		f.getAux(port);
 		aux=wrapTGLRegisterRead(access,0x45444);
+        // Native AUX get waits only 20 x IODelay(1). Linux v6.12
+        // hsw_wait_for_power_well_enable allows 1ms (AUX has no specified
+        // 20us limit). Keep our reference while the owned request settles.
+        // Stop on request loss/unavailable MMIO, never turn on the transmitter
+        // to make AUX ready: Combo AUX must be ready before DDI_BUF_ENABLE.
+        for(unsigned elapsed=0;refs==before+1 && aux!=~0U &&
+            (aux&mask)!=(mask) && (aux&(mask&0xAAAAAAAAU)) && elapsed<1000;elapsed+=10) {
+            IODelay(10);aux=wrapTGLRegisterRead(access,0x45444);
+            observed[13]=elapsed+10;
+        }
 		if(refs==before+1 && aux!=~0U && (aux&mask)==mask)owner=port;
 		else {
 			reason=1;
@@ -18925,6 +18977,8 @@ void XE::tglComboAUXReference(void *port,bool acquire) {
 	} else reason=2;
 	const uint64_t detail[]={before,refs,aux,bufferState,owner==port};
 	tglTransitionRecord(74,true,port,ddi,acquire,reason,detail,sizeof(detail));
+ observed[7]=owner==port?1:owner?2:0;observed[11]=refs;observed[12]=aux;
+ finish(reason?10+reason:0);
 }
 
 uint32_t XE::wrapTGLDisablePort(void *port) {
@@ -18939,6 +18993,16 @@ uint32_t XE::wrapTGLEnablePort(void *port) {
 	tglTrace(21, id, false, 0, 0, 0, 0);
 	tglSnapshotTransmitter(port, false, 0);
 	tglComboAUXReference(port,true);
+    // A qualified fixed Combo link cannot train after its prerequisite failed.
+    // Return through the native failure path before any buffer-enable write.
+    const auto s=callbackXE;
+    const bool fixedDP=config && (s->adlsDisplaySelected ?
+        s->adlsWiring.boundSST(s->tglPlatformCopy,config) :
+        TGLComboDP::bound(s->tglComboDPMask,s->tglPlatformCopy,config));
+    if(fixedDP && s->tglComboAUXOwners[id]!=port) {
+        tglTrace(21,id,true,kIOReturnNotReady,0,kIOReturnNotReady,0);
+        return kIOReturnNotReady;
+    }
 	const auto original = FunctionCast(wrapTGLEnablePort, callbackXE->orgTGLEnablePort)(port);
 	if(original)tglComboAUXReference(port,false); // only releases if buffer stayed off
 	auto r = original;
