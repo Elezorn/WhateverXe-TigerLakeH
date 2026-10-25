@@ -33,6 +33,18 @@ if len(sys.argv)>1:
         assert symbols[symbol]==offset and donor[offset:offset+len(prefix)]==prefix
     for name,offset in offsets.items():
         assert donor[offset:offset+len(arrays[name])]==arrays[name]
+    # Independently resolve the native startup and first full DP modeset calls.
+    # Byte matching alone must not be mistaken for a call-graph explanation.
+    for at,symbol in [
+        (0x3fdd2,'__ZN14AppleIntelPort14getPortByIndexEj'),
+        (0x3fe3c,'__ZN19AppleIntelPowerWell4initEP31AppleIntelFramebufferController'),
+        (0x3ff44,'__ZN31AppleIntelFramebufferController16setupBootDisplayEv'),
+        (0x4fec7,'__ZN31AppleIntelFramebufferController14disableDisplayEP21AppleIntelFramebufferP21AppleIntelDisplayPathh'),
+        (0x4ffd4,'__ZN31AppleIntelFramebufferController9LightUpDPEP21AppleIntelFramebufferP21AppleIntelDisplayPathPK29IODetailedTimingInformationV2')]:
+        assert donor[at]==0xe8 and at+5+int.from_bytes(donor[at+1:at+5],'little',signed=True)==symbols[symbol]
+    for name in ['bootPortInit','bootPowerCall','bootSetupCall','modeStopCall','dpLightCall']:
+        assert '{'+name+'Offset,'+name+',sizeof('+name+')}' in install
+    print('PASS native port initialization before boot Mode acquisition, full stop before DP LightUp')
     # The path error branch calls disableDisplay before returning through its
     # normal unlock path. These are independent of the new outer early return.
     assert donor[0x50004:0x50009]==bytes.fromhex('4585ed7437')

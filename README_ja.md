@@ -92,7 +92,7 @@ GPUはPCI device IDから自動選択します。対応範囲内ではファー�
 
 Tiger Lakeはnative controllerとAUX配線が一致するVBTの固定DisplayPortをTC1〜TC4で自動選択します。固定DPとDP Alt Modeは検出したFIA構成を使用します。TC3/TC4の固定DPと非modular FIAは実装済み・実機未検証です。非modular FIAのprobeには対応するCompatビルドも使用してください。TC5/TC6と交差AUX配線には追加のbackend対応が必要です。
 
-Display13ではADL-NとADL-P/RPL-Pに共通のVBT選択を使い、Combo A/Bと固定TC1〜4のHDMI配線を扱います。TC配線には固定TC capabilityを持つ対応Compat providerが必要です。従来のADL-N HDMI明示propertyはCombo専用のままです。HDMIから起動したDisplay13 controllerに対して、固定TC1〜TC4のSST DisplayPortを試験的に実装しています。VBTのAUX配線が一致することと、対応するCompatビルドが必要です。ADL-HではDP→HDMI変換器を介した表示・再接続と、Metal・OpenGL・動画加速の維持を確認しています。他のDisplay13 familyと直接DP接続の表示先は未検証です。DPからの起動、Combo DP、MST、USB-C DP Alt Mode、Thunderbolt、交差AUX配線は未対応です。
+Display13ではADL-NとADL-P/RPL-Pに共通のVBT選択を使い、Combo A/Bと固定TC1〜4のHDMI配線を扱います。TC配線には固定TC capabilityを持つ対応Compat providerが必要です。従来のADL-N HDMI明示propertyはCombo専用のままです。固定TC1〜TC4のSST DisplayPortを試験的に実装しています。VBTのAUX配線が一致することと、対応するCompatビルドが必要です。ADL-HではDP→HDMI変換器を介した表示・再接続と、Metal・OpenGL・動画加速の維持を確認しています。他のDisplay13 familyと直接DP接続の表示先は未検証です。固定TC DPからの起動引継ぎは実装済み・実機未検証です。firmwareがpipe Aで1つのSST表示を出力し、対応するlinear RGB surfaceと検証可能なstolen memory mappingを使っていることが条件です。複数のfirmware DP表示、Combo DP、MST、USB-C DP Alt Mode、Thunderbolt、交差AUX配線は未対応です。
 
 ADL-P/RPL-Pは物理IDとfuseから求めた資源で共有Display13バックエンドを選択します。固定HDMI配線はVBTから取得し、`-wex-noaccel`でFramebufferのみの動作を維持します。旧9A49 donor選択も受け付けますが不要です。モバイル系IDと対応providerを含むGraphics資材が必要で、Graphics 0.2.0には含まれていません。対応するCompat providerは、起動を許可したDisplay13 framebufferのclientだけにAGDP personalityを提供します。既定policyでcallback登録を有効にし、board-IDごとの上書き設定を不要にします。
 

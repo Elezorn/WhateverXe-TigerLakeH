@@ -139,6 +139,19 @@ int main() {
             bad=w;bad.dp=1U<<d;assert(!supportedWiring(bad,true));
         }
     }
+    // DP boot is an explicit selection request, followed by source/power proof.
+    // Exercise every physical TC slot with an independent HDMI neighbour.
+    for(unsigned d=3;d<=6;++d) {
+        Display13OutputWiring w;w.valid=true;w.dp=1U<<d;w.hdmi=2;w.ddc[1]=2;
+        assert(supportedWiring(w,true));
+        for(unsigned port=0;port<7;++port)for(unsigned mode=0;mode<8;++mode) {
+            const auto trans=0x80000000U|((port+1)<<27)|(mode<<24);
+            const auto expected=port==d && mode==2?d:port==1 && mode<=1?1U:UINT32_MAX;
+            assert(bootstrapDDI(w,true,1,1,trans,true)==expected);
+            assert(bootstrapDDI(w,true,1,1,trans)==(port==1 && mode<=1?1U:UINT32_MAX));
+            assert(bootstrapDDI(w,true,3,3,trans,true)==UINT32_MAX);
+        }
+    }
     // A failure on the last selected predecessor must not publish a copy.
     {const uint32_t prop[]={1,7,1,2,3};const auto w=TGLHDMIWiring::fromProperty(prop,sizeof(prop));
      Platform in,out;memset(out.data(),0x5a,Bytes);auto saved=out;in.config(2)[2]=0;

@@ -32,19 +32,23 @@ struct Result {Status status {Status::Invalid};uint32_t before {},after {},write
 struct Boot {
     Port port;unsigned pipe {3};
     uint32_t power {},ddiPower {},ready {},buffer {},clock {},pll {},transClock {};
+    // Linux intel_tc_port_init_mode reconnects an enabled fixed legacy port
+    // left unowned by firmware. Only explicit DP source validation may request
+    // this witness; the later Mode acquisition must still take ownership.
+    bool ownershipOptional {};
     bool valid() const {
         const auto powered=pipe<3 ? 5U|(1U<<(10+2*pipe)) : 0U;
         return port.ddi>=3 && port.ddi<=6 && pipe<3 &&
             power!=UINT32_MAX && (power&powered)==powered && ddiPower!=UINT32_MAX &&
             (ddiPower&(1U<<(2*port.ddi))) && ready!=UINT32_MAX && (ready&7)==4 &&
-            buffer!=UINT32_MAX && (buffer&0x800000C0U)==0x80000040U &&
+            buffer!=UINT32_MAX && (buffer&0x80000080U)==0x80000000U && (ownershipOptional || (buffer&64)) &&
             clock!=UINT32_MAX && (clock>>28)==8 && pll!=UINT32_MAX &&
             (pll&0xCC000000U)==0xCC000000U && transClock!=UINT32_MAX && (transClock>>28)==port.ddi+3;
     }
-    template<class IO> static Boot capture(IO &io,bool admitted,unsigned ddi,unsigned pipe) {
+    template<class IO> static Boot capture(IO &io,bool admitted,unsigned ddi,unsigned pipe,bool ownershipOptional=false) {
         Boot b;
         if(!admitted || pipe>=3 || !Port::resolve(ddi,b.port))return b;
-        b.pipe=pipe;
+        b.pipe=pipe;b.ownershipOptional=ownershipOptional;
         if(!io.readable(0x45404) || !io.readable(0x45454))return {};
         b.power=io.read(0x45404);b.ddiPower=io.read(0x45454);
         const auto powered=5U|(1U<<(10+2*pipe));
@@ -61,7 +65,7 @@ struct Boot {
     }
     template<class IO> bool unchanged(IO &io) const {
         if(!valid())return false;
-        const auto now=capture(io,true,port.ddi,pipe);
+        const auto now=capture(io,true,port.ddi,pipe,ownershipOptional);
         return now.valid() && now.power==power && now.ddiPower==ddiPower && now.ready==ready &&
             now.buffer==buffer && now.clock==clock && now.pll==pll && now.transClock==transClock;
     }

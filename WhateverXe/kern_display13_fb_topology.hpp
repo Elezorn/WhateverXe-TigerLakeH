@@ -45,8 +45,9 @@ inline uint32_t bootDDI(const Display13OutputWiring &w,uint32_t trans,bool dpSou
     if(selector<1 || selector>7)return UINT32_MAX;
     const auto port=selector-1;
     const auto mode=(trans>>24)&7;
-    // Explicit source inspection only; runtime adoption keeps the TMDS default.
-    if(dpSource && mode==2 && port<2 && (w.dp&(1U<<port)))return port;
+    // Selection is not an adoption certificate. The DP caller must also prove
+    // source state, physical TC ownership/power, memory and native handoff.
+    if(dpSource && mode==2 && (port<2 || port>=3) && (w.dp&(1U<<port)))return port;
     if(mode>1)return UINT32_MAX;
     return (w.hdmi&(1U<<port)) ? port : UINT32_MAX;
 }
@@ -56,8 +57,8 @@ inline bool xeLPDWiring(const Display13OutputWiring &w) {
 }
 // Current handoff adopts one real GOP on pipe A. A dual board policy does not
 // authorize ignoring a second firmware scanout or an unknown/unpowered bank.
-inline uint32_t bootstrapDDI(const Display13OutputWiring &w,bool complete,uint32_t powered,uint32_t active,uint32_t trans) {
-    return complete && active==1 && (powered&1) ? bootDDI(w,trans) : UINT32_MAX;
+inline uint32_t bootstrapDDI(const Display13OutputWiring &w,bool complete,uint32_t powered,uint32_t active,uint32_t trans,bool dpSource=false) {
+    return complete && active==1 && (powered&1) ? bootDDI(w,trans,dpSource) : UINT32_MAX;
 }
 // Preserve donor record count, DDI identities, memory sizing and unrelated
 // settings. Native objects retain pointers to this stable copy. Preflight

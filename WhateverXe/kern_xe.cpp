@@ -3882,7 +3882,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	if(displayRequested && bootstrapReady) {
 		uint32_t trans=UINT32_MAX;
 		if(AlderLakeN::value(result,0x60400,trans))bootDDI=Display13FBTopology::bootstrapDDI(board,
-			result.status==AlderLakeN::ReadoutStatus::Complete,result.poweredPipes,result.activePipes,trans);
+			result.status==AlderLakeN::ReadoutStatus::Complete,result.poweredPipes,result.activePipes,trans,true);
 		connector[5]=bootDDI;pci->setProperty("N97NativeBootConnector",connector,sizeof(connector));
 	}
 	pci->setProperty("N97DisplayReadoutStatus", static_cast<uint32_t>(result.status), 32);
@@ -4019,9 +4019,11 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
             ((!optionProperty || opts) && !mapperOptions && !systemMapper);
         uint64_t mapperAdmission[] {1,mapperOptions,systemMapper,physicalOptions};
         IORegistryEntry::getRegistryRoot()->setProperty("N97NativeMapperAdmission",mapperAdmission,sizeof(mapperAdmission));
-        const auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0);
+        const bool dp=bootDDI<7 && (board.dp&(1U<<bootDDI));
+        const auto protocol=dp?AlderLakeN::GOPProtocol::DP:AlderLakeN::GOPProtocol::TMDS;
+        const auto tc=Display13TC::Boot::capture(io,barReady && bootDDI>=3 && xelpMemoryMatches(pci),bootDDI,0,dp);
         const bool prefix=Display13Boot::reservedPrefix(io,display,bootstrapReady,bootDDI,xelpMemory,
-            bootDDI>=3 ? &tc : nullptr);
+            bootDDI>=3 ? &tc : nullptr,protocol);
         auto aperture=pci->getDeviceMemoryWithRegister(0x18);
         const bool memoryReady=
             aperture && aperture->getLength()==0x10000000 && page_size==4096 &&
@@ -4393,6 +4395,7 @@ struct Display13FBPowerContext {
     OSObject *tcObject[4] {};
     uint32_t tcBusy[4] {};
     bool tcSignalReady[4] {};
+    bool bootDP {}; // Board protocol captured with the protected boot reference.
     Display13TC::DPRetainedLink tcDPLink[4];
     Display13FBPipeContext pipe[3];
     Display13Power::NativeBridge bridge;
@@ -4991,9 +4994,11 @@ static Display13FBMemory::Readout display13FBInspectMemory(IOService *fb,bool bo
 		uint64_t readPTE(uint32_t reg) const {return *reinterpret_cast<volatile uint64_t *>(map->getVirtualAddress()+reg);}
 	} io {c.map};
     const auto tc=Display13TC::Boot::capture(io,bootScanout && c.bridge.bootPort>=3,c.bridge.bootPort,0);
+    const bool dp=bootScanout && c.bootDP;
+    const auto source=AlderLakeN::readDisplay(io,dp);
 	return Display13FBMemory::inspect(io,controller,controller->getMetaClass()->getClassSize(),
 		fb,fb->getMetaClass()->getClassSize(),aperture->getLength(),xelpMemory,bootScanout,display13FBExpectedOwner(controller),c.bridge.bootPort,
-        c.bridge.bootPort>=3 ? &tc : nullptr);
+        c.bridge.bootPort>=3 ? &tc : nullptr,dp?&source:nullptr);
 }
 }
 
@@ -6304,13 +6309,18 @@ uint32_t XE::wrapDisplay13TCMode(OSObject *port,uint32_t wanted) {
             return pll!=UINT32_MAX && aux!=UINT32_MAX && !(pll&0xc0000000) && !(aux&0x80000000);
         }
     };
-    // Adopt only the measured, protected firmware boot route. Merely finding
+    // Adopt only the validated, protected firmware boot route. Merely finding
     // a set ownership bit on another connector is not a handoff certificate.
     Display13FBBootIO bootIO{c.map};
-    const auto boot=Display13TC::Boot::capture(bootIO,true,ddi,0);
-    const bool inherited=ddi==c.bridge.bootPort && c.bridge.retainsDDI(ddi) && boot.valid() &&
-        Display13FBTopology::bootDDI(self->adlnOutputWiring,bootIO.read(0x60400))==ddi &&
+    const bool dpBoot=ddi==c.bridge.bootPort && (self->adlnOutputWiring.dp&(1U<<ddi));
+    const auto boot=Display13TC::Boot::capture(bootIO,true,ddi,0,dpBoot);
+    bool inherited=ddi==c.bridge.bootPort && c.bridge.retainsDDI(ddi) && boot.valid() &&
+        Display13FBTopology::bootDDI(self->adlnOutputWiring,bootIO.read(0x60400),true)==ddi &&
         (bootIO.read(0x70008)&0xc0000000)==0xc0000000 && boot.unchanged(bootIO);
+    if(inherited && dpBoot) {
+        const auto source=AlderLakeN::readDisplay(bootIO,true);
+        inherited=source.activePipes==1 && AlderLakeN::dpSourceUnchanged(bootIO,source,0,ddi,0,&boot);
+    }
     IO io{port,tc,reinterpret_cast<uint32_t (*)(OSObject *,uint32_t)>(self->display13TCBaseMode),inherited};
     const auto owner=reinterpret_cast<uintptr_t>(c.controller),object=reinterpret_cast<uintptr_t>(port);
     const auto result=wanted?mode.connect(io,owner,object,ddi):mode.disconnect(io,owner,object,ddi);
@@ -6531,6 +6541,11 @@ bool XE::processDisplay13FramebufferTC(KernelPatcher &patcher,size_t index,mach_
     }
     struct Span {uint32_t offset;const uint8_t *bytes;size_t size;};
     const Span spans[]={
+        {bootPortInitOffset,bootPortInit,sizeof(bootPortInit)},
+        {bootPowerCallOffset,bootPowerCall,sizeof(bootPowerCall)},
+        {bootSetupCallOffset,bootSetupCall,sizeof(bootSetupCall)},
+        {modeStopCallOffset,modeStopCall,sizeof(modeStopCall)},
+        {dpLightCallOffset,dpLightCall,sizeof(dpLightCall)},
         {ddiEnableTailOffset,ddiEnableTail,sizeof(ddiEnableTail)},
         {ddiDisableCallOffset,ddiDisableCall,sizeof(ddiDisableCall)},
         {lightBodyOffset,lightBody,sizeof(lightBody)},{innerBeforeOffset,innerBefore,sizeof(innerBefore)},
@@ -7698,9 +7713,12 @@ bool XE::prepareDisplay13BootScanout(IOPCIDevice *pci) {
     const auto boot=AlderLakeN::readDisplay(io,mapped);
     uint32_t trans=UINT32_MAX;AlderLakeN::value(boot,0x60400,trans);
     const auto ddi=Display13FBTopology::bootstrapDDI(adlnOutputWiring,
-        boot.status==AlderLakeN::ReadoutStatus::Complete,boot.poweredPipes,boot.activePipes,trans);
-    const auto tc=Display13TC::Boot::capture(io,mapped && ddi>=3,ddi,0);
-    auto result=Display13Boot::prepareLinear(io,boot,mapped,ddi,xelpMemory,ddi>=3?&tc:nullptr);
+        boot.status==AlderLakeN::ReadoutStatus::Complete,boot.poweredPipes,boot.activePipes,trans,true);
+    const bool dp=ddi<7 && (adlnOutputWiring.dp&(1U<<ddi));
+    auto tc=Display13TC::Boot::capture(io,mapped && ddi>=3,ddi,0,dp);
+    if(ddi>=3 && ddi<7)pci->setProperty("WEXDisplay13TCBoot",&tc,sizeof(tc));
+    auto result=Display13Boot::prepareLinear(io,boot,mapped,ddi,xelpMemory,ddi>=3?&tc:nullptr,
+        dp?AlderLakeN::GOPProtocol::DP:AlderLakeN::GOPProtocol::TMDS);
     map->release();
     IORegistryEntry::getRegistryRoot()->setProperty("WEXDisplay13BootHandoff",&result,sizeof(result));
     SYSLOG("igfx","Display13 native handoff status=%u writes=%u restored=%u",
@@ -7885,15 +7903,23 @@ void XE::wrapAlderLakeNSetupWorkLoop(IOService *controller,IOWorkLoop *workLoop)
 		if(valid) {
 			if(!c.bridge.bootAdopted) {
                 const auto ddi=c.bridge.bootPort;
-                const bool dp=ddi<2 && (callbackXE->adlnOutputWiring.dp&(1U<<ddi));
+                const bool dp=ddi<7 && (callbackXE->adlnOutputWiring.dp&(1U<<ddi));
                 bool linked=!dp;
                 if(dp && display13SSTPort(port)) {
                     Display13FBBootIO io{c.map};const auto boot=AlderLakeN::readDisplay(io,true);
-                    result=AlderLakeN::adoptDPBootAUX(io,boot,c.bridge,c.mainLink[ddi],reinterpret_cast<uintptr_t>(port),ddi);
-                    linked=result.status==Display13Power::Status::Complete;
-                    if(linked)port->retain(); // Released only after real buffer stop/idle.
+                    if(ddi>=3) {
+                        const auto source=Display13TC::Boot::capture(io,true,ddi,0);
+                        Display13FBTCIO tc{port,ddi-3};
+                        linked=tc.owned(ddi) && tc.linkHeld() && boot.activePipes==1 &&
+                            AlderLakeN::dpSourceUnchanged(io,boot,0,ddi,0,&source);
+                    } else if(ddi<2) {
+                        result=AlderLakeN::adoptDPBootAUX(io,boot,c.bridge,c.mainLink[ddi],reinterpret_cast<uintptr_t>(port),ddi);
+                        linked=result.status==Display13Power::Status::Complete;
+                        if(linked)port->retain(); // Released only after real buffer stop/idle.
+                    }
                 }
                 if(linked)result=c.bridge.adoptBootPath(reinterpret_cast<uintptr_t>(path),0,ddi);
+                else result.status=Display13Power::Status::NotReady;
             }
 			else if(c.bridge.bootPath==reinterpret_cast<uintptr_t>(path))result.status=Display13Power::Status::Complete;
 			if(result.status==Display13Power::Status::Complete &&
@@ -9676,6 +9702,7 @@ void XE::wrapAlderLakeNOptimizedDBUF(IOService *controller) {adlnSetupDBUF(contr
 void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 	auto &c=display13FBPower; if(!c.lock)return;
 	uint64_t record[32] {}; Display13Power::Result result;
+    unsigned tcBootDDI=UINT32_MAX;
 	IOLockLock(c.lock);
 	auto service=static_cast<IOService *>(controller);
 	auto pci=service ? OSDynamicCast(IOPCIDevice,service->getProvider()) : nullptr;
@@ -9696,7 +9723,7 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 			Display13FBPowerIO io {map};
 			const auto wells=io.read(Display13Power::Driver),a=io.read(0x60400),pipeA=io.read(0x70008);
 			const auto bootPort=Display13FBTopology::bootDDI(callbackXE->adlnOutputWiring,a,true);
-			const bool dpBoot=bootPort<2 && (callbackXE->adlnOutputWiring.dp&(1U<<bootPort));
+			const bool dpBoot=bootPort<7 && (callbackXE->adlnOutputWiring.dp&(1U<<bootPort));
 			const auto ddi=bootPort<7 ? io.read(0x64000+0x100*bootPort) : UINT32_MAX;
 			// The initial protected references belong to the measured pipe A /
 			// selected boot display. Validate that live topology before acquiring
@@ -9708,16 +9735,20 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 				boot=boot && trans!=UINT32_MAX && !(trans&(1U<<31));
 			}
             if(boot && bootPort>=3) {
-                Display13FBBootIO bootIO{map};boot=Display13TC::Boot::capture(bootIO,true,bootPort,0).valid();
+                Display13FBBootIO bootIO{map};boot=Display13TC::Boot::capture(bootIO,true,bootPort,0,dpBoot).valid();
             }
             if(boot && dpBoot) {
                 Display13FBBootIO bootIO{map};const auto source=AlderLakeN::readDisplay(bootIO,true);uint32_t aux=0;
-                boot=AlderLakeN::dpSource(source,0,bootPort) && AlderLakeN::dpSourceUnchanged(bootIO,source,0,bootPort) &&
-                    AlderLakeN::value(source,Display13Power::AUX,aux) && (aux&(1U<<(2*bootPort)));
+                const auto tc=Display13TC::Boot::capture(bootIO,bootPort>=3,bootPort,0,true);
+                boot=AlderLakeN::dpSourceUnchanged(bootIO,source,0,bootPort,0,bootPort>=3?&tc:nullptr);
+                if(bootPort<2)boot=boot && AlderLakeN::value(source,Display13Power::AUX,aux) && (aux&(1U<<(2*bootPort)));
             }
-			if(boot)result=c.bridge.begin(io,bootPort,callbackXE->adlnOutputWiring.selected());
+			if(boot) {
+                result=c.bridge.begin(io,bootPort,callbackXE->adlnOutputWiring.selected());
+                if(result.status==Display13Power::Status::Complete)c.bootDP=dpBoot;
+            }
 			else {result.status=Display13Power::Status::InvalidDomains;adlnFault(c.bridge.state.faulted,__LINE__);}
-            if(result.status==Display13Power::Status::Complete && dpBoot) {
+            if(result.status==Display13Power::Status::Complete && dpBoot && bootPort<2) {
                 Display13FBBootIO bootIO{map};const auto source=AlderLakeN::readDisplay(bootIO,true);
                 result=AlderLakeN::holdDPBootAUX(bootIO,source,c.bridge,c.mainLink[bootPort],bootPort);
                 if(result.status!=Display13Power::Status::Complete)adlnFault(c.bridge.state.faulted,__LINE__);
@@ -9743,8 +9774,34 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 					__atomic_store_n(&display13FBIRQ.controller,service,__ATOMIC_RELEASE);
 				} else {result.status=Display13Power::Status::NotReady;adlnFault(c.bridge.state.faulted,__LINE__);}
 			}
+            if(result.status==Display13Power::Status::Complete && dpBoot && bootPort>=3)tcBootDDI=bootPort;
 		} else OSSafeReleaseNULL(map);
 	}
+    if(tcBootDDI<7) {
+        // Exact donor start initializes every port before PowerWell::init.
+        // Establish the same durable Mode used by probing/hotplug before any
+        // native engine/client can issue AUX or stop the inherited DP link.
+        auto getPort=reinterpret_cast<OSObject *(*)(uint32_t)>(callbackXE->tglPortByDDI);
+        auto port=getPort?getPort(tcBootDDI):nullptr;
+        bool adopted=port && display13TCTarget(port)==tcBootDDI;
+        if(adopted) {
+            port->retain();IOLockUnlock(c.lock);
+            adopted=wrapDisplay13TCMode(port,4)==kIOReturnSuccess;
+            IOLockLock(c.lock);
+            if(adopted) {
+                Display13FBBootIO io{c.map};const auto view=AlderLakeN::readDisplay(io,true);
+                const auto tc=Display13TC::Boot::capture(io,true,tcBootDDI,0);
+                Display13FBTCIO access{port,tcBootDDI-3};
+                adopted=access.owned(tcBootDDI) && access.linkHeld() && view.activePipes==1 &&
+                    AlderLakeN::dpSourceUnchanged(io,view,0,tcBootDDI,0,&tc);
+            }
+            port->release();
+        }
+        if(!adopted) {result.status=Display13Power::Status::NotReady;adlnFault(c.bridge.state.faulted,__LINE__);}
+        // Do not set tcSignalReady/tcDPLink from an enabled GOP. They certify
+        // our own programmed PLL; the firmware link is preserved until the
+        // native disable path stops it, then the ordinary cold path owns it.
+    }
 	display13FBPowerRecord(record,0,0,result);
 	IOLockUnlock(c.lock);
 	adlnPublishPowerRecord("N97FBPower",record);
@@ -12646,8 +12703,8 @@ XELP::DisplayContract::Mask XE::display13Available() const {
  if(display13FBSSTHooksReady)a|=C::SST13;
  if(display13FBAUXHooksReady)a|=C::AUX13;
  if(display13DPProbeReady)a|=C::DPProbe13;
- // Startup still requires the existing TMDS GOP certificate. Fixed TC DP
- // is a cold link on that admitted controller; DP GOP adoption stays closed.
+ // Fixed TC DP supports cold training and an explicitly validated SST GOP.
+ // Boot source, memory, Mode/AUX and native path adoption are all required.
  if(display13FBDPHooksReady && display13TCDPProbeReady)a|=C::DPBoot13;
  if(display13TrainingReady)a|=C::Training12;
  if(display13FramingReady)a|=C::Framing;

@@ -59,8 +59,18 @@ int main() {
         assert(m.phase==Mode::Phase::Idle && !m.ownership.owner && !m.auxLease.owner && !io.native);
         assert(m.connect(io,1,2,d).status==Status::Complete);assert(m.disconnect(io,1,2,d).status==Status::Complete);
     }
-    {IO io(3);Mode m;io.regs[io.port.buffer]=0x80000040;io.adopt=true;
-     assert(m.connect(io,1,2,3).status==Status::Complete);assert(io.regs[io.port.buffer]==0x80000040);}
+    // Firmware may leave a fixed legacy DP source enabled but unowned (Linux
+    // intel_tc_port_init_mode). Transfer only ownership; preserve width/link.
+    for(unsigned d=3;d<=6;++d)for(unsigned owned:{0U,64U}) {
+        IO io(d);Mode m;const auto firmware=0x80000006U|owned;
+        io.regs[io.port.buffer]=firmware;io.adopt=true;
+        assert(m.connect(io,1,2,d).status==Status::Complete);
+        assert(io.regs[io.port.buffer]==(firmware|64));
+        assert(m.disconnect(io,1,2,d).status==Status::InUse && m.auxLease.owner);
+        io.regs[io.port.buffer]&=~(1U<<31);
+        assert(m.disconnect(io,1,2,d).status==Status::Complete);
+        assert(io.regs[io.port.buffer]==6 && !m.ownership.owner && !m.auxLease.owner);
+    }
     {IO io(3);Mode m;io.regs[io.port.buffer]=0x80000040;
      assert(m.connect(io,1,2,3).status==Status::NeedsAdoption && m.phase==Mode::Phase::Cleanup && m.accessLease.owner && !m.auxLease.owner);
      assert(!io.native && m.connect(io,1,2,3).status==Status::InUse);}

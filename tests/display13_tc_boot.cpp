@@ -121,7 +121,32 @@ static void dpHandoff() {
     }
     printf("PASS %u TC SST source/plane/pool handoffs, proof mismatch, drift and rollback\n",cases);
 }
+static void unownedDP() {
+    for(unsigned ddi=3;ddi<=6;++ddi) {
+        auto io=dpFirmware(ddi,4,true);const auto reg=0x64000+0x100*ddi;
+        io.regs[reg]&=~64U;
+        assert(!Display13TC::Boot::capture(io,true,ddi,0).valid());
+        const auto tc=Display13TC::Boot::capture(io,true,ddi,0,true);
+        const auto view=readDisplay(io,true);LinearPlan plan;
+        assert(tc.valid() && dpSourceUnchanged(io,view,0,ddi,0,&tc));
+        assert(Display13Boot::prepareLinear(io,view,true,ddi,io.memory,&tc,GOPProtocol::DP).status==LinearStatus::Success);
+        assert(!(io.regs[reg]&64)); // Plane preparation cannot silently acquire PHY ownership.
+        const auto unowned=readDisplay(io,true);
+        assert(nativeMemory(io,ddi,tc,&unowned).status==Display13FBMemory::Status::DisplayState);
+        io.regs[reg]|=64;
+        assert(!tc.unchanged(io)); // Ownership transfer needs a new strict witness.
+        const auto owned=Display13TC::Boot::capture(io,true,ddi,0);
+        const auto after=readDisplay(io,true);
+        assert(owned.valid() && nativeMemory(io,ddi,owned,&after).status==Display13FBMemory::Status::Complete);
+        auto hdmi=firmware(ddi);hdmi.regs[reg]&=~64U;
+        const auto optional=Display13TC::Boot::capture(hdmi,true,ddi,0,true);
+        assert(optional.valid());
+        assert(linearPlan(readDisplay(hdmi,true),plan,ddi,GOPProtocol::TMDS,&optional)==LinearStatus::InvalidTCSource);
+        assert(nativeMemory(hdmi,ddi,optional).status==Display13FBMemory::Status::DisplayState);
+    }
+}
 int main() {
+    unownedDP();
     unsigned cases=0;
     for(unsigned ddi=3;ddi<=6;++ddi) {
         auto io=firmware(ddi);const auto original=io.regs;

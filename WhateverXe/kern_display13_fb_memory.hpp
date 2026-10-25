@@ -335,7 +335,8 @@ template<class IO> Readout inspect(IO &io,const void *controller,size_t controll
         r.status=Status::Association;return r;
     }
     if(bootScanout && (expectedDDI>=7 || (expectedDDI>=3 &&
-       (!tc || !tc->valid() || tc->port.ddi!=expectedDDI || tc->pipe!=0 || !tc->unchanged(io))))) {
+       (!tc || !tc->valid() || tc->port.ddi!=expectedDDI || tc->pipe!=0 ||
+        !(tc->buffer&64) || (!dp && tc->ownershipOptional) || !tc->unchanged(io))))) {
         r.status=Status::DisplayState;return r;
     }
     if(bootScanout && dp && (dp->activePipes!=1 ||

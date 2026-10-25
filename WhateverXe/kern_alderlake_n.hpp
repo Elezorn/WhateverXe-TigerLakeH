@@ -221,7 +221,8 @@ inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi,const
     return (trans&0xFF700000U)==(0x82000000U|((ddi+1)<<27)) &&
         !(trans&((1U<<15)|(1U<<9)|(1U<<8))) && !ctl2 &&
         (lanes==1 || lanes==2 || lanes==4) && ((buf>>1)&7)==lanes-1 &&
-        (buf&0x800000C0U)==(typeC?0x80000040U:0x80000000U) &&
+        (buf&(typeC && tc->ownershipOptional?0x80000080U:0x800000C0U))==
+            (typeC && !tc->ownershipOptional?0x80000040U:0x80000000U) &&
         (clock>>28)==ddi+(typeC?3:1) && (!typeC || clock==tc->transClock) &&
         (tp&~(1U<<18))==0x80000300U &&
         !(dss1&0xF0300000U) && !(dss2&0x80008000U) &&
@@ -318,7 +319,8 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
         return LinearStatus::NotSingleHDMI;
     while (!(r.activePipes & (1U<<p.pipe))) ++p.pipe;
     if (p.pipe>=3) return LinearStatus::NotSingleHDMI;
-    if(ddi>=3 && (!tc || !tc->valid() || tc->port.ddi!=ddi || tc->pipe!=p.pipe))
+    if(ddi>=3 && (!tc || !tc->valid() || tc->port.ddi!=ddi || tc->pipe!=p.pipe ||
+       (protocol!=GOPProtocol::DP && tc->ownershipOptional)))
         return LinearStatus::InvalidTCSource;
     const uint32_t delta=0x1000*p.pipe;
     uint32_t trans {}, cursor {}, surfLive {}, plane {}, pipeConf {}, htotal {}, vtotal {};
