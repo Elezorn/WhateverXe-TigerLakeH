@@ -14997,6 +14997,9 @@ uint32_t XE::wrapTGLTopDDC(void *fb, int connection, uint32_t block, uint32_t ty
 }
 
 uint32_t XE::wrapTGLRegisterRead(void *access, unsigned long reg) {
+	// i7-11850H (physical 9A60): a GPU_TICKS (0x2910) read raises a machine check at boot.
+	if (reg == 0x2910 && callbackXE->xeProfile.identity == 0x9A608086)
+		return 0;
  const bool trace=tglTransitionRegister(reg);
  if(trace)tglTransitionRecord(35,false,access,reg,tglConnectionCaller(__builtin_return_address(0)),0);
 	auto value = FunctionCast(wrapTGLRegisterRead, callbackXE->orgTGLRegisterRead)(access, reg);
