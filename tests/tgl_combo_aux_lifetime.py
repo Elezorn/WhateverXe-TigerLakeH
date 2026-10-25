@@ -31,7 +31,7 @@ template<class... A> void tglTrace(A...){}
 void tglSnapshotTransmitter(void*,bool,unsigned){}
 ENABLE
 int main(){
- for(unsigned testDDI:{0u,1u,3u,4u})for(unsigned kind=0;kind<4;++kind)for(unsigned bad=0;bad<18;++bad){
+ for(unsigned testDDI:{0u,1u,3u,4u})for(unsigned kind=0;kind<4;++kind)for(unsigned bad=0;bad<18;++bad)for(unsigned initialRefs:{0u,2u}){
  const bool adls=kind==1||kind==3,fixed=kind==2;const bool panel=kind==3;if(panel && testDDI!=0)continue;if(adls?testDDI==1:testDDI>1)continue;
  alignas(8) uint8_t p[0x700]{},ctl[0xD00]{},power[0x100]{},access[0x100]{};uint32_t local[6]{};uint32_t *config=local;
  unsigned ddi=testDDI,mask=3U<<(2*ddi),buffer=0x64000+256*ddi;
@@ -51,7 +51,7 @@ int main(){
  store(p,0x548,config+0);store(p,0x550,1U);store(p,0x578,access+0);store(p,0x590,buffer);
  store(ctl,0xC8,power+0);store(ctl,0xC40,access+0);store(power,0x10,ctl+0);store(power,0x78,access+0);
  store(access,0x60,0x200000U);store(access,0x50,ctl+0);
- badForGet=bad;refs=reinterpret_cast<uint32_t *>(power+0x54+4*ddi);*refs=2;getCount=putCount=reads=0;missingAck=bad>=14;elapsed=0;ackDelay=bad==15?500:0;dropRequest=bad==16;
+ badForGet=bad;refs=reinterpret_cast<uint32_t *>(power+0x54+4*ddi);*refs=initialRefs;getCount=putCount=reads=0;missingAck=bad>=14;elapsed=0;ackDelay=bad==15?500:0;dropRequest=bad==16;
  regs.clear();regs[0x45454]=mask;regs[buffer]=0x81;
  state.tglTCNativeFunctions.getAux=[](void*){++*refs;++getCount;regs[0x45444]=missingAck?(badForGet==17?~0U:regs[0x45454]&0xAAAAAAAAU):regs[0x45454];};
  state.tglTCNativeFunctions.putAux=[](void*){--*refs;++putCount;};
@@ -75,14 +75,14 @@ int main(){
   if(adls||fixed){assert(enable(p)==kIOReturnNotReady);assert(nativeEnableCount==0);}
  }
  continue;}
- assert(getCount==1&&*refs==3&&state.tglComboAUXOwners[ddi]==p);assert(elapsed==(bad==15?500:0));
+ assert(getCount==1&&*refs==initialRefs+1&&state.tglComboAUXOwners[ddi]==p);assert(elapsed==(bad==15?500:0));
  assert(enable(p)==0 && nativeEnableCount==1);run(p,true);assert(getCount==1); // duplicate enable is idempotent
  // Native per-transaction ref pairs cannot consume the held main-link ref.
- ++*refs;--*refs;assert(*refs==3);
+ ++*refs;--*refs;assert(*refs==initialRefs+1);
  run(nullptr,false);assert(putCount==0);
  regs[buffer]=0x80000001;run(p,false);assert(putCount==0); // active main link
- regs[buffer]=0x81;run(p,false);assert(putCount==1&&*refs==2&&!state.tglComboAUXOwners[ddi]);
- run(p,false);assert(putCount==1);run(p,true);assert(getCount==2);run(p,false);assert(putCount==2&&*refs==2);
+ regs[buffer]=0x81;run(p,false);assert(putCount==1&&*refs==initialRefs&&!state.tglComboAUXOwners[ddi]);
+ run(p,false);assert(putCount==1);run(p,true);assert(getCount==2);run(p,false);assert(putCount==2&&*refs==initialRefs);
  }
  puts("PASS main-link AUX acquire/duplicate/native transaction/disable/retry, inherited refs, ownership/power/ACK guards");
 }
