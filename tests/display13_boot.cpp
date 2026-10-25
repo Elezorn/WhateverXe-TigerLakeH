@@ -273,7 +273,54 @@ static void scaledBoot() {
     assert(n.status==Display13Boot::Status::PeerChanged && drift.writes.size()==2);
     puts("PASS scaled multi-GOP: binding, full destination, primary preservation, secondary detach and drift rejection");
 }
+static void unusedTCBoot() {
+    const unsigned ports[] {5,4};
+    const auto setup=[&](IO &io) {
+        auto w=multiGOP(io,ports,2,1U<<5);w.hdmi|=1U<<3;w.ddc[3]=9;
+        assert(Display13Boot::normalize(io,AlderLakeN::readDisplay(io,true),true,w,memory).status==Display13Boot::Status::Complete);
+        io.writes.clear();io.regs[0x64300]=0xC0;io.regs[0x161500]=0xC;
+        io.regs[0x4610C]=io.regs[0x46038]=0;io.regs[Display13TC::Clock::Gate]|=1U<<12;
+        io.regs[0x45444]|=3U<<6;
+        return w;
+    };
+    IO io;auto w=setup(io);const auto before=io.regs;
+    auto r=Display13Boot::releaseUnusedTC(io,AlderLakeN::readDisplay(io,true),true,w);
+    assert(r.status==Display13Boot::Status::Complete && r.cleared==8 && r.writes==1 && io.regs[0x64300]==0x80);
+    for(auto x:before)if(x.first!=0x64300)assert(io.regs[x.first]==x.second);
+    assert(io.writes.size()==1 && io.writes[0].offset==0x64300 && io.writes[0].value==0x80);
+    auto again=Display13Boot::releaseUnusedTC(io,AlderLakeN::readDisplay(io,true),true,w);
+    assert(again.status==Display13Boot::Status::Complete && again.writes==0);
+    // Any live/ambiguous resource prevents release of this unclassified port.
+    for(unsigned fault=0;fault<9;++fault) {
+        IO t;auto wiring=setup(t);
+        if(fault==0)t.regs[0x64300]|=0x80000000;
+        if(fault==1)t.regs[0x64300]&=~0x80U;
+        if(fault==2)t.regs[0x161500]|=1;
+        if(fault==3)t.regs[0x4610C]=0x80000000;
+        if(fault==4)t.regs[0x46038]=0xCC000000;
+        if(fault==5)t.regs[Display13TC::Clock::Gate]&=~(1U<<12);
+        if(fault==6)t.regs[0x64310]=0x80000000;
+        if(fault==7)t.regs[0x64300]=UINT32_MAX;
+        if(fault==8)t.regs[0x161500]=UINT32_MAX;
+        auto r=Display13Boot::releaseUnusedTC(t,AlderLakeN::readDisplay(t,true),true,wiring);
+        assert(r.status!=Display13Boot::Status::Complete && t.writes.empty());
+    }
+    for(unsigned kind=0;kind<2;++kind) {
+        IO t;auto wiring=setup(t);
+        t.regs[kind?0x46148:0x62400]=kind?0x60000000:0x20000000;
+        auto r=Display13Boot::releaseUnusedTC(t,AlderLakeN::readDisplay(t,true),true,wiring);
+        assert(r.status==Display13Boot::Status::Complete && r.writes==0 && t.regs[0x64300]==0xC0);
+    }
+    IO changed;auto wiring=setup(changed);auto boot=AlderLakeN::readDisplay(changed,true);changed.regs[0x68174]=1;
+    r=Display13Boot::releaseUnusedTC(changed,boot,true,wiring);
+    assert(r.status==Display13Boot::Status::PeerChanged && changed.writes.empty());
+    IO failed;wiring=setup(failed);failed.failWrite=0x64300;
+    r=Display13Boot::releaseUnusedTC(failed,AlderLakeN::readDisplay(failed,true),true,wiring);
+    assert(r.status==Display13Boot::Status::Readback && failed.writes.size()==1);
+    puts("PASS unused fixed TC firmware ownership: cold-only release, peers, live-resource refusal and readback");
+}
 int main() {
+    unusedTCBoot();
     scaledBoot();
     prefixCertificates();
     tcComposition();

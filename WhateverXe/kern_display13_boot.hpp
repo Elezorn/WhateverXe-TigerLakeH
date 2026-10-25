@@ -46,6 +46,63 @@ struct Result {
     uint32_t version {1};Status status {Status::Unavailable};
     uint32_t stage {},writes {},before {},after {},lastReg {},expected {},observed {},framesBefore {},framesAfter {};
 };
+// Firmware can leave ownership on a selected fixed TC port that has no GOP.
+// Linux intel_tc_port_sanitize_mode disconnects unused PHYs. Here admit only
+// the already-cold case: disabled/idle buffer, stopped/gated PLL and clocks,
+// no transcoder route and no AUX command. Do not stop an unclassified link.
+struct UnusedTCResult {
+    uint32_t version {1};Status status {Status::Unavailable};
+    uint32_t cleared {},writes {},ddi {},buffer {},ready {},clock {},pll {},gate {};
+};
+template<class IO> UnusedTCResult releaseUnusedTC(IO &io,const AlderLakeN::DisplayReadout &boot,
+                                                bool admitted,const Display13HDMIWiring &w) {
+    UnusedTCResult r;
+    if(!admitted)return r;
+    r.status=Status::Topology;
+    if(boot.status!=AlderLakeN::ReadoutStatus::Complete || boot.activePipes!=1 ||
+       !(boot.poweredPipes&1) || !Display13FBTopology::multiOutputWiring(w))return r;
+    uint32_t power=0,auxPower=0;
+    if(!AlderLakeN::value(boot,0x45404,power) || (power&5)!=5 ||
+       !AlderLakeN::value(boot,0x45444,auxPower))return r;
+    const auto stable=[&] {
+        for(unsigned i=0;i<boot.count;++i) {
+            const auto x=boot.registers[i];
+            if(x.offset==0x4500C || x.offset==0x70040 || x.offset==0x71040 || x.offset==0x72040)continue;
+            if(io.read(x.offset)!=x.value)return false;
+        }
+        return true;
+    };
+    for(unsigned d=3;d<7;++d)if(w.selected()&(1U<<d)) {
+        bool routed=false;
+        for(unsigned p=0;p<3;++p)if(boot.poweredPipes&(1U<<p)) {
+            uint32_t trans=0,clock=0;
+            if(!AlderLakeN::value(boot,0x60400+0x1000*p,trans) ||
+               !AlderLakeN::value(boot,0x46140+4*p,clock))return r;
+            // A selector left on an inactive pipe is also a resource consumer.
+            if(((trans>>27)&15)==d+1 || (clock>>28)==d+3)routed=true;
+        }
+        if(routed)continue;
+        Display13TC::Port port;Display13TC::Port::resolve(d,port);
+        r.ddi=d;r.buffer=io.read(port.buffer);
+        if(r.buffer==UINT32_MAX){r.status=Status::Readback;return r;}
+        if(!(r.buffer&64))continue;
+        r.ready=io.read(port.ready);r.clock=io.read(port.clock);r.pll=io.read(port.pll);
+        r.gate=io.read(Display13TC::Clock::Gate);
+        const auto aux=0x64310+0x100*(d-3);
+        if((r.buffer&0x800000C0U)!=0xC0 || r.ready==UINT32_MAX || (r.ready&7)!=4 ||
+           r.clock==UINT32_MAX || (r.clock&0xF0000000U) || r.pll==UINT32_MAX || (r.pll&0xCC000000U) ||
+           r.gate==UINT32_MAX || !(r.gate&Display13TC::Clock::gateBit(d-3)) ||
+           ((auxPower&(1U<<(2*d))) && (!io.readable(aux) || (io.read(aux)&0x80000000U))))return r;
+        if(!stable() || io.read(port.buffer)!=r.buffer || io.read(port.ready)!=r.ready ||
+           io.read(port.clock)!=r.clock || io.read(port.pll)!=r.pll) {r.status=Status::PeerChanged;return r;}
+        io.write(port.buffer,r.buffer&~64U);++r.writes;
+        if(io.read(port.buffer)!=(r.buffer&~64U) || !stable() || io.read(port.clock)!=r.clock ||
+           io.read(port.pll)!=r.pll) {r.status=Status::Readback;return r;}
+        r.cleared|=1U<<d;
+    }
+    r.status=Status::Complete;return r;
+}
+
 template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boot,bool admitted,
                                     const Display13HDMIWiring &w,const XELPMemory::Layout &memory) {
     Result r;r.before=boot.activePipes;
