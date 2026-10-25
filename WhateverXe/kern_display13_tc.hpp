@@ -24,9 +24,11 @@ struct Port {
 };
 enum class Status : uint32_t {Invalid,NoPower,NeedsAdoption,InUse,Unavailable,UnsupportedMode,NotReady,Readback,Complete};
 struct Result {Status status {Status::Invalid};uint32_t before {},after {},writes {},elapsedUs {};};
-// Read-only certificate for an inherited fixed-TMDS link. This never takes
+// Read-only physical certificate for an inherited fixed link. This never takes
 // ownership or programs the PLL. Callers must select the physical Display13
 // backend before reading TCSS; TGL uses a different ownership mechanism.
+// Protocol/source, sink and PLL frequency are separate certificates. An
+// enabled/locked PLL alone does not prove a valid DP link or authorize adoption.
 struct Boot {
     Port port;unsigned pipe {3};
     uint32_t power {},ddiPower {},ready {},buffer {},clock {},pll {},transClock {};

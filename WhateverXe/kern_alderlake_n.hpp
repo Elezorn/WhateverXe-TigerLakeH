@@ -194,13 +194,23 @@ inline bool value(const DisplayReadout &r, uint32_t offset, uint32_t &out) {
 
 // Source-side certificate for an already-running, uncompressed external SST
 // GOP. This does not prove sink DPCD state, PLL rate or native AUX ownership.
-inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi) {
-    if(pipe>=3 || ddi>=2 || boot.status!=ReadoutStatus::Complete ||
+inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi,const Display13TC::Boot *tc=nullptr) {
+    const bool typeC=ddi>=3 && ddi<=6;
+    if(pipe>=3 || (ddi>=2 && !typeC) || boot.status!=ReadoutStatus::Complete ||
        !(boot.activePipes&boot.poweredPipes&(1U<<pipe)))return false;
     const auto bank=pipe*0x1000;
     uint32_t trans=0,tp=0,buf=0,clock=0,ctl2=0,dss1=0,dss2=0,dm=0,dn=0,lm=0,ln=0;
+    // TC buffer access needs the separate powered TCSS/ownership witness.
+    // Do not add every TC register to the unconditional common readout.
+    if(typeC) {
+        uint32_t power=0,ddiPower=0;
+        if(!tc || !tc->valid() || tc->port.ddi!=ddi || tc->pipe!=pipe ||
+           !value(boot,0x45404,power) || power!=tc->power ||
+           !value(boot,0x45454,ddiPower) || ddiPower!=tc->ddiPower)return false;
+        buf=tc->buffer;
+    } else if(!value(boot,0x64000+ddi*0x100,buf))return false;
     if(!value(boot,0x60400+bank,trans) || !value(boot,0x60540+bank,tp) ||
-       !value(boot,0x64000+ddi*0x100,buf) || !value(boot,0x46140+4*pipe,clock) ||
+       !value(boot,0x46140+4*pipe,clock) ||
        !value(boot,0x60404+bank,ctl2) || !value(boot,0x78000+pipe*0x200,dss1) ||
        !value(boot,0x78004+pipe*0x200,dss2) || !value(boot,0x60030+bank,dm) ||
        !value(boot,0x60034+bank,dn) || !value(boot,0x60040+bank,lm) ||
@@ -211,7 +221,8 @@ inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi) {
     return (trans&0xFF700000U)==(0x82000000U|((ddi+1)<<27)) &&
         !(trans&((1U<<15)|(1U<<9)|(1U<<8))) && !ctl2 &&
         (lanes==1 || lanes==2 || lanes==4) && ((buf>>1)&7)==lanes-1 &&
-        (buf&0x800000C0U)==0x80000000U && (clock>>28)==ddi+1 &&
+        (buf&0x800000C0U)==(typeC?0x80000040U:0x80000000U) &&
+        (clock>>28)==ddi+(typeC?3:1) && (!typeC || clock==tc->transClock) &&
         (tp&~(1U<<18))==0x80000300U &&
         !(dss1&0xF0300000U) && !(dss2&0x80008000U) &&
         !(dm&0x81000000U) && (dm&0xFFFFFF) &&
@@ -223,15 +234,23 @@ enum class GOPProtocol : uint32_t {TMDS,DP};
 // This is an early, serialized bootstrap transaction, not a modeset or link
 // adoption certificate. A changed link stops further writes, including rollback.
 template<class IO> bool dpSourceUnchanged(IO &io,const DisplayReadout &r,unsigned pipe,unsigned ddi,
-                                         uint32_t addedAUXRequest=0) {
-    if(pipe>=3 || ddi>=2 || (addedAUXRequest && addedAUXRequest!=(2U<<(2*ddi))))return false;
+                                         uint32_t addedAUXRequest=0,const Display13TC::Boot *tc=nullptr) {
+    // addedAUXRequest is the existing Combo boot-lease transition only.
+    // TC lifetime uses Mode's own AUX lease, not the Combo MainLinkAUX slot.
+    if(!dpSource(r,pipe,ddi,tc) || (addedAUXRequest && (ddi>=2 || addedAUXRequest!=(2U<<(2*ddi)))))return false;
+    if(ddi>=3 && !tc->unchanged(io))return false;
     const uint32_t bank=pipe*0x1000;
-    const uint32_t regs[] {0x60400+bank,0x60404+bank,0x60540+bank,0x60030+bank,0x60034+bank,
+    // Recheck power before touching pipe-local registers. A captured snapshot
+    // is not permission to read a bank whose well has since disappeared.
+    const uint32_t regs[] {0x45404,0x45454,0x45444,0x42000,
+        0x60400+bank,0x60404+bank,0x60540+bank,0x60030+bank,0x60034+bank,
         0x60040+bank,0x60044+bank,0x70008+bank,0x46140+4*pipe,0x64000+0x100*ddi,
-        0x78000+0x200*pipe,0x78004+0x200*pipe,0x45404,0x45454,0x45444,0x42000};
+        0x78000+0x200*pipe,0x78004+0x200*pipe};
     for(auto reg:regs) {
         uint32_t expected=0;
-        if(!value(r,reg,expected) || !io.readable(reg))return false;
+        if(ddi>=3 && reg==0x64000+0x100*ddi)expected=tc->buffer;
+        else if(!value(r,reg,expected))return false;
+        if(!io.readable(reg))return false;
         if(reg==Display13Power::AUX)expected|=addedAUXRequest;
         if(io.read(reg)!=expected)return false;
     }
@@ -299,7 +318,7 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
         return LinearStatus::NotSingleHDMI;
     while (!(r.activePipes & (1U<<p.pipe))) ++p.pipe;
     if (p.pipe>=3) return LinearStatus::NotSingleHDMI;
-    if(ddi>=3 && (protocol!=GOPProtocol::TMDS || !tc || !tc->valid() || tc->port.ddi!=ddi || tc->pipe!=p.pipe))
+    if(ddi>=3 && (!tc || !tc->valid() || tc->port.ddi!=ddi || tc->pipe!=p.pipe))
         return LinearStatus::InvalidTCSource;
     const uint32_t delta=0x1000*p.pipe;
     uint32_t trans {}, cursor {}, surfLive {}, plane {}, pipeConf {}, htotal {}, vtotal {};
@@ -313,7 +332,7 @@ inline LinearStatus linearPlan(const DisplayReadout &r, LinearPlan &p,unsigned d
     if(!(trans&(1U<<31)) || ((trans>>27)&15)!=ddi+1 ||
        (protocol==GOPProtocol::TMDS && ((trans>>24)&7)>1))
         return LinearStatus::NotSingleHDMI;
-    if(protocol==GOPProtocol::DP && !dpSource(r,p.pipe,ddi))return LinearStatus::InvalidDPSource;
+    if(protocol==GOPProtocol::DP && !dpSource(r,p.pipe,ddi,tc))return LinearStatus::InvalidDPSource;
     p.geometry=XELPGeometry::linear(p.control,p.stride,p.size,p.position,p.offset);
     if(!p.geometry.valid || (p.surface&4095) || p.surface!=surfLive ||
        ((trans>>20)&7)!=0 || (pipeConf&0xC0000000)!=0xC0000000 ||
@@ -347,7 +366,7 @@ template<class IO> LinearResult reinitializeLinear(IO &io, const DisplayReadout 
     const auto write=[&](uint32_t reg,uint32_t v){io.write(reg,v);++out.writes;io.read(reg);};
     bool linkChanged=false;
     const auto linkStable=[&] {
-        if(protocol==GOPProtocol::DP && !dpSourceUnchanged(io,r,p.pipe,ddi))linkChanged=true;
+        if(protocol==GOPProtocol::DP && !dpSourceUnchanged(io,r,p.pipe,ddi,0,tc))linkChanged=true;
         if(ddi>=3 && (!tc || !tc->unchanged(io)))linkChanged=true;
         return !linkChanged;
     };

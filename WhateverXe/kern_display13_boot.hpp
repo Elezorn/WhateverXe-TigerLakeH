@@ -7,30 +7,37 @@
 #include "kern_display13_fb_topology.hpp"
 #include "kern_xelp_memory_layout.hpp"
 namespace Display13Boot {
-// Certificate for the existing linear TMDS boot path. Render qualification is
+// Certificate for the linear boot memory. Render qualification is
 // separate; callers must also qualify the physical owner, BAR and memory layout.
-// DP/other-pipe adoption requires a separate boot contract, not a wider default.
+// DP requires an explicit source certificate; native link adoption remains a
+// separate contract. Existing runtime callers retain their TMDS default.
 template<class IO> bool reservedPrefix(IO &io,const AlderLakeN::DisplayReadout &display,
                                       bool bootstrapReady,unsigned ddi,const XELPMemory::Layout &memory,
-                                      const Display13TC::Boot *tc=nullptr) {
+                                      const Display13TC::Boot *tc=nullptr,
+                                      AlderLakeN::GOPProtocol protocol=AlderLakeN::GOPProtocol::TMDS) {
     AlderLakeN::LinearPlan plan;
-    if(!bootstrapReady || AlderLakeN::linearPlan(display,plan,ddi,AlderLakeN::GOPProtocol::TMDS,tc)!=AlderLakeN::LinearStatus::Ready ||
+    if(!bootstrapReady || AlderLakeN::linearPlan(display,plan,ddi,protocol,tc)!=AlderLakeN::LinearStatus::Ready ||
        plan.pipe!=0 || !memory.range(plan.surface,AlderLakeN::ScanoutBytes,true))return false;
-    if(ddi>=3 && (!tc || !tc->unchanged(io)))return false;
+    const auto stable=[&] {
+        return (ddi<3 || (tc && tc->unchanged(io))) &&
+            (protocol!=AlderLakeN::GOPProtocol::DP || AlderLakeN::dpSourceUnchanged(io,display,plan.pipe,ddi,0,tc));
+    };
+    if(!stable())return false;
     for(unsigned i=0;i<memory.bytes/4096;++i)
         if(io.readPTE(0x800000+8*i)!=memory.pte(uint64_t(i)*4096))return false;
-    return ddi<3 || tc->unchanged(io);
+    return stable();
 }
 // Establish the native linear-GGTT prerequisites only after the controller
 // startup contract is ready.
 // Ownership/power/link drift and the stolen prefix are checked before mutation.
 template<class IO> AlderLakeN::LinearResult prepareLinear(IO &io,const AlderLakeN::DisplayReadout &boot,
-    bool admitted,unsigned ddi,const XELPMemory::Layout &memory,const Display13TC::Boot *tc=nullptr) {
+    bool admitted,unsigned ddi,const XELPMemory::Layout &memory,const Display13TC::Boot *tc=nullptr,
+    AlderLakeN::GOPProtocol protocol=AlderLakeN::GOPProtocol::TMDS) {
     using namespace AlderLakeN;
     LinearResult r;
     if(!admitted)return r;
-    if(!reservedPrefix(io,boot,true,ddi,memory,tc)){r.status=LinearStatus::StateChanged;return r;}
-    return reinitializeLinear(io,boot,true,ddi,GOPProtocol::TMDS,tc);
+    if(!reservedPrefix(io,boot,true,ddi,memory,tc,protocol)){r.status=LinearStatus::StateChanged;return r;}
+    return reinitializeLinear(io,boot,true,ddi,protocol,tc);
 }
 enum class Status : uint32_t {Unavailable,Complete,Topology,Readback,Timeout,PeerChanged};
 struct Result {
