@@ -3874,6 +3874,20 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
     pci->setProperty("N97StolenReservation",reservation,sizeof(reservation));
 	auto result = AlderLakeN::readDisplay(io, barReady);
 	pci->setProperty("N97Display13Boot", &result, sizeof(result));
+    // Bounded pre-native evidence for selected fixed TC ports, including ports
+    // which firmware owns without routing a transcoder to them.
+    uint32_t bootTC[1+4*8] {1},bootPower=0;
+    if(barReady && AlderLakeN::value(result,0x45404,bootPower) && (bootPower&5)==5) {
+        for(unsigned d=3;d<7;++d)if(board.selected()&(1U<<d)) {
+            Display13TC::Port p;Display13TC::Port::resolve(d,p);const auto i=1+8*(d-3);
+            bootTC[i]=d;bootTC[i+1]=io.read(p.ready);bootTC[i+2]=io.read(p.buffer);
+            bootTC[i+3]=io.read(p.clock);bootTC[i+4]=io.read(p.pll);
+            bootTC[i+5]=io.read(Display13TC::Clock::Gate);
+            bootTC[i+6]=io.read(0x45454);bootTC[i+7]=io.read(0x45444);
+        }
+        pci->setProperty("WEXDisplay13TCBootPorts",bootTC,sizeof(bootTC));
+    }
+
 	bool bootstrapReady=true;
 	if(displayRequested && linearTest && (result.activePipes&(result.activePipes-1))) {
 		auto parked=Display13Boot::normalize(io,result,barReady && Display13FBTopology::multiOutputWiring(board) && xelpMemoryMatches(pci),board,xelpMemory);
@@ -6339,7 +6353,11 @@ uint32_t XE::wrapDisplay13TCMode(OSObject *port,uint32_t wanted) {
             result.power.writes,result.power.rollbackFailed,result.power.forcedOn,result.power.isolated};
         if(!root->getProperty("WEXDisplay13TCFirstPowerError"))root->setProperty("WEXDisplay13TCFirstPowerError",power,sizeof(power));
     }
-    if(!done && !root->getProperty("WEXDisplay13TCModeFailure"))root->setProperty("WEXDisplay13TCModeFailure",record,sizeof(record));
+    if(!done && !root->getProperty("WEXDisplay13TCModeFailure")) {
+        root->setProperty("WEXDisplay13TCModeFailure",record,sizeof(record));
+        uint32_t detail[] {1,ddi,result.phy.before,result.phy.after,result.phy.writes,result.phy.elapsedUs};
+        root->setProperty("WEXDisplay13TCModeFailureState",detail,sizeof(detail));
+    }
     return done ? kIOReturnSuccess : kIOReturnNotReady;
 }
 
