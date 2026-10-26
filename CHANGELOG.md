@@ -2,7 +2,7 @@
 
 ## 0.6.0
 
-Use [WhateverXe Graphics 0.3.0](https://github.com/b00t0x/WhateverXe-Graphics/releases) for the new mobile GPU and fixed TC display support. Updating both components is recommended.
+Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package.
 
 ### Added
 
@@ -14,9 +14,9 @@ Use [WhateverXe Graphics 0.3.0](https://github.com/b00t0x/WhateverXe-Graphics/re
 
 - Improve display clock ownership, output shutdown and reuse across the shared external-display paths.
 - Stop display teardown and reuse when required shutdown steps fail.
-- [WhateverXe Graphics 0.3.0](https://github.com/b00t0x/WhateverXe-Graphics/releases) expands shader input support on Sonoma–Tahoe and improves observed Tahoe App Store and Maps rendering.
+- [WhateverXe Graphics 0.3.0](https://github.com/b00t0x/WhateverXe-Graphics/releases) fixes shader compilation failures on Sonoma–Tahoe by expanding supported AIR inputs.
 
-Alder Lake-H hardware checks cover Big Sur–Tahoe. Other newly accepted mobile configurations remain untested. Display13 internal panels and Type-C-managed output still need implementation; existing DisplayPort reconnection and Sequoia App Store video hangs remain unresolved. See the [README](https://github.com/b00t0x/WhateverXe#tested-features-and-known-issues) for coverage and limits.
+Alder Lake-H hardware checks cover Big Sur–Tahoe. Other newly accepted mobile configurations remain untested. Internal panels and Type-C-managed output on the newly supported mobile GPUs still need implementation; existing DisplayPort reconnection and Sequoia App Store video hangs remain unresolved. See the [README](https://github.com/b00t0x/WhateverXe#tested-features-and-known-issues) for coverage and limits.
 
 ## 0.5.0
 

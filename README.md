@@ -9,10 +9,8 @@ This project is experimental and requires the signed graphics package from
 [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics). It installs
 the graphics stack under `/Library` and updates the Auxiliary Kernel Collection
 (AuxKC), without patching System files or snapshots. WEX and the graphics package
-have independent release versions. Use WEX **0.6.0** with Graphics **0.3.0**
-for the current GPU, display and shader-compiler improvements. The newly added
-Alder Lake-H/P/U and Raptor Lake-H/P/U support requires both updates.
-Previously supported GPUs can also benefit from the updated graphics package.
+have independent release versions. Use the latest releases of both WEX and
+WhateverXe Graphics.
 
 ## Compatibility
 
@@ -63,8 +61,9 @@ limits are listed in [device selection](docs/device-selection.md).
 
 ### Further implementation required
 
-- Display13 eDP, Combo DP and Type-C-managed output need complete transport
-  integration. Mobile-family ID admission does not enable those output paths.
+- On Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U,
+  internal eDP panels, Combo-PHY DisplayPort and Type-C-managed output need
+  further implementation. Accepting the GPU ID does not enable these outputs.
 - Rocket Lake-S: its display power and clock handling differ from Tiger Lake.
   It is not supported by this release, and no hardware validation is scheduled.
 
@@ -94,7 +93,7 @@ supported. With the signed graphics package and linked Mod AMFIPass,
 Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled; the
 WhateverXe Graphics installer applies this setting.
 
-Boot the target OS with WEX **0.3.0 or newer** (0.5.0 for S/HX and H45 GPUs, 0.6.0 for H/P/U mobile Display13 GPUs) before installing the graphics
+Boot the target OS with the latest WEX before installing the latest graphics
 pkg. If an older Xe System patch is installed, restore it using its original
 recovery procedure first. The pkg does not change EFI, System files, snapshots
 or SIP settings. See [installation and removal](https://github.com/b00t0x/WhateverXe-Graphics#install)
@@ -124,22 +123,23 @@ On supported GPUs, WhateverXe also normalizes the detected Intel Management
 Engine device name to `IMEI`, as WhateverGreen does. A separate ACPI rename
 from `HECI` or `MEI` to `IMEI` is unnecessary.
 
-Tiger Lake automatically selects VBT-described fixed DisplayPort routes on TC1–TC4 when AUX wiring matches the native controller. Fixed DP and DP Alt Mode use the detected FIA layout. TC3/TC4 fixed DP and non-modular FIA support are implemented but have not been verified on hardware. Use the matching Compat build for non-modular FIA probing. TC5/TC6 and cross-routed AUX require further backend support.
+Tiger Lake automatically selects VBT-described fixed DisplayPort routes on TC1–TC4 when AUX wiring matches the native controller. Fixed DP and DP Alt Mode use the detected FIA layout. TC3/TC4 fixed DP and non-modular FIA support are implemented but have not been verified on hardware. TC5/TC6 and cross-routed AUX require further backend support.
 
-Display13 uses VBT-described Combo A/B and fixed TC1–TC4 HDMI routes on
-ADL-N and ADL-P/RPL-P. Experimental fixed TC1–TC4 SST DisplayPort requires
-matching VBT AUX wiring. Use WEX 0.6.0 with Graphics 0.3.0 for these fixed TC
-paths. The older explicit ADL-N HDMI property remains Combo-only.
+Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U use
+VBT-described Combo A/B and fixed TC1–TC4 HDMI routes. Experimental fixed
+TC1–TC4 SST DisplayPort requires matching VBT AUX wiring. The explicit
+Alder Lake-N HDMI property applies only to Combo routes.
 
 ADL-H has been tested with fixed HDMI outputs and a DP-to-HDMI adapter,
 including three connected displays at startup, firmware-scaled boot displays
-and DP reconnection. Direct DP sinks and other Display13 families have not
-been verified with the fixed TC DP path. MST, USB-C DP Alt Mode, Thunderbolt
-and cross-routed AUX remain unsupported on Display13.
+and DP reconnection. Direct DP sinks and other GPUs in these families have
+not been verified with the fixed TC DP path. MST, USB-C DP Alt Mode,
+Thunderbolt and cross-routed AUX remain unsupported on these GPUs.
 
 ADL-P/RPL-P uses its physical ID and detected GPU resources automatically.
 No device-ID override or machine-specific AGDP kext is required.
 `-wex-noaccel` retains framebuffer-only operation.
+
 ### Internal-panel brightness
 
 Add `SSDT-PNLF` to OpenCore to enable internal-display brightness control.
@@ -184,19 +184,20 @@ GPU backend selection is independent of hardware test coverage: untested PCI
 revisions use the same family implementation. Revision-specific behavior is
 added when a documented difference or observed failure requires it.
 
-The supported Display 13 backend selects Y-tiled scanout automatically;
-`AAPL,GfxYTile` is not required in OpenCore. Existing values are preserved.
-Do not use the Apple driver's `-yTileDisable` argument with this backend:
-its X-tiled scanout path is unsupported. Display 12 tiling selection is unchanged.
+Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U select
+Y-tiled scanout automatically; `AAPL,GfxYTile` is not required in OpenCore.
+Existing values are preserved. Do not use the Apple driver's `-yTileDisable`
+argument on these GPUs: their X-tiled scanout path is unsupported.
 
 For framebuffer bring-up, the optional `-wex-noaccel` argument disables accelerator
-startup. On Display 13 it also skips GT resource probing while preserving the
+startup. On Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U,
+it also skips GPU resource probing while preserving the
 framebuffer's independent boot-memory and MMIO checks. It does not enable an
 otherwise unsupported display backend.
 
 Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resources while keeping GPU driver admission disabled. It is not required for supported hardware.
 `-wex-adlp-load-only` blocks both native framebuffer and accelerator probes/starts on a selected ADL-P/RPL-P device, for load-only diagnostics without GPU initialization.
-`-wex-display13-offline` keeps Display 13 native controller initialization enabled but reports selected outputs as disconnected, isolating HPD/EDID and mode programming for framebuffer diagnostics. It does not establish display operation.
+`-wex-display13-offline` keeps native display controller initialization enabled on Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U but reports selected outputs as disconnected, isolating HPD/EDID and mode programming for framebuffer diagnostics. It does not establish display operation.
 
 ## Tested features and known issues
 
@@ -213,20 +214,10 @@ These results cover tested systems, not every GPU, display, adapter or dock.
 The listed resolutions describe test coverage; they are not a fixed resolution
 limit imposed by WEX.
 
-On Big Sur–Tahoe, WebKit GPU access to the Data GPU drivers uses its valid
-Apple platform signature and service identifier, independently of Safari’s
-installation or update location.
-
-With Graphics 0.3.0, Sonoma–Tahoe use the OS-native AIR converter for shader
-compilation. Tahoe checks confirmed improved App Store scrolling and Maps
-labels, panning, zooming and 3D rendering. Compiler UUID changes alone no longer
-disable this path; required APIs and compatible compiler images are still checked.
-
 ### Known issues and limits
 
 - Some image-conversion operations can crash the application.
-- App Store video playback can freeze the GPU on Sequoia; the shader-compiler
-  update does not resolve this separate issue.
+- App Store video playback can freeze the GPU on Sequoia.
 - Reconnecting a monitor to a dedicated DisplayPort connector can leave the
   screen black or freeze the computer. USB-C DisplayPort Alt Mode reconnection
   can also freeze the computer; this has been reproduced on both Big Sur and
@@ -244,7 +235,7 @@ disable this path; required APIs and compatible compiler images are still checke
 
 ## Roadmap
 
-- Complete Display 13 DP, USB-C and internal-display support.
+- Complete DisplayPort, USB-C and internal-display support on Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U.
 - Improve display reconnection reliability and investigate full system sleep/wake.
 
 ## Build and test

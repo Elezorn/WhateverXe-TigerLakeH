@@ -6,7 +6,7 @@ WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィック
 
 本プロジェクトは実験段階であり、[WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics)の署名済みグラフィックスpkgが必要です。資材を`/Library`へ配置してAuxiliary Kernel Collection（AuxKC）を更新し、Systemファイルやsnapshotにはパッチを適用しません。WEXとグラフィックスpkgは、それぞれ独立したバージョンでリリースします。
 
-GPU・表示・シェーダーコンパイラーの最新の改善を利用するには、WEX **0.6.0**とGraphics **0.3.0**を組み合わせてください。今回追加したAlder Lake-H/P/U・Raptor Lake-H/P/Uへの対応には両方の更新が必要です。従来対応GPUにもグラフィックスpkgの改善が適用されます。
+WEXとWhateverXe Graphicsは、どちらも最新版を使用してください。
 
 ## 対応範囲
 
@@ -51,8 +51,9 @@ CPUモデル名や機種固有の設定は不要ですが、実機での動作�
 
 ### 対応に追加改修が必要
 
-- Display13のeDP・Combo DP・Type-C管理下の出力は、transportの接続に追加改修が必要です。
-  モバイル系IDの受付だけでこれらの出力経路が有効になるわけではありません。
+- Alder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/Uの内蔵eDPパネル・
+  Combo PHY経由のDisplayPort・Type-C管理下の出力には追加改修が必要です。
+  GPUのIDを受け付けるだけで、これらの出力が有効になるわけではありません。
 - Rocket Lake-S：Tiger Lakeとは表示の電源・クロック制御が異なります。
   このリリースでは未対応で、実機検証の予定もありません。
 
@@ -76,7 +77,7 @@ SIPは`csr-active-config=03080000`（値`0x803`）に設定してください。
 
 Tahoeでは`CoreMedia / AllowOnePassMetalScaling`の無効化が必要です。WhateverXe Graphicsのインストーラーが設定します。
 
-グラフィックスpkgはWEX **0.3.0以上**（S/HX・H45系GPUでは0.5.0、H/P/U系モバイルDisplay13 GPUでは0.6.0）を読み込んだ対象OSから実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
+最新版のWEXを読み込んだ対象OSから、最新版のグラフィックスpkgを実行してください。旧Xe System patchがある場合は、先に元の復元手順で戻してください。pkgはEFI・Systemファイル・snapshot・SIP設定を変更しません。pkgの使用方法と単独のアンインストールスクリプトは[導入と削除](https://github.com/b00t0x/WhateverXe-Graphics/blob/main/README_ja.md#インストール)を参照してください。
 
 リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。upstreamのAMFIPassはMod版の署名チェーンに対応していません。
 
@@ -90,13 +91,14 @@ GPUはPCI device IDから自動選択します。対応範囲内ではファー�
 
 対応GPUでは、WhateverGreenと同様に、検出されたIntel Management Engineのデバイス名も`IMEI`へ統一します。`HECI`や`MEI`から`IMEI`へのACPI renameを別途追加する必要はありません。
 
-Tiger Lakeはnative controllerとAUX配線が一致するVBTの固定DisplayPortをTC1〜TC4で自動選択します。固定DPとDP Alt Modeは検出したFIA構成を使用します。TC3/TC4の固定DPと非modular FIAは実装済み・実機未検証です。非modular FIAのprobeには対応するCompatビルドも使用してください。TC5/TC6と交差AUX配線には追加のbackend対応が必要です。
+Tiger Lakeはnative controllerとAUX配線が一致するVBTの固定DisplayPortをTC1〜TC4で自動選択します。固定DPとDP Alt Modeは検出したFIA構成を使用します。TC3/TC4の固定DPと非modular FIAは実装済み・実機未検証です。TC5/TC6と交差AUX配線には追加のbackend対応が必要です。
 
-Display13では、ADL-NとADL-P/RPL-PのCombo A/B・固定TC1〜TC4 HDMI配線をVBTから選択します。試験的な固定TC1〜TC4 SST DisplayPortには、VBTのAUX配線の一致が必要です。これらの固定TC経路にはWEX 0.6.0とGraphics 0.3.0を使用してください。従来のADL-N HDMI明示propertyはCombo専用です。
+Alder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/Uでは、Combo A/B・固定TC1〜TC4 HDMI配線をVBTから選択します。試験的な固定TC1〜TC4 SST DisplayPortには、VBTのAUX配線の一致が必要です。Alder Lake-NのHDMI明示propertyはCombo配線にのみ適用します。
 
-ADL-Hでは、固定HDMIとDP→HDMI変換器を使い、3画面接続での起動、ファームウェアによる拡大表示からの起動、DP再接続を確認しています。固定TC DP経路での直接DP接続の表示先と他のDisplay13系統は未検証です。Display13のMST、USB-C DP Alt Mode、Thunderbolt、交差AUX配線は未対応です。
+ADL-Hでは、固定HDMIとDP→HDMI変換器を使い、3画面接続での起動、ファームウェアによる拡大表示からの起動、DP再接続を確認しています。固定TC DP経路での直接DP接続の表示先と、これらのファミリーの他のGPUは未検証です。これらのGPUではMST、USB-C DP Alt Mode、Thunderbolt、交差AUX配線は未対応です。
 
 ADL-P/RPL-Pは物理IDと検出したGPU資源を自動で使用します。device-ID上書きや機種別AGDP kextは不要です。`-wex-noaccel`でFramebufferのみの動作を維持します。
+
 ### 内蔵パネルの輝度
 
 内蔵ディスプレイの輝度調整には、OpenCoreへ`SSDT-PNLF`を追加してください。
@@ -133,16 +135,16 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 GPU backendの選択と実機検証範囲は独立しています。未検証のPCI revisionも同じfamily実装を使い、
 文書化された差分や実際の不具合で必要になった場合にrevision別の処理を追加します。
 
-対応済みのDisplay 13バックエンドではYタイル出力を自動選択するため、OpenCoreの`AAPL,GfxYTile`設定は不要です。既存の値は保持します。
-このバックエンドはXタイル出力に未対応なので、Appleドライバの`-yTileDisable`引数は使用しないでください。Display 12のタイル選択は変更しません。
+Alder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/UではYタイル出力を自動選択するため、OpenCoreの`AAPL,GfxYTile`設定は不要です。既存の値は保持します。
+これらのGPUはXタイル出力に未対応なので、Appleドライバの`-yTileDisable`引数は使用しないでください。
 
 FBの立上げ時は、任意の`-wex-noaccel`引数でAcceleratorの起動を止められます。
-Display 13ではGT資源のprobeも省略し、FB独自の起動メモリ・MMIOの確認は維持します。
+Alder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/UではGPU資源のprobeも省略し、FB独自の起動メモリ・MMIOの確認は維持します。
 未対応のDisplayバックエンドを有効にする引数ではありません。
 
 開発時の一時診断用に `-wex-adlp-readout` を指定すると、GPUドライバの受付を閉じたままADL-Pの起動資源を採取します。対応済みハードウェアでは不要です。
 `-wex-adlp-load-only` は選択済みADL-P/RPL-Pで、FramebufferとAccelerator両方のnative probe/startを止め、GPUを初期化せずにロード段階を診断します。
-`-wex-display13-offline` はDisplay 13のnative controller初期化を有効に保ち、選択した出力を未接続として扱います。FB診断でHPD/EDIDとmode設定を切り離すための設定で、表示成立を意味しません。
+`-wex-display13-offline` はAlder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/Uのnative display controller初期化を有効に保ち、選択した出力を未接続として扱います。FB診断でHPD/EDIDとmode設定を切り離すための設定で、表示成立を意味しません。
 
 ## 動作確認済みの機能と既知の問題
 
@@ -158,15 +160,10 @@ Display 13ではGT資源のprobeも省略し、FB独自の起動メモリ・MMIO
 検証した機器での結果であり、すべてのGPU・ディスプレイ・アダプター・ドックでの動作を保証するものではありません。
 記載した解像度は検証範囲であり、WEXが設けた固定の解像度制限ではありません。
 
-Big Sur〜Tahoeでは、有効なApple platform署名とサービス識別子でWebKit GPUを判定し、
-Safariのインストール先や更新による配置変更に依存せずData側GPUドライバへのアクセスを扱います。
-
-Graphics 0.3.0では、Sonoma〜TahoeのシェーダーコンパイルにOS標準のAIR変換を使用します。TahoeではApp Storeのスクロールと、Mapsのラベル・移動・ズーム・3D描画の改善を確認しました。コンパイラーのUUID変更だけではこの経路を無効にせず、必要なAPIとコンパイラーimageの互換性を引き続き確認します。
-
 ### 既知の問題と制限
 
 - 一部の画像変換処理でアプリがクラッシュすることがあります。
-- SequoiaではApp Storeの動画再生でGPUが停止することがあります。今回のシェーダーコンパイラー更新とは別の未解決事項です。
+- SequoiaではApp Storeの動画再生でGPUが停止することがあります。
 - 専用DisplayPort端子の抜き差しで黒画面やシステム停止が起きることがあります。
   USB-C DisplayPort Alt Modeでも再接続時のシステム停止がBig SurとTahoeの両方で再現しています。
 - Safariの動画再生で時折コマ落ちすることがあります。
@@ -180,7 +177,7 @@ Graphics 0.3.0では、Sonoma〜TahoeのシェーダーコンパイルにOS標�
 
 ## ロードマップ
 
-- Display 13 GPUでのDP・USB-C・内蔵画面対応の拡充。
+- Alder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/UでのDisplayPort・USB-C・内蔵画面対応の拡充。
 - 画面再接続の安定性改善とシステム全体のスリープ／復帰の調査。
 
 ## ビルドとテスト
