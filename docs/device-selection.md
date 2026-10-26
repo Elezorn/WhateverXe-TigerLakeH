@@ -85,9 +85,12 @@ must match the implemented path; ambiguous or cross-routed AUX layouts are exclu
 - TGL panels requesting HOBL use standard signal settings; the HOBL power-saving
   optimization is disabled until its retry behavior is supported.
 - Display 13: fixed HDMI uses firmware Combo A/B and TC1–4 routes; TC requires
-  verified legacy mode. DP, USB-C and eDP need further integration. A single
-  TMDS firmware scanout on pipe A is required for TC boot adoption; simultaneous
-  firmware TC scanouts are not adopted by the Combo-only multi-GOP normalizer.
+  verified legacy mode. Experimental fixed TC1–4 SST DP requires matching VBT
+  AUX wiring. Boot handoff supports validated linear RGB scanout, including
+  supported firmware scaling, and retires secondary fixed TC firmware outputs
+  before native startup. ADL-H has been tested with three outputs and a
+  DP-to-HDMI adapter. Direct DP sinks remain unverified. Combo DP, eDP, MST,
+  Type-C-managed output and cross-routed AUX still need further implementation.
 
 The Display12 small-GT implementation accepts one slice, up to two DSS,
 16/24/32 EUs, four L3 banks and the supported media engines. Different resource
