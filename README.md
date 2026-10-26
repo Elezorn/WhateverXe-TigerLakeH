@@ -264,3 +264,5 @@ WhateverGreen source is not a build dependency.
 
 WhateverXe retains WhateverGreen's copyright notices and BSD-3-Clause license.
 See [LICENSE.txt](LICENSE.txt). Lilu and MacKernelSDK are separate dependencies.
+
+Thanks to [JulioNectar/XPS13Plus](https://github.com/JulioNectar/Hackintosh-XPS13Plus-IrisXe-Tahoe) for sharing its Xe graphics work. Its compiler adapter and LLVM bridge informed the OS-native AIR conversion used in WhateverXe Graphics.
