@@ -31,7 +31,9 @@ void XeHost::processKernel(KernelPatcher &patcher) {
  // Match WEG ordering: PCI config reads require a published IOPCIDevice.
  const bool published=gpu && WIOKit::awaitPublishing(gpu);
  const auto profile=published ? XELP::deviceProfile(gpu) : XELP::Profile {};
- active=profile.admitted();
+ // The host must dispatch framebuffer patches and accelerator rejection
+ // hooks even when the selected profile deliberately has no Render backend.
+ active=profile.displayAdmitted();
  const auto display=XELP::displayAdapter(profile.family);
  backlightEnabled=active && (display==XELP::DisplayAdapter::TGL || display==XELP::DisplayAdapter::ADLS) &&
   info->firmwareVendor!=DeviceInfo::FirmwareVendor::Apple;
@@ -44,7 +46,8 @@ void XeHost::processKernel(KernelPatcher &patcher) {
   if(!gpu->getProperty("model"))if(const auto name=XELP::model(profile))gpu->setProperty("model",const_cast<char *>(name),strlen(name)+1);
  }
  // Capture the unmodified firmware/GT state before admitting a new backend.
- if(!active && profile.family==XELP::Family::AlderLakeS)xe.processKernel(patcher,info);
+ if(!active && (profile.family==XELP::Family::AlderLakeS ||
+                profile.family==XELP::Family::AlderLakeP))xe.processKernel(patcher,info);
  if(active) {
   XeDataAccess::processKernel(patcher);
   // Xe admission reads physical PCI identity. Do not install WEG's ID spoof hooks.
