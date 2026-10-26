@@ -6,7 +6,7 @@ r=Path(__file__).resolve().parents[1];s=(r/'WhateverXe/kern_xe.cpp').read_text()
 functions='\n'.join(re.search(r'(?:bool|uint32_t|XELP::LinkRequirements) XE::'+n+r'\(.*?\n\}',s,re.S).group() for n in ['framebufferLinkRequirements','framebufferPortWaitPolls','processFramebufferPortWait'])
 assert s.count('processFramebufferPortWait(patcher,index,address,size)')==1
 runtime=re.search(r'bool XE::processFramebufferDonorRuntime\(.*?\n\}',s,re.S).group()
-assert 'framebufferDonorRuntimeReady=hdcpReady && tglPanelPowerPropertyReady && meiReady &&\n  processFramebufferPortWait' in runtime
+assert 'tglPanelPowerPropertyReady && meiReady && ddiRequestReady &&\n  processFramebufferPortWait' in runtime
 assert 'while (delay < 3000' not in s
 h=(r/'tests/xelp_port_wait_harness.hpp').read_text().replace('// FUNCTIONS',functions)
 with tempfile.TemporaryDirectory(prefix='external-link-wait-') as d:

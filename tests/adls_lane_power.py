@@ -53,8 +53,8 @@ int main(){
   calls.clear();XE::wrapADLSPowerPG(power,true,2);
   assert(calls.size()==1 && calls[0].target==(expected|2));++count;
  }
- // Observed donor release masks duplicate TC1 into absent DDI C. Real
- // TC1/TC2 and A consumers must survive; no ACK/ref state is fabricated.
+ // Request generation is corrected in the common donor producer. This
+ // backend owns only lane parents and must preserve every supplied DDI bit.
  for(unsigned refsC:{0U,1U,7U})for(unsigned refsTC1:{0U,1U,7U})
  for(bool on:{false,true})for(unsigned mask:{0x20U,0x80U,0xA0U,0xA2U,0x280U,0x2A0U,0x2A2U}){
   state.adlsWiring.hdmi=8;state.adlsWiring.dp=17;
@@ -62,7 +62,6 @@ int main(){
   uint8_t before[sizeof(power)];memcpy(before,power,sizeof(power));
   calls.clear();XE::wrapTGLPowerDDIState(power,on,mask);
   unsigned expected=mask;
-  if(!on && !refsC && refsTC1 && (mask&0xA0)==0xA0)expected&=~0x20U;
   unsigned seen=0;for(auto c:calls)if(c.kind==1){assert(c.target==expected && c.enable==on);++seen;}
   assert(seen==1 && !memcmp(before,power,sizeof(power)));++count;
  }

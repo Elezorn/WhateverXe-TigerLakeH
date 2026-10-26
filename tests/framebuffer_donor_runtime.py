@@ -10,7 +10,8 @@ wrapper = re.search(r'bool XE::wrapTGLHDCP2Init\(.*?\n\}', s, re.S).group()
 assert s.count('processFramebufferDonorRuntime(patcher,index,address,size);') == 1
 assert s.count('wrapTGLMEIWrite,orgTGLMEIWrite') == 1
 assert 'wrapTGLMEIWrite, orgTGLMEIWrite' not in s
-assert 'hdcpReady && tglPanelPowerPropertyReady && meiReady' in install
+assert 'tglPanelPowerPropertyReady && meiReady && ddiRequestReady' in install
+assert 'XELPDonor::ddiReleaseSite' in install and 'WEXDonorDDIRequestReady' in install
 if len(sys.argv) > 1:
     b = Path(sys.argv[1]).read_bytes()
     for name, offset in [('init',0x8ab94), ('associations',0x8ac17), ('use',0x8b726),

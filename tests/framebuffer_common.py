@@ -20,6 +20,8 @@ assert s.count('xelpInstallNVRAMABI(patcher,index,address,size)')==1
 assert s.count('processFramebufferDonorRuntime(patcher,index,address,size)')==1
 code=r'''
 #include <cassert>
+#include "kern_xelp_combo_clock.hpp"
+struct {void *lock=(void*)1;XELPComboClock::ClockAllocation allocation;} comboClockTransaction;
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -117,5 +119,5 @@ for key,name in [('START','entry'),('INIT','initEntry'),('LANE','laneEntry'),('C
  code=code.replace(key,re.search(r'\b'+name+r'\[\]\s*=\s*\{([^}]+)',f).group(1))
 with tempfile.TemporaryDirectory(prefix='wex-common-') as d:
  p=Path(d);(p/'test.cpp').write_text(code)
- subprocess.run(['clang++','-std=c++17','-O1','-fsanitize=address,undefined',str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+ subprocess.run(['clang++','-std=c++17','-O1','-fsanitize=address,undefined','-I'+str(r/'WhateverXe'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')]+sys.argv[1:],check=True)

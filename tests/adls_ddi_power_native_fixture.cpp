@@ -1,4 +1,5 @@
 #include "kern_alderlake_s.hpp"
+#include "kern_xelp_donor.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -21,7 +22,7 @@ template<class T>T &at(void*p,unsigned o){return *reinterpret_cast<T*>(static_ca
 alignas(8) uint8_t controller[0xF00]{},power[0x90]{},access[0x70]{},ports[9][0x600]{};
 uintptr_t vtable[64]{};uint8_t *image;
 struct Event {unsigned kind,value;};std::vector<Event> events;
-unsigned requested,ackMissing,delays,errors,reads;
+unsigned requested,ackMissing,delays,errors,reads,physicalMask=0x79;
 void pg(void *p,bool,unsigned mask){assert(p==power);events.push_back({0,mask});}
 void *lookup(unsigned d){assert(d<9);return ports[d];}
 void writeReg(void *p,unsigned long reg,unsigned value){
@@ -33,7 +34,7 @@ uint32_t readReg(void *p,unsigned long reg){
  // Model only physical ADL-S IO wells. An unsupported request receives no
  // ACK; explicit fault injection removes a real port's ACK as well.
  unsigned ack=0;
- for(unsigned d:{0u,3u,4u,5u,6u})if(!(ackMissing&(1U<<d)))ack|=(requested>>(2*d+1)&1)<<(2*d);
+ for(unsigned d=0;d<9;++d)if((physicalMask&(1U<<d)) && !(ackMissing&(1U<<d)))ack|=(requested>>(2*d+1)&1)<<(2*d);
  return requested|ack;
 }
 void delay(unsigned n){assert(n==1);++delays;}
@@ -81,7 +82,24 @@ int main(int argc,char **argv){
  setup(12);state.adlsDisplaySelected=false;
  get(power,3);get(power,4);assert(requested==0x280 && !errors);
  put(power,4);assert(requested==0xA0 && delays==20 && errors==2);
- state.adlsDisplaySelected=true;
+ assert(XELPDonor::ddiReleaseSite(image,b.size()));
+ assert(!XELPDonor::ddiReleaseSite(image,XELPDonor::DDIReleaseOffset+1));
+ for(unsigned i=0;i<sizeof(XELPDonor::DDIReleaseBefore);++i) {
+  image[XELPDonor::DDIReleaseOffset+i]^=1;assert(!XELPDonor::ddiReleaseSite(image,b.size()));image[XELPDonor::DDIReleaseOffset+i]^=1;
+ }
+ memcpy(image+XELPDonor::DDIReleaseOffset,XELPDonor::DDIReleaseAfter,sizeof(XELPDonor::DDIReleaseAfter));
+ // TGL uses the same native producer with no ADL-S wrapper correction.
+ // Real C refs must remain represented on layouts that provide C.
+ for(unsigned mode:{0u,1u,2u,4u})for(bool realC:{false,true}) {
+  setup(26);physicalMask=0x1FF;at<uint32_t>(ports[3],0x550)=mode;
+  if(realC)get(power,2);
+  get(power,3);get(power,4);put(power,4);
+  assert(requested==((mode==2?0U:0x80U)|(realC?0x20U:0U)) && !delays && !errors);
+  put(power,3);assert(requested==(realC?0x20U:0U));
+  if(realC)put(power,2);
+  assert(!requested && !delays && !errors);
+ }
+ physicalMask=0x79;state.adlsDisplaySelected=true;
  unsigned assignments=0,sequences=0,operations=0;
  for(unsigned assignment=1;assignment<27;++assignment){
   setup(assignment);std::vector<unsigned> acquire;
