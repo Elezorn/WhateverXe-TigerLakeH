@@ -9,11 +9,10 @@ This project is experimental and requires the signed graphics package from
 [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics). It installs
 the graphics stack under `/Library` and updates the Auxiliary Kernel Collection
 (AuxKC), without patching System files or snapshots. WEX and the graphics package
-have independent release versions. Graphics **0.2.0** is needed for the GPUs
-added in WEX **0.5.0** and supplies the latest rendering fixes. Previously
-supported Tiger Lake/Alder Lake-N configurations can retain Graphics 0.1.0,
-but will not receive the new package fixes or features requiring its updated
-components. Use WEX 0.5.0 with Graphics 0.2.0 for the complete set of current features and fixes.
+have independent release versions. Use WEX **0.6.0** with Graphics **0.3.0**
+for the current GPU, display and shader-compiler improvements. The newly added
+Alder Lake-H/P/U and Raptor Lake-H/P/U support requires both updates.
+Previously supported GPUs can also benefit from the updated graphics package.
 
 ## Compatibility
 
@@ -42,7 +41,7 @@ Graphics; GPU generation and connector routing are handled by WEX.
 | --- | --- |
 | Tiger Lake-U | 48- and 80-EU graphics; desktop-style and laptop display layouts |
 | Alder Lake-N | 16- and 24-EU graphics; two HDMI displays |
-| Alder Lake-H | 96-EU graphics (`46A6`); fixed TC HDMI on Big Sur |
+| Alder Lake-H | 96-EU graphics (`46A6`); fixed TC HDMI and DisplayPort through a DP-to-HDMI adapter |
 | Alder Lake-S | UHD Graphics 770 (`4690`); HDMI, DisplayPort and a USB-C port wired as fixed DisplayPort |
 
 These are tested configurations within each family, not a guarantee for every
@@ -54,7 +53,7 @@ for OS coverage and remaining problems.
 - Other supported Tiger Lake-U/H35 configurations, including 96-EU graphics.
 - Tiger Lake-H45 (GT1): `9A60`, `9A68`, `9A70`.
 - Other supported Alder Lake-N configurations and Twin Lake.
-- Alder Lake-H/P/U and Raptor Lake-H/P/U with supported fixed HDMI wiring.
+- Other Alder Lake-H/P/U and Raptor Lake-H/P/U configurations with supported fixed HDMI or fixed TC DisplayPort wiring.
 - Other supported Alder Lake-S configurations, Alder Lake-HX, Raptor Lake-S and Raptor Lake-HX.
 
 These devices use implemented support shared with the tested families. Their
@@ -95,7 +94,7 @@ supported. With the signed graphics package and linked Mod AMFIPass,
 Tahoe requires `CoreMedia / AllowOnePassMetalScaling` to be disabled; the
 WhateverXe Graphics installer applies this setting.
 
-Boot the target OS with WEX **0.3.0 or newer** (0.5.0 for newly added GPUs) before installing the graphics
+Boot the target OS with WEX **0.3.0 or newer** (0.5.0 for S/HX and H45 GPUs, 0.6.0 for H/P/U mobile Display13 GPUs) before installing the graphics
 pkg. If an older Xe System patch is installed, restore it using its original
 recovery procedure first. The pkg does not change EFI, System files, snapshots
 or SIP settings. See [installation and removal](https://github.com/b00t0x/WhateverXe-Graphics#install)
@@ -127,10 +126,20 @@ from `HECI` or `MEI` to `IMEI` is unnecessary.
 
 Tiger Lake automatically selects VBT-described fixed DisplayPort routes on TC1–TC4 when AUX wiring matches the native controller. Fixed DP and DP Alt Mode use the detected FIA layout. TC3/TC4 fixed DP and non-modular FIA support are implemented but have not been verified on hardware. Use the matching Compat build for non-modular FIA probing. TC5/TC6 and cross-routed AUX require further backend support.
 
-Display13 uses the same VBT-driven Combo A/B and fixed TC1–4 HDMI routing on ADL-N and ADL-P/RPL-P. A matching Compat provider with fixed-TC capability is required for TC routes. The older explicit ADL-N HDMI property remains Combo-only. Experimental fixed TC1–TC4 SST DisplayPort support requires matching VBT AUX wiring and a matching Compat build. Display and reconnect have been verified on ADL-H through a DP-to-HDMI adapter while retaining Metal, OpenGL and video acceleration. Other Display13 families and direct DP sinks remain unverified. Fixed TC DP boot handoff has been verified on ADL-H through a DP-to-HDMI adapter. It requires a supported linear RGB surface and validated stolen-memory mapping. Experimental multi-output boot handoff retains pipe A and stops the other firmware outputs before native startup. Firmware upscaling is accepted only with a verified pipe-bound scaler covering the full output. Dual-output scaled boot and three-output boot have been verified on ADL-H with a DP-to-HDMI adapter and fixed HDMI outputs. Cold unused fixed TC ports left owned by firmware are released only after checking that their output, clocks and transactions are inactive. MST, USB-C DP Alt Mode, Thunderbolt and cross-routed AUX remain unsupported.
+Display13 uses VBT-described Combo A/B and fixed TC1–TC4 HDMI routes on
+ADL-N and ADL-P/RPL-P. Experimental fixed TC1–TC4 SST DisplayPort requires
+matching VBT AUX wiring. Use WEX 0.6.0 with Graphics 0.3.0 for these fixed TC
+paths. The older explicit ADL-N HDMI property remains Combo-only.
 
-ADL-P/RPL-P uses its physical ID and fuse-derived resources with the shared Display13 backend. Fixed HDMI routes come from VBT; `-wex-noaccel` retains framebuffer-only operation. A legacy 9A49 donor selector is accepted but unnecessary. Use matching Graphics payloads containing the mobile IDs and provider; Graphics 0.2.0 does not include them. The matching Compat provider supplies an AGDP personality only for the admitted Display13 framebuffer client. Its default policy keeps callback registration active without a board-ID-specific override.
+ADL-H has been tested with fixed HDMI outputs and a DP-to-HDMI adapter,
+including three connected displays at startup, firmware-scaled boot displays
+and DP reconnection. Direct DP sinks and other Display13 families have not
+been verified with the fixed TC DP path. MST, USB-C DP Alt Mode, Thunderbolt
+and cross-routed AUX remain unsupported on Display13.
 
+ADL-P/RPL-P uses its physical ID and detected GPU resources automatically.
+No device-ID override or machine-specific AGDP kext is required.
+`-wex-noaccel` retains framebuffer-only operation.
 ### Internal-panel brightness
 
 Add `SSDT-PNLF` to OpenCore to enable internal-display brightness control.
@@ -196,6 +205,7 @@ Temporary development diagnostic: `-wex-adlp-readout` captures ADL-P boot resour
 | Tiger Lake / Alder Lake-N | Big Sur–Tahoe: dual 1920×1080 at 60 Hz output, Metal/MPS, OpenGL, OpenCL, hardware H.264 encode/decode, HEVC decode, display sleep/wake, Safari video decoding and Widevine playback |
 | Tiger Lake laptops | Big Sur–Tahoe: internal 1366×768 eDP display, brightness control, HDMI and USB-C DisplayPort Alt Mode, up to three simultaneous displays; USB-C reconnection remains unreliable |
 | Alder Lake-N | Big Sur/Tahoe: automatic Y tiling without an EFI `AAPL,GfxYTile` setting |
+| Alder Lake-H | Big Sur–Tahoe: Metal, OpenGL, hardware H.264 encode/decode, HEVC decode and three displays using fixed HDMI and a DP-to-HDMI adapter |
 | Alder Lake-S | Big Sur–Tahoe: Metal, OpenGL, OpenCL, hardware H.264 encode/decode, HEVC decode and three displays (two 1080p60 and one 720p60); Safari video playback; Widevine checked on Big Sur and Tahoe |
 | Tiger Lake / Alder Lake-S | Tahoe: Chrome hardware-accelerated Canvas, WebGL and WebGPU |
 
@@ -207,9 +217,16 @@ On Big Sur–Tahoe, WebKit GPU access to the Data GPU drivers uses its valid
 Apple platform signature and service identifier, independently of Safari’s
 installation or update location.
 
+With Graphics 0.3.0, Sonoma–Tahoe use the OS-native AIR converter for shader
+compilation. Tahoe checks confirmed improved App Store scrolling and Maps
+labels, panning, zooming and 3D rendering. Compiler UUID changes alone no longer
+disable this path; required APIs and compatible compiler images are still checked.
+
 ### Known issues and limits
 
 - Some image-conversion operations can crash the application.
+- App Store video playback can freeze the GPU on Sequoia; the shader-compiler
+  update does not resolve this separate issue.
 - Reconnecting a monitor to a dedicated DisplayPort connector can leave the
   screen black or freeze the computer. USB-C DisplayPort Alt Mode reconnection
   can also freeze the computer; this has been reproduced on both Big Sur and

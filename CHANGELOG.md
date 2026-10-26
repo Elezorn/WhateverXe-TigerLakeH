@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0
+
+Use [WhateverXe Graphics 0.3.0](https://github.com/b00t0x/WhateverXe-Graphics/releases) for the new mobile GPU and fixed TC display support. Updating both components is recommended.
+
+### Added
+
+- Add Alder Lake-H/P/U and Raptor Lake-H/P/U GPU support with automatic resource detection and VBT-selected fixed HDMI routes.
+- Add experimental fixed TC DisplayPort output with matching AUX wiring; Alder Lake-H has been tested through a DP-to-HDMI adapter.
+- Support startup with multiple fixed TC displays, including supported firmware-scaled boot displays.
+
+### Fixed
+
+- Improve display clock ownership, output shutdown and reuse across the shared external-display paths.
+- Stop display teardown and reuse when required shutdown steps fail.
+- [WhateverXe Graphics 0.3.0](https://github.com/b00t0x/WhateverXe-Graphics/releases) expands shader input support on Sonoma–Tahoe and improves observed Tahoe App Store and Maps rendering.
+
+Alder Lake-H hardware checks cover Big Sur–Tahoe. Other newly accepted mobile configurations remain untested. Display13 internal panels and Type-C-managed output still need implementation; existing DisplayPort reconnection and Sequoia App Store video hangs remain unresolved. See the [README](https://github.com/b00t0x/WhateverXe#tested-features-and-known-issues) for coverage and limits.
+
 ## 0.5.0
 
 The newly added GPUs require [WhateverXe Graphics 0.2.0](https://github.com/b00t0x/WhateverXe-Graphics/releases). Its rendering fixes also benefit previously supported GPUs; updating both components is recommended.
