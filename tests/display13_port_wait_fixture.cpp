@@ -58,6 +58,7 @@ int main(int argc,char **argv) {
         for(unsigned ddi:{0U,1U,3U,4U,5U,6U})for(unsigned protocol:{1U,2U})
         for(unsigned ack:{0U,495U,500U,600U,995U,1000U,2000U,2995U,3000U,~0U})
         for(unsigned fault=0;fault<3;++fault) {
+            if(platform==1 && !(AlderLakeS::ComboBackendMask&(1u<<ddi)))continue;
             setup(platform,ddi,platform==0 && ddi>=3?1:protocol);
             memcpy(&config,selectionPort+0x548,sizeof(config));
             const unsigned mode=platform==1 || ddi<3?1:4;

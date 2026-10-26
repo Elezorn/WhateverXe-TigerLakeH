@@ -8,7 +8,10 @@ assert s.count('processFramebufferPortWait(patcher,index,address,size)')==1
 runtime=re.search(r'bool XE::processFramebufferDonorRuntime\(.*?\n\}',s,re.S).group()
 assert 'tglPanelPowerPropertyReady && meiReady && ddiRequestReady &&\n  processFramebufferPortWait' in runtime
 assert 'while (delay < 3000' not in s
-h=(r/'tests/xelp_port_wait_harness.hpp').read_text().replace('// FUNCTIONS',functions)
+header=(r/'WhateverXe/kern_xe.hpp').read_text()
+routing='\n'.join(re.search(pattern,header,re.S).group() for pattern in [
+ r'bool tglHDMIEligible\(.*?\n',r'XELP::Display12SSTRoutes tglSSTRoutes\(.*?\n \}'])
+h=(r/'tests/xelp_port_wait_harness.hpp').read_text().replace('// FUNCTIONS',functions).replace('// ROUTING',routing)
 with tempfile.TemporaryDirectory(prefix='external-link-wait-') as d:
  p=Path(d)
  for native in [False]+([True] if len(sys.argv)>1 else []):
