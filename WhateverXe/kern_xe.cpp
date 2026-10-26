@@ -18459,6 +18459,14 @@ void XE::wrapTGLPowerDDIState(void *power, bool enable, uint32_t requested) {
  // Native reference counts remain untouched. The PG target is the union of
  // the native pipe consumers and the current TC1/TC2 lane consumers.
  auto adls=adlsPowerTarget(power);
+ // C004FC1A disablePowerWellDDI (0x5AD86..0x5ADDF) derives the
+ // DDI C request from DDI TC1's refs a second time. ADL-S has no
+ // physical DDI C. Remove only that duplicate on release, preserving
+ // unexpected C consumers, every real port request and native ACK reads.
+ if(adls && !enable && (callbackXE->adlsWiring.selected()&8U) &&
+    !*reinterpret_cast<uint32_t *>(adls+0x38) &&
+    *reinterpret_cast<uint32_t *>(adls+0x3C) && (requested&0xA0U)==0xA0U)
+  requested&=~0x20U;
  const auto laneMask=callbackXE->adlsWiring.laneMask();
  if(adls && (requested&laneMask)) {
   const auto native=AlderLakeS::LanePower::pipeRequests(reinterpret_cast<uint32_t *>(adls+0x20));
