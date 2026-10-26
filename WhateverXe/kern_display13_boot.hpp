@@ -3,6 +3,7 @@
 #ifndef KERN_DISPLAY13_BOOT_HPP
 #define KERN_DISPLAY13_BOOT_HPP
 #include "kern_alderlake_n.hpp"
+#include "kern_xelp_gop_stop.hpp"
 #include "kern_display13_fb_irq.hpp"
 #include "kern_display13_fb_topology.hpp"
 #include "kern_xelp_memory_layout.hpp"
@@ -210,17 +211,12 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
     const auto write=[&](uint32_t reg,uint32_t value) {
         io.write(reg,value);++r.writes;
         if(reg==Display13TC::Clock::Gate)gate=value;
-        io.read(reg);
+        io.read(reg);return true;
     };
     const auto wait=[&](uint32_t reg,uint32_t mask,uint32_t expected) {
         r.lastReg=reg;r.expected=expected;
-        for(unsigned n=0;n<1000;++n) {
-            r.observed=io.read(reg);
-            if(r.observed==UINT32_MAX || !peer()) {r.status=Status::PeerChanged;return false;}
-            if((r.observed&mask)==expected)return true;
-            io.delay();
-        }
-        r.status=Status::Timeout;return false;
+        return XELPGOP::poll(io,peer,[&](uint32_t v){return (v&mask)==expected;},
+            reg,r.observed,r.status,Status::PeerChanged);
     };
     for(unsigned p=1;p<3;++p)if(active&(1U<<p)) {
         current=p;const auto bank=p*0x1000,bufReg=0x64000+0x100*ports[p];
@@ -229,12 +225,8 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
         AlderLakeN::value(boot,0x70008+bank,conf);AlderLakeN::value(boot,0x60400+bank,trans);buf=io.read(bufReg);
         r.stage=1;r.framesBefore=io.read(0x70040+bank);
         write(0x70180+bank,plane&~0x80000000U);write(0x7019C+bank,surface);
-        for(unsigned n=0;n<1000;++n) {
-            r.framesAfter=io.read(0x70040+bank);
-            if(r.framesAfter==UINT32_MAX || !peer()) {r.status=Status::PeerChanged;return r;}
-            if(uint32_t(r.framesAfter-r.framesBefore)>=2 && uint32_t(r.framesAfter-r.framesBefore)<0x10000000)break;
-            if(n==999) {r.status=Status::Timeout;return r;}io.delay();
-        }
+        if(!XELPGOP::poll(io,peer,[&](uint32_t v){return uint32_t(v-r.framesBefore)>=2 && uint32_t(v-r.framesBefore)<0x10000000U;},
+            0x70040+bank,r.framesAfter,r.status,Status::PeerChanged,false))return r;
         if(!wait(0x70180+bank,0x80000000,0))return r;
         // Real frame latch, STOP_ACK and buffer idle precede DDB release.
         // Keep link resources until consumers stop. The TC PLL/ownership is
@@ -253,14 +245,8 @@ template<class IO> Result normalize(IO &io,const AlderLakeN::DisplayReadout &boo
         }
         r.stage=3;write(0x60404+bank,0);write(0x60400+bank,trans&~(0x80000000U|(15U<<27)|(7U<<24)));
         if(!wait(0x60400+bank,0x80000000,0))return r;
-        r.stage=4;write(bufReg,buf&~0x80000000U);
-        // Display12/13 disable_ddi_buf: buffer off, transport off, then idle.
-        // Stop only this transcoder; preserve the adopted GOP's M/N and link.
-        if(dpPipes&(1U<<p)) {
-            write(0x60540+bank,transport[p]&~0x80000000U);
-            if(!wait(0x60540+bank,0x80000000U,0))return r;
-        }
-        if(!wait(bufReg,0x80000080,0x80))return r;
+        r.stage=4;
+        if(!XELPGOP::stopBuffer(write,wait,bank,bufReg,buf,transport[p],dpPipes&(1U<<p)))return r;
         r.stage=5;write(0x46140+4*p,clocks[p]&0x0FFFFFFF);
         if(!wait(0x46140+4*p,UINT32_MAX,clocks[p]&0x0FFFFFFF))return r;
         if(!Display13FBIRQ::consumersStopped(io,1U<<p)) {r.status=Status::Readback;return r;}

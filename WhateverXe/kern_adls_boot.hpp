@@ -5,6 +5,7 @@
 #ifndef KERN_ADLS_BOOT_HPP
 #define KERN_ADLS_BOOT_HPP
 #include "kern_adls_clock.hpp"
+#include "kern_xelp_gop_stop.hpp"
 #include "kern_alderlake_n.hpp"
 #include "kern_display13_fb_irq.hpp"
 namespace AlderLakeS {
@@ -99,13 +100,8 @@ template<class IO> Result prepare(IO &io,bool admitted,const Wiring &w) {
     };
     const auto wait=[&](uint32_t reg,uint32_t mask,uint32_t value) {
         r.reg=reg;
-        for(unsigned i=0;i<1000;++i) {
-            r.value=io.read(reg);
-            if(r.value==UINT32_MAX || !stable()){r.status=Status::Drift;return false;}
-            if((r.value&mask)==value)return true;
-            io.delay();
-        }
-        r.status=Status::Timeout;return false;
+        return XELPGOP::poll(io,stable,[&](uint32_t v){return (v&mask)==value;},
+            reg,r.value,r.status,Status::Drift);
     };
     for(unsigned p=r.primary+1;p<3;++p)if(r.active&(1U<<p)) {
         const auto bank=0x1000*p;Port port;Port::resolve(ports[p],port);
@@ -113,14 +109,9 @@ template<class IO> Result prepare(IO &io,bool admitted,const Wiring &w) {
         const auto frame=io.read(0x70040+bank);
         if(frame==UINT32_MAX || !write(0x70180+bank,get(0x70180+bank)&~0x80000000U) ||
            !write(0x7019C+bank,get(0x7019C+bank)))return r;
-        bool drained=false;
-        for(unsigned i=0;i<1000;++i) {
-            const auto now=io.read(0x70040+bank);
-            if(now==UINT32_MAX || !stable()){r.status=Status::Drift;return r;}
-            if(uint32_t(now-frame)>=2 && uint32_t(now-frame)<0x10000000U){drained=true;break;}
-            io.delay();
-        }
-        if(!drained){r.status=Status::Timeout;return r;}
+        uint32_t now;
+        if(!XELPGOP::poll(io,stable,[&](uint32_t v){return uint32_t(v-frame)>=2 && uint32_t(v-frame)<0x10000000U;},
+            0x70040+bank,now,r.status,Status::Drift))return r;
         r.stage=2;
         if(!write(0x70008+bank,get(0x70008+bank)&~0x80000000U) || !wait(0x70008+bank,0xC0000000U,0))return r;
         r.stage=3;
@@ -133,10 +124,8 @@ template<class IO> Result prepare(IO &io,bool admitted,const Wiring &w) {
             }
         }
         r.stage=4;
-        if(!write(port.buffer,get(port.buffer)&~0x80000000U))return r;
-        if(((get(0x60400+bank)>>24)&7)==2 &&
-           (!write(0x60540+bank,get(0x60540+bank)&~0x80000000U) || !wait(0x60540+bank,0x80000000U,0)))return r;
-        if(!wait(port.buffer,0x80000080U,0x80))return r;
+        if(!XELPGOP::stopBuffer(write,wait,bank,port.buffer,get(port.buffer),get(0x60540+bank),
+            ((get(0x60400+bank)>>24)&7)==2))return r;
         r.stage=5;
         if(!write(0x46140+4*p,get(0x46140+4*p)&0x0FFFFFFFU) || !wait(0x46140+4*p,0xF0000000U,0))return r;
         r.parked|=1U<<p;
