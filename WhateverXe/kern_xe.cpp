@@ -18463,6 +18463,8 @@ void XE::wrapTGLPowerDDIState(void *power, bool enable, uint32_t requested) {
  // DDI C request from DDI TC1's refs a second time. ADL-S has no
  // physical DDI C. Remove only that duplicate on release, preserving
  // unexpected C consumers, every real port request and native ACK reads.
+ // The donor passes enable=false on both get and put. Direction is not
+ // inferred from that flag: only put generates this unreferenced C request.
  if(adls && !enable && (callbackXE->adlsWiring.selected()&8U) &&
     !*reinterpret_cast<uint32_t *>(adls+0x38) &&
     *reinterpret_cast<uint32_t *>(adls+0x3C) && (requested&0xA0U)==0xA0U)
