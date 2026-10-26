@@ -48,7 +48,7 @@ struct Display13FBTCIO:Display13FBPowerIO {
 };
 struct XE {
  bool display13FramebufferRequested=true,display13FBTCHooksReady=true;XELP::Profile xeProfile;
- alignas(8) uint8_t adlnPlatform[0x1c0]{},tglPlatformCopy[0x1c0]{};Display13OutputWiring adlnOutputWiring;
+ uint64_t adlnPlatform[0x1c0/sizeof(uint64_t)]{},tglPlatformCopy[0x1c0/sizeof(uint64_t)]{};Display13OutputWiring adlnOutputWiring;
  uintptr_t display13TCBaseMode=0,orgDisplay13TCMode=0;
  bool tglHDMIEligible(const uint32_t*){return false;}XELP::Display12SSTRoutes tglSSTRoutes(){return {};}
  static XELP::LinkRequirements framebufferLinkRequirements(void*,uint32_t);
@@ -71,7 +71,7 @@ int main(){
   Display13FBPowerIO power{&map};assert(Display13Power::initialize(power,c.bridge.state,Display13Power::nativeDomains(0x7b)));
   c.bridge.begun=true;c.bridge.selectedPorts=0x78;c.bridge.bootPort=ddi;
   auto &w=instance.adlnOutputWiring;w.valid=true;if(dp)w.dp=1u<<ddi;else{w.hdmi=1u<<ddi;w.ddc[ddi]=ddi+6;}
-  auto cfg=reinterpret_cast<unsigned*>(instance.adlnPlatform+0x20+24*ddi);
+  auto cfg=reinterpret_cast<unsigned*>(reinterpret_cast<uint8_t*>(instance.adlnPlatform)+0x20+24*ddi);
   unsigned values[]={ddi,ddi+6,dp?1u:2u,1u,dp?0x400u:0x800u,dp?0x201u:0x202u};memcpy(cfg,values,24);
   memset(portBytes,0,sizeof(portBytes));auto p=new(portBytes)OSObject;
   put(0x548,cfg);put(0x578,c.access);put(0x120,ddi);put(0x590,0x64000+256*ddi);nativeCalls=0;

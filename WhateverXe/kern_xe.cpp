@@ -11512,7 +11512,7 @@ XELP::LinkRequirements XE::framebufferLinkRequirements(void *port,uint32_t mode)
    (self->adlnOutputWiring.dp&(1U<<ddi))?R::Protocol::FixedDP:R::Protocol::HDMI};
  } else {
   // ADL-S TC-numbered DDIs are Combo; native mode alone is not a PHY ID.
-  const bool bound=config==reinterpret_cast<const uint32_t *>(self->tglPlatformCopy+0x20+24*ddi);
+  const bool bound=config==reinterpret_cast<const uint32_t *>(reinterpret_cast<const uint8_t *>(self->tglPlatformCopy)+0x20+24*ddi);
   if(!bound)return req;
   if(mode==1 && self->tglHDMIEligible(config))
    req={self->xeProfile.display,R::PHY::Combo,R::Protocol::HDMI};
@@ -17778,7 +17778,7 @@ bool XE::comboClockTarget(void *controller,void *port,void *otherPort) {
         Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring);
     return s->tglActive && controller==s->tglObservationController &&
         XELP::displayAdapter(s->xeProfile.family)==XELP::DisplayAdapter::TGL &&
-        config==reinterpret_cast<uint32_t *>(s->tglPlatformCopy+0x20+24*config[0]);
+        config==reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(s->tglPlatformCopy)+0x20+24*config[0]);
 }
 
 bool XE::comboClockPower(void *power,bool acquire) {

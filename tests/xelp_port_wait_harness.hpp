@@ -18,7 +18,7 @@ struct KernelPatcher {
 };
 struct XE {
  bool display13FramebufferRequested=false;XELP::Profile xeProfile;
- alignas(8) uint8_t tglPlatformCopy[0x1c0]{},adlnPlatform[0x1c0]{};
+ uint64_t tglPlatformCopy[0x1c0/sizeof(uint64_t)]{},adlnPlatform[0x1c0/sizeof(uint64_t)]{};
  Display13OutputWiring adlnOutputWiring;XELP::Display12SSTRoutes routes;
  unsigned hdmiMask=0;void *currentFramebuffer=nullptr;
  bool tglHDMIEligible(const uint32_t *c) const {return (hdmiMask&(1u<<c[0])) && c[2]==2;}
@@ -35,7 +35,7 @@ void setup(unsigned platform,unsigned ddi,unsigned protocol){
  auto &w=instance.adlnOutputWiring;w.valid=true;
  if(protocol==2){w.hdmi=1u<<ddi;w.ddc[ddi]=ddi<3?ddi+1:ddi+6;instance.hdmiMask=1u<<ddi;}
  else w.dp=1u<<ddi;
- auto bytes=platform==2?instance.adlnPlatform:instance.tglPlatformCopy;
+ auto bytes=reinterpret_cast<uint8_t*>(platform==2?instance.adlnPlatform:instance.tglPlatformCopy);
  bytes[0x12]=9;auto c=reinterpret_cast<uint32_t*>(bytes+0x20+24*ddi);
  c[0]=ddi;c[1]=ddi<3?ddi+1:ddi+6;c[2]=protocol;c[3]=ddi<3?0:1;c[4]=protocol==2?0x800:0x400;c[5]=protocol==2?0x202:0x201;
  if(platform==1 || ddi<3)instance.routes.combo=1u<<ddi;else instance.routes.legacy=1u<<ddi;

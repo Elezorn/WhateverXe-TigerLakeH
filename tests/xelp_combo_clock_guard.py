@@ -14,7 +14,7 @@ struct XE {
  bool adlsDisplaySelected=false,display13FramebufferRequested=false,tglActive=true;
  struct {XELP::Family family=XELP::Family::TigerLake;} xeProfile;
  void *tglObservationController,*adlnTopologyController;
- uint8_t tglPlatformCopy[0x1c0]{},adlnPlatform[0x1c0]{};
+ uint64_t tglPlatformCopy[0x1c0/sizeof(uint64_t)]{},adlnPlatform[0x1c0/sizeof(uint64_t)]{};
  Display13OutputWiring adlnOutputWiring;
  static bool adlsClockTarget(void*,void*,void*){return false;}
  static bool comboClockTarget(void*,void*,void*);
@@ -26,7 +26,7 @@ int main(){
  for(bool d13:{false,true}) {
   state.display13FramebufferRequested=d13;state.adlnTopologyController=state.tglObservationController=ctl;
   state.adlnOutputWiring.valid=true;state.adlnOutputWiring.hdmi=3;state.adlnOutputWiring.ddc[0]=1;state.adlnOutputWiring.ddc[1]=2;
-  auto platform=d13?state.adlnPlatform:state.tglPlatformCopy;
+  auto platform=reinterpret_cast<uint8_t*>(d13?state.adlnPlatform:state.tglPlatformCopy);
   at<void*>(ctl,0xc40)=access;at<uint32_t>(access,0x60)=0x200000;
   for(unsigned d=0;d<2;++d) {
    const uint32_t c[]={d,d+1,2,0,0x800,0x202};memcpy(platform+0x20+24*d,c,sizeof(c));
