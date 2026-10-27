@@ -38,6 +38,9 @@ def main():
    libs['as.vit9696.Lilu']='1.2.0'
    info['IOKitPersonalities']={ident:dict(CFBundleIdentifier=ident,IOClass=name,IOMatchCategory=name,IOProviderClass='IOResources',IOResourceMatch='IOKit')}
   else:
+   # This is the oldest compatible provider ABI, not the release version.
+   # Existing framebuffer payloads declare a dependency on 0.5.0.
+   info['OSBundleCompatibleVersion']='0.5.0'
    # The parent readiness property is published only by the admitted Display13 backend.
    # Keep the native policy class, scoped to its Intel client and independent of SMBIOS.
    info['IOKitPersonalities']=plistlib.loads((ROOT/'AppleIntelTGLCompat/GraphicsPolicy.plist').read_bytes())
